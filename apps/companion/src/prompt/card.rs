@@ -31,6 +31,7 @@ use crate::agent::{
     AgentHit, BUTTON_H, Fill, FlowButton, PAD, Row, Terminal, columns, draw_row, fill, line_h,
     one_line, wrap_hard,
 };
+use crate::controls::square_button::ime_glyph;
 use crate::controls::{ControlRow, RowState};
 use crate::settings;
 use crate::settings::copy;
@@ -133,6 +134,10 @@ pub struct PromptCard {
     /// box as laid out (plan 20261028_06, decision 8).
     tools: InputTools,
     row: Option<InputRow>,
+    /// While it takes voice (a message being said, or Gemini listening):
+    /// the keyboard glyph left of the up arrow, which goes on typed (plan
+    /// 20261028_06, the 2026-11-03 13:27 EST amendment).
+    keyboard: Option<Rect>,
 }
 
 impl PromptCard {
@@ -166,7 +171,24 @@ impl PromptCard {
             scale: 1.0,
             tools: InputTools::default(),
             row: None,
+            keyboard: None,
         }
+    }
+
+    /// Whether it takes voice now: a message being said, or Gemini
+    /// listening with no typed prompt.
+    pub fn by_voice(&self) -> bool {
+        match self.kind {
+            PromptKind::Message => self.input.as_ref().is_some_and(|i| !i.keyboard()),
+            PromptKind::GeneralAgent => {
+                self.input.is_none() && (self.listening || self.partial.is_some())
+            }
+        }
+    }
+
+    /// The keyboard glyph of a card taking voice, as laid out.
+    pub fn keyboard(&self) -> Option<Rect> {
+        self.keyboard
     }
 
     /// Typing's tools: whether the row has the + and the toggle, and the
@@ -436,6 +458,7 @@ impl PromptCard {
         self.buttons.clear();
         self.bars.clear();
         self.row = None;
+        self.keyboard = None;
     }
 
     /// *General agent*, hidden: its two bars, the lower's bottom at
@@ -463,7 +486,8 @@ impl PromptCard {
         // (text, px, colour, gap above)
         let mut rows: Vec<(String, f32, [f32; 4], f32)> = Vec::new();
         let mut busy_row = None;
-        let head_w = inner_w - ARROW * s;
+        let voice = self.by_voice() && settings::TEXT_INPUT;
+        let head_w = inner_w - ARROW * s * if voice { 2.0 } else { 1.0 };
         rows.push((
             one_line(&header, columns(head_w, HEADER_PT * s)),
             HEADER_PT * s,
@@ -655,6 +679,7 @@ impl PromptCard {
         }
         let a = ARROW * s;
         self.arrow = Rect::new(x + w - a - 2.0 * s, top + 2.0 * s, a, a);
+        self.keyboard = voice.then(|| Rect::new(self.arrow.x - a, self.arrow.y, a, a));
         if self.reply.is_some() {
             self.buttons = ControlRow::lay_out(
                 inner_x,
@@ -714,6 +739,9 @@ impl PromptCard {
         if let Some(hit) = self.row.as_ref().and_then(|r| r.hit(x, y, 0.0)) {
             return Some(hit);
         }
+        if self.keyboard.is_some_and(|r| r.contains([x, y])) {
+            return Some(AgentHit::PromptIme(self.kind));
+        }
         if self.arrow.contains([x, y]) {
             return Some(AgentHit::PromptExpand(self.kind));
         }
@@ -732,6 +760,9 @@ impl PromptCard {
             AgentHit::PromptExpand(kind) if kind == self.kind => Some(self.arrow),
             AgentHit::PromptText(kind) if kind == self.kind => {
                 self.text_area.as_ref().map(|ta| ta.rect)
+            }
+            AgentHit::PromptIme(kind) if kind == self.kind && self.keyboard.is_some() => {
+                self.keyboard
             }
             AgentHit::PromptAttach(_) | AgentHit::PromptIme(_) | AgentHit::PromptMic(_) => {
                 self.row.as_ref().and_then(|r| r.rect_of(hit, 0.0))
@@ -774,6 +805,9 @@ impl PromptCard {
             row.draw(list, 0.0);
         }
         up_arrow(list, self.arrow, s, theme().dim);
+        if let Some(r) = self.keyboard {
+            ime_glyph(list, r, s, theme().fg, false);
+        }
         let voice = self.input.as_ref().is_some_and(|i| !i.keyboard());
         if self.kind == PromptKind::Message && voice && !settings::current().microphone {
             settings::dim_since(list, start);
@@ -802,6 +836,37 @@ mod tests {
 
     fn texts(card: &PromptCard) -> Vec<&str> {
         card.rows().iter().map(|r| r.text.as_str()).collect()
+    }
+
+    /// A card taking voice has the keyboard glyph left of the up arrow,
+    /// whose tap is the toggle's hit; typed, it has none.
+    #[test]
+    fn a_card_taking_voice_has_the_keyboard_glyph_left_of_the_arrow() {
+        let mut c = PromptCard::new(PromptKind::Message);
+        c.set_input(Some(PromptInput::said("please run")));
+        laid(&mut c);
+        let k = c.keyboard().expect("the glyph");
+        assert_eq!((k.x + k.w, k.y), (c.arrow.x, c.arrow.y));
+        let [x, y] = k.center();
+        assert_eq!(c.hit(x, y), Some(AgentHit::PromptIme(PromptKind::Message)));
+        assert_eq!(c.rect_of(AgentHit::PromptIme(PromptKind::Message)), Some(k));
+        c.set_input(Some(PromptInput::typed("please run")));
+        laid(&mut c);
+        assert!(c.keyboard().is_none());
+        // Gemini's, while it listens; not once it stops.
+        let mut g = PromptCard::new(PromptKind::GeneralAgent);
+        g.set_listening(true);
+        laid(&mut g);
+        let k = g.keyboard().expect("listening");
+        let [x, y] = k.center();
+        assert_eq!(
+            g.hit(x, y),
+            Some(AgentHit::PromptIme(PromptKind::GeneralAgent))
+        );
+        g.set_listening(false);
+        g.push_turn(Speaker::User, "hello");
+        laid(&mut g);
+        assert!(g.keyboard().is_none());
     }
 
     /// Plan 20261024_03, the 2026-10-30 22:08 EDT amendment, item 1.

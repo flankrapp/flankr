@@ -65,6 +65,8 @@
 pub mod agent;
 #[cfg(all(test, not(target_os = "android")))]
 mod bottom_bar_tests;
+#[cfg(all(test, not(target_os = "android")))]
+mod card_input_tests;
 pub mod controls;
 pub mod drawer;
 #[cfg(all(test, not(target_os = "android")))]
@@ -629,6 +631,19 @@ fn title_target(bar: &Bar, x: f32, y: f32) -> Option<TitleTarget> {
         return Some(TitleTarget::Icon(bar.icons[i].0.source.clone()));
     }
     bar.kebab.takes(x, y).then_some(TitleTarget::Kebab)
+}
+
+/// The soft keyboard's options: a nickname (`field`) is one line, and the
+/// keyboard's Done saves it; a prompt is many lines, with no action.
+fn text_options(field: bool) -> libmorph::TextInputOptions {
+    let mut options = libmorph::TextInputOptions::default();
+    options.multiline = !field;
+    options.action = if field {
+        libmorph::TextAction::Done
+    } else {
+        libmorph::TextAction::None
+    };
+    options
 }
 
 fn open_link(ctx: &MorphContext, url: &str) {
@@ -2133,6 +2148,14 @@ impl App {
         }
     }
 
+    /// Whether `kind`'s prompt is open and taking voice: a message being
+    /// said, or Gemini's prompt by voice.
+    fn prompt_by_voice(&self, kind: PromptKind) -> bool {
+        self.dictation.as_ref().is_some_and(|d| {
+            d.mode == PromptMode::Voice && d.general_agent == (kind == PromptKind::GeneralAgent)
+        })
+    }
+
     /// The keyboard types into `kind`'s card on the screen shown, and the
     /// soft keyboard shows (plan 20261027_03, decision 6).
     fn focus_prompt(&mut self, kind: PromptKind) {
@@ -2172,20 +2195,27 @@ impl App {
             None => typing,
         };
         let screen = self.prompt_screen();
-        match self.keyboard.sync(typing, ctx.text_input_active(), screen) {
+        let ime = self.keyboard.sync(typing, ctx.text_input_active(), screen);
+        #[cfg(test)]
+        if ime != Ime::Keep {
+            probe::record(format!("ime {ime:?}"));
+        }
+        match ime {
             Ime::Start(text) => {
-                let mut options = libmorph::TextInputOptions::default();
-                // A nickname is one line, and the keyboard's Done saves it.
-                options.multiline = !field;
-                options.action = if field {
-                    libmorph::TextAction::Done
-                } else {
-                    libmorph::TextAction::None
-                };
-                ctx.start_text_input(&text, &options);
+                ctx.start_text_input(&text, &text_options(field));
+                self.keyboard.started(self.started.elapsed());
             }
             Ime::Stop => ctx.stop_text_input(),
             Ime::Keep => {}
+        }
+        // Started and not up after a while: asked for once more (the
+        // owner's report of 2026-11-03 13:05 EST).
+        let raised = ctx.keyboard_inset() > 0.0;
+        if self.keyboard.ask_again(raised, self.started.elapsed())
+            && let Some((_, text)) = typing
+        {
+            log::info!("keyboard: not up; asked for again");
+            ctx.start_text_input(text, &text_options(field));
         }
     }
 
@@ -2886,6 +2916,17 @@ impl App {
             // decision 8): up, it hides the soft keyboard as its own
             // dismissal does (the card and its text stay); down, it
             // focuses the text area and raises it, as a tap on it does.
+            // A voice card's keyboard glyph (plan 20261028_06, the
+            // 2026-11-03 13:27 EST amendment): the same prompt goes on typed, what
+            // was said kept as its text, focused with the soft keyboard up.
+            AgentHit::PromptIme(kind) if self.prompt_by_voice(kind) => {
+                log::info!("prompt keyboard: {kind:?} typed");
+                if kind == PromptKind::GeneralAgent {
+                    self.set_listening(false);
+                }
+                self.send(Input::ContinueByKeyboard);
+                self.focus_prompt(kind);
+            }
             AgentHit::PromptIme(kind) => {
                 if self.input_tools().keyboard_up {
                     log::info!("keyboard toggle: hide");
@@ -5405,6 +5446,14 @@ pub(crate) mod probe {
         pub flash: Option<(String, f32)>,
         /// A message to a session is being typed or dictated.
         pub message: bool,
+        /// The prompt open, as the client gave it: Gemini's or a message,
+        /// typed or by voice, and its text.
+        pub prompt: Option<(bool, flankr_companion::PromptMode, String)>,
+        /// What the keyboard route has focused.
+        pub focused: Option<crate::prompt::keyboard::FocusedPrompt>,
+        /// The message card's keyboard glyph while it takes voice, and
+        /// Gemini's, on the screen shown.
+        pub voice_keyboards: Vec<(crate::prompt::PromptKind, Rect)>,
         /// The overview's agents, by pane.
         pub agents: Vec<String>,
         /// The background remotes with a dot on their card.
@@ -5579,6 +5628,21 @@ pub(crate) mod probe {
             details_of: app.settings_screen.as_ref().and_then(|s| s.details_of()),
             flash: app.settings_screen.as_ref().and_then(|s| s.flash()),
             message: app.dictation.as_ref().is_some_and(|d| !d.general_agent),
+            prompt: app
+                .dictation
+                .as_ref()
+                .map(|d| (d.general_agent, d.mode, d.text.clone())),
+            focused: app.keyboard.focused(),
+            voice_keyboards: [
+                crate::prompt::PromptKind::Message,
+                crate::prompt::PromptKind::GeneralAgent,
+            ]
+            .into_iter()
+            .filter_map(|kind| {
+                let card = app.prompts().card(kind);
+                card.keyboard().map(|r| (kind, r))
+            })
+            .collect(),
             agents: app.agents.iter().map(|a| a.pane_id.clone()).collect(),
             waiting: d.content().waiting().iter().copied().collect(),
             card: app

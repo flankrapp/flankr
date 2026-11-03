@@ -278,3 +278,14 @@ These changes came before the app had version numbers.
 
 **Removed**
 - The separate "Paired with <name>" screen with its Details and Done buttons, and its "Its addresses were updated." line.
+
+## 0.7.7 — 2026-11-03
+
+**Added**
+- A card you are speaking into, a message or Gemini's, has a keyboard button at its top right, beside the arrow. Tap it to carry on typing: what you said so far stays as the text, the cursor at its end and the keyboard up, and the microphone stops listening.
+
+**Fixed**
+- A card that arrives while you type no longer closes or empties the text card you are typing in. When Gemini finishes a reply, a prompt you had started typing to it stays, with its text.
+- A typed message is sent only by its send button. Before, if the microphone was still listening from a spoken start, something it heard could be added to the text and the message sent after the silence.
+- Tapping a card's record button while a typed message is open carries that message on by voice with its text, instead of starting an empty one.
+- When the keyboard does not come up after opening a text card, the app asks for it once more, so you no longer have to tap the text first.

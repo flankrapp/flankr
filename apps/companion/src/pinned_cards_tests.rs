@@ -23,12 +23,12 @@ use crate::agent::{
     AgentHit, BUTTON_H, DENIED_BY_DISMISSING, DISMISSED_THE_QUESTION, PIN_LESS, PIN_MORE,
 };
 
-const READY: u32 = 4;
-const SETTLE: u32 = 8;
+pub(super) const READY: u32 = 4;
+pub(super) const SETTLE: u32 = 8;
 /// Frames for the drawer's slide and more.
-const SLIDE: u32 = 10;
+pub(super) const SLIDE: u32 = 10;
 
-fn remote() -> RemoteInfo {
+pub(super) fn remote() -> RemoteInfo {
     RemoteInfo {
         id: RemoteId([1; 8]),
         name: "m4".into(),
@@ -45,7 +45,7 @@ fn remote() -> RemoteInfo {
     }
 }
 
-fn agent() -> AgentInfo {
+pub(super) fn agent() -> AgentInfo {
     AgentInfo {
         pane_id: "p1".into(),
         name: Some("Claude p1".into()),
@@ -68,7 +68,7 @@ fn agent() -> AgentInfo {
     }
 }
 
-fn entry(role: Role, text: &str) -> Entry {
+pub(super) fn entry(role: Role, text: &str) -> Entry {
     Entry {
         ts: "2026-10-30T19:00:00Z".into(),
         role,
@@ -86,7 +86,7 @@ fn card_serial() -> Serial {
     Serial::new(7, 9, 194)
 }
 
-fn live(kind: CardKind, title: &str, text: &str) -> AgentCard {
+pub(super) fn live(kind: CardKind, title: &str, text: &str) -> AgentCard {
     AgentCard {
         kind,
         live: true,
@@ -105,7 +105,7 @@ fn live(kind: CardKind, title: &str, text: &str) -> AgentCard {
 
 /// The view as the client gives it: a user turn, a reply, and `card`
 /// after them, pinned.
-fn view(card: AgentCard) -> Event {
+pub(super) fn view(card: AgentCard) -> Event {
     let mut sections: Vec<ViewSection> = [
         entry(Role::User, "build the cards"),
         entry(Role::Assistant, "Landed the pinned cards.\nThen pushed."),
@@ -152,7 +152,11 @@ fn run(script: &str, card: &AgentCard) -> Option<Probe> {
 
 /// [`run`], with `after`'s events given as the client's once the app has
 /// sent an input starting with their text.
-fn run_with(script: &str, card: &AgentCard, after: Vec<(&'static str, Event)>) -> Option<Probe> {
+pub(super) fn run_with(
+    script: &str,
+    card: &AgentCard,
+    after: Vec<(&'static str, Event)>,
+) -> Option<Probe> {
     let dir = tempfile::tempdir().unwrap();
     let keys = dir.path().join("keys");
     let data = dir.path().join("data");
@@ -202,18 +206,18 @@ fn run_with(script: &str, card: &AgentCard, after: Vec<(&'static str, Event)>) -
     }
 }
 
-fn tap(r: Rect) -> String {
+pub(super) fn tap(r: Rect) -> String {
     let [x, y] = r.center();
     format!("tap {x} {y}\n")
 }
 
-fn inputs_with(p: &Probe, part: &str) -> usize {
+pub(super) fn inputs_with(p: &Probe, part: &str) -> usize {
     p.inputs.iter().filter(|i| i.contains(part)).count()
 }
 
 /// The script that opens p1's view with `card` pinned, the probe after
 /// it, and the screen's scale.
-fn open_view(card: &AgentCard) -> Option<(String, Probe, f32)> {
+pub(super) fn open_view(card: &AgentCard) -> Option<(String, Probe, f32)> {
     let at = run(&format!("frames {SETTLE}\n"), card)?;
     let script = format!(
         "frames {SETTLE}\n{}frames {SLIDE}\n{}frames {SLIDE}\n",

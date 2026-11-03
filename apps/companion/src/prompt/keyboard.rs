@@ -9,6 +9,8 @@
 //! leaves the card and its text, and a tap shows it again; a physical
 //! keyboard types directly and keeps the soft keyboard hidden.
 
+use std::time::Duration;
+
 use libmorph::Key;
 
 use super::PromptKind;
@@ -55,6 +57,13 @@ impl Typing {
     }
 }
 
+/// How long the soft keyboard has to rise after it is started before it
+/// is asked for once more (the owner's report of 2026-11-03 13:05 EST: after
+/// the hold on record, the keyboard did not come up until a tap). On
+/// Android a focus and a show in the same turn of the UI thread can lose the
+/// show; asked again, the field already has the focus.
+pub const RAISE_WAIT: Duration = Duration::from_millis(400);
+
 /// What the app is to do with the soft keyboard.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Ime {
@@ -78,6 +87,10 @@ pub struct KeyboardRoute {
     reshow: bool,
     /// The typed prompt (or the terminal) open at the last sync, if any.
     open: Option<Typing>,
+    /// When the soft keyboard was last started and not yet seen up, and
+    /// whether it has been asked for again since.
+    raising: Option<Duration>,
+    asked_again: bool,
 }
 
 impl KeyboardRoute {
@@ -109,6 +122,34 @@ impl KeyboardRoute {
         self.reshow = true;
     }
 
+    /// The soft keyboard was started at `now` (any monotonic clock): it is
+    /// watched for rising.
+    pub fn started(&mut self, now: Duration) {
+        self.raising = Some(now);
+        self.asked_again = false;
+    }
+
+    /// Each frame after [`sync`](Self::sync): whether the soft keyboard is
+    /// to be started once more, because it was started [`RAISE_WAIT`] ago,
+    /// is still wanted, and has not risen (`raised`: the keyboard's inset
+    /// is above zero). Asked again once per start.
+    pub fn ask_again(&mut self, raised: bool, now: Duration) -> bool {
+        let Some(at) = self.raising else {
+            return false;
+        };
+        let wanted = self.focused.is_some() && !self.dismissed && !self.physical;
+        if raised || !wanted || self.asked_again {
+            self.raising = None;
+            return false;
+        }
+        if now.saturating_sub(at) < RAISE_WAIT {
+            return false;
+        }
+        self.asked_again = true;
+        self.raising = None;
+        true
+    }
+
     /// The text typed was changed from outside the keyboard (a field's
     /// clear): the soft keyboard is started again on it, unless it was put
     /// away.
@@ -122,6 +163,7 @@ impl KeyboardRoute {
     pub fn dismiss(&mut self) {
         self.dismissed = true;
         self.reshow = false;
+        self.raising = None;
     }
 
     /// The prompt was sent or cancelled.
@@ -129,6 +171,7 @@ impl KeyboardRoute {
         self.focused = None;
         self.dismissed = false;
         self.reshow = false;
+        self.raising = None;
     }
 
     /// The screen shown changed: the focus follows to its card, which
@@ -202,6 +245,42 @@ impl KeyboardRoute {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ms(n: u64) -> Duration {
+        Duration::from_millis(n)
+    }
+
+    #[test]
+    fn a_keyboard_that_does_not_rise_is_asked_for_once_more() {
+        let mut k = KeyboardRoute::new(false);
+        let typing = Some((Typing::Prompt(PromptKind::Message), ""));
+        assert_eq!(k.sync(typing, false, OVERVIEW), Ime::Start(String::new()));
+        k.started(ms(1000));
+        // Not yet: it has RAISE_WAIT to come up.
+        assert!(!k.ask_again(false, ms(1300)));
+        // Not up after it: asked once more, and only once.
+        assert!(k.ask_again(false, ms(1400)));
+        assert!(!k.ask_again(false, ms(2000)));
+        // Up in time: nothing more.
+        let mut k = KeyboardRoute::new(false);
+        k.sync(typing, false, OVERVIEW);
+        k.started(ms(0));
+        assert!(!k.ask_again(true, ms(100)));
+        assert!(
+            !k.ask_again(false, ms(500)),
+            "it rose; a later drop is a dismissal"
+        );
+        // Dismissed or closed meanwhile, or a physical keyboard: never.
+        let mut k = KeyboardRoute::new(false);
+        k.sync(typing, false, OVERVIEW);
+        k.started(ms(0));
+        k.dismiss();
+        assert!(!k.ask_again(false, ms(500)));
+        let mut k = KeyboardRoute::new(true);
+        k.sync(typing, false, OVERVIEW);
+        k.started(ms(0));
+        assert!(!k.ask_again(false, ms(500)));
+    }
 
     const OVERVIEW: PromptScreen = PromptScreen::Overview;
 
