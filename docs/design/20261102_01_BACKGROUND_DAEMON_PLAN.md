@@ -210,3 +210,9 @@ The owner (2026-11-02) agreed to the recommended answers to section 6:
 
 Section 6 has no open questions left; the rest of the plan is unchanged.
 The status stays `Draft` until the owner approves it.
+
+## Amendment — 2026-11-02 22:07 EST: approved
+
+The owner approved the plan as it stands at `fa8ec0b` (2026-11-02:
+"Approve the background daemon plan and build it?" "yes"). It is built
+now; the first implementing commit sets `In implementation`.
