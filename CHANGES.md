@@ -4245,3 +4245,51 @@ Two readings, within the amendments:
 2. The report's first item, the record on the approval card opening text
    input, is not in these amendments: whether a tap or a 500 ms hold on a
    card's record should open the typed reply is put to the owner first.
+
+## 2026-11-03 13:44 EST — Terminal taps and shell panes, steps 1-4; every version in its series
+
+Plan: the terminal taps and shell panes plan (20261103_01), as amended at
+2026-11-03 12:34 EST and approved at 13:01 EST. New behaviour a user would
+notice, which FLANKR RULES 1 and 2 would make minor bumps; on the owner's
+instruction "keep the same version series", as for 0.7.3 to 0.7.7, the
+daemon is 0.7.5, flankr-companion 0.8.3, the app 0.7.8; libflankr_proto
+0.5.11 and libflankr_term 0.1.2 are additive patches.
+
+Small departures needed to make the plan work:
+
+1. Step 1, decision 3: the frames are libflankr_term's binary frames, not
+   a libflankr_proto type, so `input_rows` is a field of libflankr_term's
+   `Grid` and `Frame` (`RowSpan`), written as a second trailer after
+   the cursor's (`u8 2, u16 first, u16 last`). A phone asks for it with
+   `terminal.open`'s `input_rows: true` (libflankr_proto 0.5.11), as it
+   asks for the cursor, so an older app's frames are unchanged.
+   libherdr_term builds its grids with `input_rows: None` (no version
+   change).
+2. Decision 1: the app cannot see the pane's gates of decision 6, so
+   `terminal.open`'s answer carries `input: Option<bool>` (libflankr_proto
+   0.5.11), whether the pane takes typing once armed; the keys row shows
+   when it and `TerminalInfo::input` say so.
+3. Decision 6 as amended: the principal's own agent list (a paired
+   device's `agents` in `auth.toml`) still narrows which panes open, a
+   pane with no agent counting as `shell`; only the `[[agents]]` filter
+   is lifted. The shipped `shell` entry's `terminal_input = false` still
+   makes panes without an agent read-only, and an agent with no entry
+   takes typing without the signal keys (`terminal_signals`' default).
+4. Decision 3, Claude Code: a prompt line between rules is `>` or `❯`
+   not followed by a numbered option (`❯ 1. Teal`), so the question
+   screen has no input bar and a tap on an option is a choice tap.
+5. Decision 5.1: in mouse mode a tap clicks as before; the keyboard rises
+   only when that tap is on the input bar, in place of after every click.
+6. Decision 5.2: only an option's own rows are options (its label row,
+   by number and label, and the rows of its description below it); Other
+   and *Chat about this* are not. Single-select sends the option's
+   number; a preview question its number and `enter`; multi-select its
+   number, which toggles it. A refusal (no option on the row) is logged
+   by the client, not shown as an error.
+7. Decision 7: herdr's snapshot names no foreground program, so a shell
+   row keeps its tab and folder (`17-fl · flankr`) rather than
+   `zsh · flankr`; it sits below the agent sessions, without a spinner.
+8. Decision 2: the client arms on the first key, typed text, paste or
+   choice tap and holds it until the arm is answered; image uploads for a
+   paste still need the pane's agent to have an `[[agents]]` entry, as
+   before.
