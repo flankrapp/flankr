@@ -934,3 +934,37 @@ texts stand.
    sends `Input::StopReading` as before.
 5. **The app's version** is 0.7.5, a patch, on the owner's instruction to
    keep the same version series (FLANKR RULE 1 would make these a minor).
+
+## Amendment — 2026-11-03 13:27 EST: a keyboard on the voice input cards
+
+On the owner's explicit instruction (Rule 1.5), 2026-11-03 13:06 EST, in
+`docs/OWNER_REPORTS.md`: "voice input cards should have the keyboard icon
+to switch to text input". The reverse of the 2026-10-29 15:09 EDT
+amendment's microphone. This replaces that amendment's item 4 ("a tap on
+the text area or the keyboard toggle switches the card back to typed")
+for a card taking voice, which shows neither; for a typed card it stands.
+
+1. **The glyph:** on the message card while it is said (by record, a
+   card's record, an answer that starts a message, or the typed card's
+   microphone) and on Gemini's card while it listens for a prompt: the
+   keyboard glyph of decision 8's toggle (the glyph alone, no chevron),
+   in `theme().fg`, no background, in a 36 × 36 pt target immediately left
+   of the card's up arrow, on the header line; the header text is cut
+   36 pt shorter to make room. Its hit is `AgentHit::PromptIme(kind)`, as
+   the toggle's. On the phone and the desktop alike; not on a typed card,
+   whose row has the toggle.
+2. **Tap:** the same prompt goes on typed: what was said so far is its
+   text, the text area is focused with the cursor at the end and the soft
+   keyboard up, and nothing more is listened for (Gemini's card stops
+   listening). The card keeps its target, its reply and its place. No
+   hold.
+3. **flankr-companion, additive:** `Input::ContinueByKeyboard`, on the
+   `#[non_exhaustive]` `Input`: while a voice prompt is open (message or
+   Gemini's) and still collecting, it becomes the same prompt in keyboard
+   mode, its parts kept, with no silence countdown; with no voice prompt
+   open, nothing changes. A typed prompt is not re-armed after an
+   utterance the gate still catches, and the dictation silence never
+   submits a typed prompt: it is sent by its send button alone. The
+   crate takes 0.8.2, a patch, in its own commit.
+4. **The app's version** is 0.7.7, a patch, on the owner's instruction to
+   keep the same version series.

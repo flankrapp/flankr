@@ -187,3 +187,40 @@ llm".
 Step 1 (`PromptCard`, its overlay, bars and history in
 `apps/companion/src/prompt/`) is the first implementing commit. From here
 the document changes only on the owner's explicit instruction.
+
+## Amendment — 2026-11-03 13:28 EST: an input card stays when a card arrives; the keyboard asked for again
+
+On the owner's explicit instruction (Rule 1.5), 2026-11-03, in
+`docs/OWNER_REPORTS.md` (13:05 and 13:06 EST, app 0.7.6 on the S23
+Ultra): "a new card dismissed my input"; and, from the phone's log of the
+first report, the soft keyboard did not rise after the 500 ms hold on
+record until a tap on the text area. This adds to decisions 5 and 6:
+
+1. **An open input card stays** (decision 5). A card arriving (the
+   agent's new pinned card, a confirmation, another session's card, or
+   Gemini's reply ending its turn) never closes, replaces or empties the
+   message card or Gemini's typed card, nor takes its focus; it shows
+   where it always does, and the input card keeps its text, its focus and
+   the soft keyboard. In flankr-companion, a turn's end no longer closes
+   Gemini's prompt: the prompt open then was opened after the turn's own,
+   which its submit already closed. This replaces the client's closing
+   of Gemini's prompt at a turn's end, which no plan text describes.
+2. **A typed card neither listens nor times out.** A typed card that was
+   by voice before (an answer that starts a message, then the hold on
+   record) kept the microphone armed: anything heard went into its text,
+   re-armed it, and the dictation silence then sent the message, so the
+   card went. A typed prompt is not re-armed and is never sent by the
+   silence (the bottom bar plan's 2026-11-03 13:27 EST amendment, item 3,
+   in flankr-companion 0.8.2).
+3. **A card's record on a typed message** goes on by voice with the typed
+   text kept (as the typed card's microphone does), in place of starting
+   an empty message.
+4. **The keyboard asked for again** (decision 6). When the soft keyboard
+   is started for a card and is not up (libmorph's `keyboard_inset` is
+   0) 400 ms later, still wanted (focused, not dismissed, no physical
+   keyboard), it is started once more, once per start. On Android a focus
+   and a show in the same turn of the UI thread can lose the show; asked
+   again, the field already has the focus, as the tap that raised it at
+   12:59:24 did.
+5. **The app's version** is 0.7.7, a patch, with the bottom bar plan's
+   amendment of the same day.
