@@ -477,8 +477,8 @@ pub struct App {
     /// Its two textures and composite pass, made on the first frame the
     /// drawer shows, and dropped on suspend.
     layers: Option<DrawerLayers>,
-    /// A card's 2 s press opened Settings for its remote's details: Settings
-    /// closes again with them.
+    /// Settings was opened for a remote's details alone (a card's press, a
+    /// finished pairing's Details): it closes again with them.
     details_from_drawer: bool,
     /// The remote whose details open once Settings is laid out.
     pending_details: Option<RemoteId>,
@@ -1682,17 +1682,18 @@ impl App {
         self.apply_settings(settings);
     }
 
-    /// The volume button held 1 s while something is being said (the
-    /// 2026-10-29 00:43 EDT amendment, item 1): what is said stops and the
+    /// The volume menu's **Stop**, while something is being said (plan
+    /// 20261028_06, the 2026-11-03 12:13 EST amendment, item 4, in place
+    /// of the 00:43 EDT amendment's 1 s hold): what is said stops and the
     /// queue is cleared; mute stays as it is, so new replies are read as
-    /// they come. Held on to 2 s, the menu still opens.
+    /// they come.
     fn stop_reading(&mut self) {
         log::info!("volume: stop reading");
         self.send(Input::StopReading);
     }
 
-    /// A 2 s hold on the volume button (item 2): its menu opens anchored
-    /// to it, above the bar.
+    /// A 500 ms hold on the volume button (the 2026-11-03 12:13 EST
+    /// amendment, item 3): its menu opens anchored to it, above the bar.
     fn open_volume_menu(&mut self) {
         let anchor = if let Some(agent) = &self.agent {
             agent.rect_of(AgentHit::Volume)
@@ -1872,6 +1873,7 @@ impl App {
                 log::info!("volume: skip");
                 self.send(Input::Skip);
             }
+            Choice::Stop => self.stop_reading(),
             // Read on the touch's context, right after this.
             Choice::PasteText => self.paste_wanted = self.attach_menu,
             // The media chooser (the binary files plan; libmorph's media
@@ -2313,7 +2315,7 @@ impl App {
     fn drawer_hit(&mut self, hit: DrawerHit) {
         match hit {
             // A tap on the card of the remote in use does nothing (the
-            // owner, 2026-10-28: only a 2 s press opens its details).
+            // owner, 2026-10-28: only a press held 500 ms opens its details).
             DrawerHit::Remote(id) => {
                 if self.remotes.iter().any(|r| r.id == id && !r.active) {
                     self.switch_remote(id);
@@ -2325,11 +2327,7 @@ impl App {
             }
             DrawerHit::Details(id) => {
                 log::info!("drawer: a remote's details, from its card");
-                self.drawer.close_now();
-                self.open_settings();
-                // Opened once Settings is laid out (`lay_out`).
-                self.pending_details = Some(id);
-                self.details_from_drawer = true;
+                self.open_remote_details(id);
             }
             // The agent view opens at once, in place of any other, so the
             // overview is never drawn between them (3.8 item 34).
@@ -2347,8 +2345,25 @@ impl App {
         }
     }
 
-    /// Settings opened for a card's details close with them: back to the
-    /// screen under the drawer.
+    /// A remote's details modal, the one screen for them: from a 500 ms
+    /// press on its card in the drawer (plan 20261028_03, the 2026-11-03
+    /// 12:13 EST amendment) and from a finished pairing's Details (plan
+    /// 20261028_02, the same time's amendment, item 1). Over Settings when
+    /// it is open (the add mode's), where it closes back to Settings;
+    /// otherwise Settings opens for it and closes with it, back to the
+    /// screen under.
+    fn open_remote_details(&mut self, id: RemoteId) {
+        self.drawer.close_now();
+        if self.settings_screen.is_none() {
+            self.open_settings();
+            self.details_from_drawer = true;
+        }
+        // Opened once Settings is laid out (`lay_out`).
+        self.pending_details = Some(id);
+    }
+
+    /// Settings opened for a remote's details close with them: back to the
+    /// screen under.
     fn settings_closed_for_drawer(&mut self) {
         if self.details_from_drawer
             && self.pending_details.is_none()
@@ -3082,15 +3097,7 @@ impl App {
             return false;
         };
         log::info!("hold: pressed {hit:?}");
-        let mut hold = Hold::start(touch.id, hit, [touch.x, touch.y], now);
-        // Volume pressed while something is being said: its 1 s stop
-        // comes first (the 2026-10-29 00:43 EDT amendment, item 1). Muted,
-        // nothing is said, so a press always unmutes or opens the menu
-        // (the 00:52 EDT amendment, item 3).
-        if hit == AgentHit::Volume && self.speaking && !self.settings.muted {
-            hold = hold.with_early(crate::controls::hold::STOP_HOLD);
-        }
-        self.hold = Some(hold);
+        self.hold = Some(Hold::start(touch.id, hit, [touch.x, touch.y], now));
         true
     }
 
@@ -3115,9 +3122,12 @@ impl App {
     }
 
     /// A press released before its hold: the control's tap. Voice starts on the
-    /// release, no longer on touch-down (decision 7). Volume pressed while
-    /// something was being said skips it, the next queued reply following
-    /// (the 2026-10-29 00:43 EDT amendment, item 1).
+    /// release, no longer on touch-down (decision 7). Volume released while
+    /// something is being said, unmuted, skips it, the next queued reply
+    /// following (the 2026-10-29 00:43 EDT amendment, item 1, judged at
+    /// the release as the 2026-11-03 12:13 EST amendment, item 3, says).
+    /// Muted, nothing is said, so a tap always unmutes (the 00:52 EDT
+    /// amendment, item 3).
     fn hold_tap(&mut self, hold: &Hold) {
         let hit = hold.hit;
         let live = if self.agent.is_some() {
@@ -3125,7 +3135,7 @@ impl App {
         } else {
             settings::allows_on_overview(hit)
         };
-        if hit == AgentHit::Volume && hold.has_early() {
+        if hit == AgentHit::Volume && self.speaking && !self.settings.muted {
             if live {
                 log::info!("volume: skip");
                 self.send(Input::Skip);
@@ -3135,18 +3145,9 @@ impl App {
         }
     }
 
-    /// A press's earlier step, fired at once (the 2026-10-29 00:43 EDT
-    /// amendment, item 1): volume's 1 s stop.
-    fn hold_early(&mut self, hit: AgentHit) {
-        log::info!("hold: early step {hit:?}");
-        if hit == AgentHit::Volume {
-            self.stop_reading();
-        }
-    }
-
     /// A press held to its hold, fired at once, before the release
-    /// (decision 7; 500 ms on the centre and right, the 2026-10-29 14:43
-    /// EDT amendment, 2 s on the others): the centre opens Gemini's card
+    /// (decision 7; 500 ms on every control, the 2026-11-03 12:13 EST
+    /// amendment, item 1): the centre opens Gemini's card
     /// pinned with a typed prompt, its text area focused and the soft
     /// keyboard up, without listening; the right opens the message card
     /// typed and focused; a + opens its menu, and so does volume.
@@ -3726,8 +3727,22 @@ impl App {
             Some(Hit::Field) => self.field_focused = true,
             Some(Hit::Pair) => self.pair(),
             Some(Hit::Cancel | Hit::Back) => self.cancel_pairing(),
+            // A finished pairing's Details: it ends as Done does, and the
+            // remote's details modal opens, as from its card in the drawer
+            // (plan 20261028_02, the 2026-11-03 12:13 EST amendment, item
+            // 1). The waiting modal's opens or closes its own.
             Some(Hit::Details) => {
-                self.pairing.toggle_details();
+                match self.pairing.finished.as_ref().and_then(|f| f.details_of()) {
+                    Some(id) => {
+                        self.finish_pairing();
+                        self.open_remote_details(id);
+                    }
+                    None => self.pairing.toggle_details(),
+                }
+                self.screen.invalidate();
+            }
+            Some(Hit::Fingerprint) => {
+                self.pairing.toggle_fingerprint();
                 self.screen.invalidate();
             }
             // The placeholder's Tap to scan: the camera starts (and CAMERA
@@ -4111,20 +4126,21 @@ impl App {
         let now = Instant::now();
         let (code, camera) = if let Some(f) = &self.pairing.finished {
             // A finished pairing (the owner, 2026-10-28): a check, what was
-            // paired, and Details and Done, until Done.
-            let code = if self.pairing.details {
-                f.details(&layout)
-            } else {
-                Vec::new()
-            };
+            // paired, and Details and Done, until Done; Details, the
+            // remote's details modal, once its row is known (plan
+            // 20261028_02, the 2026-11-03 12:13 EST amendment, item 1).
             let camera = CameraView {
                 glyph: Glyph::Check,
                 prompt: Some(f.title()),
                 detail: Some(f.summary()).filter(|s| !s.is_empty()),
-                row: Row::Done,
+                row: if f.details_of().is_some() {
+                    Row::Done
+                } else {
+                    Row::DoneOnly
+                },
                 ..CameraView::default()
             };
-            (code, Some(camera))
+            (Vec::new(), Some(camera))
         } else if self.pairing.waiting() {
             // The six words, in the modal over the window.
             let modal = ui::modal_layout(&layout);
@@ -4185,6 +4201,7 @@ impl App {
             field_focused: self.field_focused,
             waiting: self.pairing.waiting(),
             details: self.pairing.details,
+            fingerprint: self.pairing.fingerprint_row(),
             adding: self.pairing.adding,
             camera,
         };
@@ -4723,16 +4740,10 @@ impl MorphApp for App {
 
         let dt = now.saturating_duration_since(self.last_update);
         self.last_update = now;
-        // A held press fires at once (plan 20261028_06, decision 7), and
-        // the screens draw its progress while it is timed.
+        // A held press fires at once (plan 20261028_06, decision 7); no
+        // progress is drawn while it is timed (the 2026-11-03 12:13 EST
+        // amendment, item 2).
         let elapsed = self.started.elapsed();
-        if let Some(hit) = self
-            .hold
-            .as_mut()
-            .and_then(|h| h.fire_early(elapsed).then_some(h.hit))
-        {
-            self.hold_early(hit);
-        }
         if let Some(hit) = self
             .hold
             .as_mut()
@@ -4741,14 +4752,6 @@ impl MorphApp for App {
             self.hold_fired(hit);
         }
         self.serve_clipboard(ctx);
-        let progress = self
-            .hold
-            .and_then(|h| h.progress(elapsed).map(|p| (h.hit, p)));
-        self.overview
-            .set_hold(progress.filter(|_| self.agent.is_none()));
-        if let Some(agent) = &mut self.agent {
-            agent.set_hold(progress);
-        }
         // The volume menu follows the options and speaking while open; it
         // is no longer the volume menu once closed.
         if !self.menu.is_open() {
@@ -4833,7 +4836,7 @@ impl MorphApp for App {
         }
         self.lay_out(ctx);
         // The drawer: never over the pairing window or Settings; moved on,
-        // a card held 2 s opening its details; the client told when it
+        // a card held 500 ms opening its details; the client told when it
         // shows or hides (3.12 item 48).
         if self.drawer.is_shown() && (self.pairing() || self.settings_screen.is_some()) {
             self.drawer.close_now();
@@ -5366,6 +5369,8 @@ pub(crate) mod probe {
         pub adding: bool,
         /// Settings shows a modal (a remote's details).
         pub details: bool,
+        /// The remote whose details modal Settings shows.
+        pub details_of: Option<flankr_companion::RemoteId>,
         /// A message to a session is being typed or dictated.
         pub message: bool,
         /// The overview's agents, by pane.
@@ -5539,6 +5544,7 @@ pub(crate) mod probe {
             settings: app.settings_screen.is_some(),
             adding: app.pairing.adding,
             details: app.settings_screen.as_ref().is_some_and(|s| s.asking()),
+            details_of: app.settings_screen.as_ref().and_then(|s| s.details_of()),
             message: app.dictation.as_ref().is_some_and(|d| !d.general_agent),
             agents: app.agents.iter().map(|a| a.pane_id.clone()).collect(),
             waiting: d.content().waiting().iter().copied().collect(),
@@ -5770,7 +5776,7 @@ mod tests {
         let start = Duration::from_secs(10);
         let mut hold = Hold::start(1, AgentHit::GeneralAgent, [0.0, 0.0], start);
         assert!(!hold.fire(start + Duration::from_millis(499)));
-        assert!(hold.fire(start + crate::controls::hold::CARD_HOLD));
+        assert!(hold.fire(start + crate::controls::hold::HOLD));
         assert!(!hold.fire(start + Duration::from_secs(3)), "once");
         // What it opens, on either screen: the card pinned, even with
         // nothing said yet, and the overlay closed, even if it was left

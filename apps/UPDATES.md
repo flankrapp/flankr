@@ -256,3 +256,16 @@ These changes came before the app had version numbers.
 - A pairing code whose only address is the computer itself (127.0.0.1 or localhost) no longer offers this phone's code to paste, which could never connect. The screen says the code only works on that computer, and to set up Tailscale there or run flankr with `--vpn none --bind 0.0.0.0:7347`, then pair again.
 - A pairing code that lists the computer itself beside other addresses skips the local one and uses the others.
 - When none of a pairing code's addresses can be reached, the screen says *Can't reach* the computer and to check that the phone is on the same Tailscale network or Wi-Fi, instead of offering this phone's code, which would need the same addresses.
+
+## 0.7.5 — 2026-11-03
+
+**Changed**
+- Every press-and-hold now takes half a second: a remote's card in the drawer, the centre and record buttons, the speaker button, the **+** on a text card, and a pinned plugin card. Before, most took two seconds.
+- Holding a remote's card opens its details, the same screen as **Details** after pairing: nickname, hostname, when it was paired, the fingerprint, Close and Remove.
+- **Details** after pairing opens that remote's details. Closing them goes where **Done** goes. The button shows once the phone has the new remote's entry.
+- While you pair, the fingerprint under **Details** is a *Fingerprint* row that opens and closes the same way as in a remote's details, with the same six words and BLAKE2s-256 digits.
+- Holding the speaker button opens its menu. While something is being read aloud, the menu starts with **Stop**, which ends the reply and clears what is queued without muting. Tapping the speaker still skips the current reply while something is read, and mutes or unmutes otherwise.
+
+**Removed**
+- The progress bars that filled along a held button or card.
+- Holding the speaker for one second to stop reading. Use **Stop** in its menu instead.

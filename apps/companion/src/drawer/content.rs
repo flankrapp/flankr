@@ -142,8 +142,8 @@ pub struct DrawerContent {
     list: Rect,
     pane: Option<NodeId>,
     rows: Vec<(NodeId, String)>,
-    /// The card held, and the hold's progress.
-    press: Option<(usize, f32)>,
+    /// The card held.
+    press: Option<usize>,
     /// The spinner's frame last drawn, while any row spins.
     frame: Option<usize>,
     /// Something it shows changed: built again before it is drawn.
@@ -329,7 +329,7 @@ impl DrawerContent {
                 let waiting =
                     matches!(&slot, Slot::Remote(r) if !r.active && self.waiting.contains(&r.id));
                 let mut card = RemoteCard::new(rect, slot.clone(), waiting, s);
-                card.pressed = self.press.filter(|(p, _)| *p == i).map(|(_, t)| t);
+                card.pressed = self.press == Some(i);
                 let id = router.add(None, card);
                 (rect, slot, id)
             })
@@ -433,15 +433,15 @@ impl DrawerContent {
         self.cards.iter().map(|(_, s, _)| s.clone()).collect()
     }
 
-    /// The card held and the hold's progress, shown on it in place.
-    pub fn set_press(&mut self, router: &mut Router, press: Option<(usize, f32)>) -> bool {
+    /// The card held, shown in the press colour in place.
+    pub fn set_press(&mut self, router: &mut Router, press: Option<usize>) -> bool {
         if press == self.press {
             return false;
         }
         self.press = press;
         for (i, (_, _, id)) in self.cards.iter().enumerate() {
             if let Some(card) = router.get_mut::<RemoteCard>(*id) {
-                card.pressed = press.filter(|(p, _)| *p == i).map(|(_, t)| t);
+                card.pressed = press == Some(i);
             }
         }
         true

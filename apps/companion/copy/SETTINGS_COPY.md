@@ -681,12 +681,18 @@ decision 3.6): the app's own items, after the plugins'.
 
 - text: Unpin
 
-The volume menu's Skip, and the + menu's items
-(docs/design/20261028_06_BOTTOM_BAR_UPDATE_PLAN.md, decisions 3 and 8).
+The volume menu's Skip and Stop (Stop while something is being said: it
+ends the reply and clears the queue, without muting), and the + menu's
+items (docs/design/20261028_06_BOTTOM_BAR_UPDATE_PLAN.md, decisions 3 and
+8, and the 2026-11-03 12:13 EST amendment, item 4).
 
 # [Copy] menu_skip
 
 - text: Skip
+
+# [Copy] menu_stop
+
+- text: Stop
 
 # [Copy] menu_paste_text
 

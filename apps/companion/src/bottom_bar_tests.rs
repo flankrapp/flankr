@@ -5,7 +5,7 @@
 //! back from [`probe`]. Each run needs a GPU adapter; without one it says
 //! so and passes.
 //!
-//! The app's clock is real time (15 fps), so a 2 s press is about 30
+//! The app's clock is real time (15 fps), so a 500 ms press is about 8
 //! frames.
 
 use libcontrols::Rect;
@@ -23,13 +23,15 @@ use crate::menu;
 const READY: u32 = 4;
 /// Frames before the first touch.
 const SETTLE: u32 = 8;
-/// Frames for a 2 s press, at 15 fps, and some.
-const HOLD: u32 = 36;
-/// Frames for a press past 1 s and short of 2 s, at 15 fps.
-const STOP_HOLD: u32 = 20;
-/// Frames for a press past the centre's and right's 500 ms and short of
-/// 1 s, at 15 fps.
-const CARD_HOLD: u32 = 11;
+/// Frames for a press past every control's 500 ms hold, at 15 fps (the
+/// 2026-11-03 12:13 EST amendment, item 1).
+const HOLD: u32 = 12;
+
+/// A tap on `r`'s centre.
+fn tap(r: Rect) -> String {
+    let [x, y] = r.center();
+    format!("touch 9 start {x} {y}\nframes 1\ntouch 9 end {x} {y}\nframes 4\n")
+}
 
 fn run(script: &str) -> Option<Probe> {
     run_with(script, None)
@@ -184,7 +186,7 @@ fn a_500_ms_press_on_the_centre_opens_geminis_card_typed_without_listening() {
     let Some((_, centre, _)) = bar() else { return };
     let [x, y] = centre.center();
     let p = run(&format!(
-        "frames {SETTLE}\ntouch 5 start {x} {y}\nframes {CARD_HOLD}\ntouch 5 end {x} {y}\nframes 4\n"
+        "frames {SETTLE}\ntouch 5 start {x} {y}\nframes {HOLD}\ntouch 5 end {x} {y}\nframes 4\n"
     ))
     .unwrap();
     assert_eq!(
@@ -201,7 +203,7 @@ fn a_500_ms_press_on_the_right_opens_the_message_card_typed() {
     let Some((_, _, right)) = bar() else { return };
     let [x, y] = right.center();
     let p = run(&format!(
-        "frames {SETTLE}\ntouch 5 start {x} {y}\nframes {CARD_HOLD}\ntouch 5 end {x} {y}\nframes 4\n"
+        "frames {SETTLE}\ntouch 5 start {x} {y}\nframes {HOLD}\ntouch 5 end {x} {y}\nframes 4\n"
     ))
     .unwrap();
     assert_eq!(inputs_with(&p, "StartTextPrompt"), 1, "{:?}", p.inputs);
@@ -276,13 +278,14 @@ fn a_tap_on_volume_mutes_and_unmutes_without_its_menu() {
 }
 
 #[test]
-fn a_2_s_press_on_volume_opens_its_menu_of_the_two_options() {
+fn a_500_ms_press_on_volume_opens_its_menu_of_the_two_options() {
     let Some((volume, _, _)) = bar() else { return };
     let [x, y] = volume.center();
     let p = run(&format!(
         "frames {SETTLE}\ntouch 5 start {x} {y}\nframes {HOLD}\ntouch 5 end {x} {y}\nframes 4\n"
     ))
     .unwrap();
+    // Nothing is being said: no Stop.
     assert_eq!(
         p.drawer.menu_items,
         [menu::SPEAK_CODING, menu::SPEAK_GEMINI],
@@ -290,7 +293,7 @@ fn a_2_s_press_on_volume_opens_its_menu_of_the_two_options() {
         p.inputs
     );
     assert_eq!(
-        inputs_with(&p, "Skip"),
+        inputs_with(&p, "Muted("),
         0,
         "a hold is no tap: {:?}",
         p.inputs
@@ -320,46 +323,40 @@ fn while_speaking_a_tap_on_volume_skips_and_does_not_mute() {
 }
 
 #[test]
-fn while_speaking_a_1_s_press_on_volume_stops_and_clears_without_muting() {
+fn while_speaking_a_500_ms_press_on_volume_opens_its_menu_with_stop_which_clears_without_muting() {
     let Some((volume, _, _)) = bar() else { return };
     let [x, y] = volume.center();
-    // Held past 1 s: stopped before the release, no tap after it.
-    let p = run_speaking(&format!(
-        "frames {SETTLE}\ntouch 5 start {x} {y}\nframes {STOP_HOLD}\n"
-    ))
-    .unwrap();
-    assert_eq!(inputs_with(&p, "StopReading"), 1, "{:?}", p.inputs);
-    assert!(p.drawer.holding, "still timed for the menu");
-    assert!(p.drawer.menu_items.is_empty());
-    let p = run_speaking(&format!(
-        "frames {SETTLE}\ntouch 5 start {x} {y}\nframes {STOP_HOLD}\ntouch 5 end {x} {y}\nframes 4\n"
-    ))
-    .unwrap();
-    assert_eq!(inputs_with(&p, "StopReading"), 1, "{:?}", p.inputs);
+    // Held 500 ms while something is said: the menu, Stop at its top and
+    // Skip last; nothing stopped or skipped by the press itself.
+    let held = format!(
+        "frames {SETTLE}\ntouch 5 start {x} {y}\nframes {HOLD}\ntouch 5 end {x} {y}\nframes 4\n"
+    );
+    let p = run_speaking(&held).unwrap();
+    assert_eq!(
+        p.drawer.menu_items,
+        [
+            menu::STOP,
+            "",
+            menu::SPEAK_CODING,
+            menu::SPEAK_GEMINI,
+            "",
+            menu::SKIP
+        ],
+        "{:?}",
+        p.drawer.menu_items
+    );
+    assert_eq!(inputs_with(&p, "StopReading"), 0, "{:?}", p.inputs);
     assert_eq!(inputs_with(&p, "Skip"), 0, "no tap: {:?}", p.inputs);
+    // Stop: the reply ends and the queue is cleared, not muted.
+    let stop = p.drawer.menu_rects[0];
+    let p = run_speaking(&format!("{held}{}", tap(stop))).unwrap();
+    assert_eq!(inputs_with(&p, "StopReading"), 1, "{:?}", p.inputs);
+    assert_eq!(inputs_with(&p, "Skip"), 0, "{:?}", p.inputs);
     assert_eq!(
         inputs_with(&p, "Muted(true)"),
         0,
         "not muted: {:?}",
         p.inputs
-    );
-    assert!(p.drawer.menu_items.is_empty(), "{:?}", p.drawer.menu_items);
-}
-
-#[test]
-fn while_speaking_a_2_s_press_on_volume_stops_then_opens_its_menu() {
-    let Some((volume, _, _)) = bar() else { return };
-    let [x, y] = volume.center();
-    let p = run_speaking(&format!(
-        "frames {SETTLE}\ntouch 5 start {x} {y}\nframes {HOLD}\ntouch 5 end {x} {y}\nframes 4\n"
-    ))
-    .unwrap();
-    assert_eq!(inputs_with(&p, "StopReading"), 1, "{:?}", p.inputs);
-    assert_eq!(inputs_with(&p, "Skip"), 0, "{:?}", p.inputs);
-    assert!(
-        p.drawer.menu_items.iter().any(|i| i == menu::SPEAK_CODING),
-        "{:?}",
-        p.drawer.menu_items
     );
 }
 
@@ -427,16 +424,8 @@ fn muted_a_press_on_volume_unmutes_or_opens_the_menu_even_while_speaking() {
     assert_eq!(inputs_with(&p, "Skip"), 0, "{:?}", p.inputs);
     assert_eq!(inputs_with(&p, "StopReading"), 0, "{:?}", p.inputs);
     assert_eq!(inputs_with(&p, "Muted(false)"), 1, "{:?}", p.inputs);
-    // Held past 1 s: no stop, still timed for the menu.
-    let p = run_full(
-        &format!("frames {SETTLE}\ntouch 5 start {x} {y}\nframes {STOP_HOLD}\n"),
-        muted,
-        true,
-    )
-    .unwrap();
-    assert_eq!(inputs_with(&p, "StopReading"), 0, "{:?}", p.inputs);
-    assert!(p.drawer.holding, "timed for the menu");
-    // Held 2 s: the menu opens, nothing stopped, still muted.
+    // Held 500 ms: the menu opens, with no Stop or Skip, nothing
+    // stopped, still muted.
     let p = run_full(
         &format!(
             "frames {SETTLE}\ntouch 5 start {x} {y}\nframes {HOLD}\ntouch 5 end {x} {y}\nframes 4\n"
@@ -447,8 +436,9 @@ fn muted_a_press_on_volume_unmutes_or_opens_the_menu_even_while_speaking() {
     .unwrap();
     assert_eq!(inputs_with(&p, "StopReading"), 0, "{:?}", p.inputs);
     assert_eq!(inputs_with(&p, "Muted(false)"), 0, "{:?}", p.inputs);
-    assert!(
-        p.drawer.menu_items.iter().any(|i| i == menu::SPEAK_CODING),
+    assert_eq!(
+        p.drawer.menu_items,
+        [menu::SPEAK_CODING, menu::SPEAK_GEMINI],
         "{:?}",
         p.drawer.menu_items
     );

@@ -28,8 +28,10 @@ const READY: u32 = 4;
 const SETTLE: u32 = 8;
 /// Frames for the drawer's slide (0.3 s) and more.
 const SLIDE: u32 = 10;
-/// Frames for a 2 s press, at 15 fps, and some.
-const HOLD: u32 = 36;
+/// Frames for a 500 ms press, at 15 fps, and some.
+const HOLD: u32 = 12;
+/// Frames for a press released well short of 500 ms, at 15 fps.
+const TAP: u32 = 3;
 
 fn remote(n: u8, name: &str, active: bool) -> RemoteInfo {
     RemoteInfo {
@@ -394,10 +396,13 @@ fn the_plus_from_a_sessions_view_shows_the_pairing_window() {
 }
 
 #[test]
-fn a_2_s_press_on_any_card_opens_its_details_and_a_press_released_early_is_a_tap() {
+fn a_500_ms_press_on_any_card_opens_its_details_and_a_press_released_early_is_a_tap() {
     let Some(at) = places() else { return };
     let menu = at.drawer.menu.unwrap();
-    for card in [at.drawer.cards[0], at.drawer.cards[1]] {
+    for (i, card) in [at.drawer.cards[0], at.drawer.cards[1]]
+        .into_iter()
+        .enumerate()
+    {
         let [x, y] = card.center();
         let script = format!(
             "frames {SETTLE}\n{}frames {SLIDE}\ntouch 5 start {x} {y}\nframes {HOLD}\ntouch 5 end {x} {y}\nframes 4\n",
@@ -411,15 +416,18 @@ fn a_2_s_press_on_any_card_opens_its_details_and_a_press_released_early_is_a_tap
             p.inputs
         );
         assert!(!p.drawer.shown);
+        // The remote's details modal: the one a finished pairing's Details
+        // opens (`pairing_scan_tests`).
+        assert_eq!(p.drawer.details_of, Some(RemoteId([i as u8 + 1; 8])));
         assert_eq!(inputs_with(&p, "SwitchRemote"), 0, "a hold is no tap");
         // Back closes the details, and the Settings they opened over.
         let p = run(&format!("{script}key back\nframes 4\n"), || {}).unwrap();
         assert!(!p.drawer.settings);
     }
-    // Released after 1 s: a tap, which switches.
+    // Released before 500 ms: a tap, which switches.
     let [x, y] = at.drawer.cards[1].center();
     let script = format!(
-        "frames {SETTLE}\n{}frames {SLIDE}\ntouch 5 start {x} {y}\nframes 12\ntouch 5 end {x} {y}\nframes 4\n",
+        "frames {SETTLE}\n{}frames {SLIDE}\ntouch 5 start {x} {y}\nframes {TAP}\ntouch 5 end {x} {y}\nframes 4\n",
         tap(menu)
     );
     let p = run(&script, || {}).unwrap();

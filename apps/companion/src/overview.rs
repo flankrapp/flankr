@@ -132,8 +132,6 @@ pub struct Overview {
     /// 20261028_06, decision 4, and its 2026-10-29 00:26 EDT amendment).
     volume: Volume,
     speaking: bool,
-    /// A 2 s press timed on a control, and its progress (decision 7).
-    hold: Option<(AgentHit, f32)>,
     headings: Vec<Heading>,
     divider_y: Option<f32>,
     /// The ⋮, at the title's right; the title icons are left of it.
@@ -182,7 +180,6 @@ impl Overview {
             card: None,
             volume: Volume::default(),
             speaking: false,
-            hold: None,
             headings: Vec::new(),
             divider_y: None,
             kebab: crate::menu::Kebab::default(),
@@ -295,14 +292,6 @@ impl Overview {
         if (volume, speaking) != (self.volume, self.speaking) {
             self.volume = volume;
             self.speaking = speaking;
-            self.dirty = true;
-        }
-    }
-
-    /// The press being timed on `hit`, and its progress, for its bar.
-    pub fn set_hold(&mut self, hold: Option<(AgentHit, f32)>) {
-        if hold != self.hold {
-            self.hold = hold;
             self.dirty = true;
         }
     }
@@ -737,18 +726,6 @@ impl Overview {
         self.prompts.draw_overlay(list, ctx, l.w);
         for b in &self.buttons {
             draw_button(list, b);
-        }
-        // A 2 s press's progress along its control's bottom (plan
-        // 20261028_06, decision 7).
-        if let Some((hit, progress)) = self.hold
-            && let Some(r) = self.rect_of(hit)
-        {
-            fill(
-                list,
-                crate::controls::hold::bar(r, progress, s),
-                crate::agent::hold_colour(hit),
-                0.0,
-            );
         }
         self.dirty = false;
         true
@@ -1670,16 +1647,21 @@ mod tests {
                 held: false
             })
         );
-        o.touch(1, TouchPhase::Started, x, y, Duration::ZERO);
-        assert_eq!(
-            o.touch(1, TouchPhase::Ended, x, y, Duration::from_millis(2100)),
-            Some(OverviewHit::PluginCard {
-                index: 0,
-                x,
-                y,
-                held: true
-            })
-        );
+        // Unpin at 500 ms (plan 20261028_04, the 2026-11-03 12:13 EST
+        // amendment): released at 499 ms it is a tap, at 500 ms a hold.
+        for (ms, held) in [(499, false), (500, true), (2100, true)] {
+            o.touch(1, TouchPhase::Started, x, y, Duration::ZERO);
+            assert_eq!(
+                o.touch(1, TouchPhase::Ended, x, y, Duration::from_millis(ms)),
+                Some(OverviewHit::PluginCard {
+                    index: 0,
+                    x,
+                    y,
+                    held
+                }),
+                "{ms} ms"
+            );
+        }
         // The agents' cards are still theirs.
         let p1 = o.grid().card_rect("p1").unwrap().center();
         assert_eq!(

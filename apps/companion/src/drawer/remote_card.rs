@@ -11,8 +11,8 @@
 //!   card colour, no outline;
 //! - a filled dot at its top right while a background remote has a
 //!   question or an approval waiting;
-//! - while a finger is held on it, the press colour and, filling along
-//!   its bottom over [`super::HOLD`], the hold's progress: at its end the
+//! - while a finger is held on it, the press colour, and no progress bar
+//!   (the 2026-11-03 12:13 EST amendment): at [`super::HOLD`] the
 //!   remote's details open, and the press is no tap.
 //!
 //! The **+**: the same size and colour, a 22 pt **+** in the accent
@@ -76,8 +76,8 @@ pub struct RemoteCard {
     pub slot: Slot,
     /// A background remote has a question or an approval waiting.
     pub waiting: bool,
-    /// A finger is held on it, and how far the hold has come (0 to 1).
-    pub pressed: Option<f32>,
+    /// A finger is held on it.
+    pub pressed: bool,
     pub scale: f32,
 }
 
@@ -87,7 +87,7 @@ impl RemoteCard {
             rect,
             slot,
             waiting,
-            pressed: None,
+            pressed: false,
             scale: s,
         }
     }
@@ -117,7 +117,7 @@ impl DrawControl for RemoteCard {
         let s = self.scale;
         let r = self.rect;
         let radius = RADIUS * s;
-        let bg = if self.pressed.is_some() {
+        let bg = if self.pressed {
             theme().band
         } else {
             theme().card
@@ -133,17 +133,6 @@ impl DrawControl for RemoteCard {
             );
         } else {
             fill(list, r, bg, radius);
-        }
-        if let Some(t) = self.pressed.filter(|t| *t > 0.0) {
-            let h = 3.0 * s;
-            let inset = 6.0 * s;
-            let w = (r.w - 2.0 * inset) * t.min(1.0);
-            fill(
-                list,
-                Rect::new(r.x + inset, r.y + r.h - inset - h, w, h),
-                theme().accent,
-                h * 0.5,
-            );
         }
         match &self.slot {
             Slot::Add => {
@@ -246,6 +235,35 @@ pub(crate) mod tests {
         assert_eq!(state_line(&r), Some("connecting…"));
         r.online = true;
         assert_eq!(state_line(&r), Some("in use"));
+    }
+
+    #[test]
+    fn a_pressed_card_takes_the_press_colour_and_draws_no_progress_bar() {
+        // The 2026-11-03 12:13 EST amendment, item 2: the same shapes as
+        // unpressed, the background in the press colour, nothing in the
+        // accent along its bottom.
+        let ctx = crate::theme::testing::draw_context();
+        let s = 2.0;
+        let rect = Rect::new(0.0, 0.0, 200.0, CARD_H * s);
+        let draw = |pressed: bool| {
+            let mut card = RemoteCard::new(rect, Slot::Remote(info("m4")), false, s);
+            card.pressed = pressed;
+            let mut list = DrawList::new();
+            card.draw(&mut list, &ctx);
+            list
+        };
+        let (plain, held) = (draw(false), draw(true));
+        assert_eq!(plain.instances.len(), held.instances.len());
+        assert!(held.instances.iter().any(|i| i.color == theme().band));
+        assert!(!plain.instances.iter().any(|i| i.color == theme().band));
+        let bottom = rect.y + rect.h - 6.0 * s - 3.0 * s;
+        assert!(
+            !held
+                .instances
+                .iter()
+                .any(|i| i.color == theme().accent && (i.position[1] - bottom).abs() < 0.5),
+            "no bar along the bottom"
+        );
     }
 
     pub(crate) fn info(name: &str) -> RemoteInfo {

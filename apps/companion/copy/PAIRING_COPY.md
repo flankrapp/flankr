@@ -114,9 +114,11 @@ under it, and Details and `pairing_done`; it stays until Done.
 - text: |
     Pairing cancelled: nothing was added.
 
-The Details button and what it shows: the daemon's fingerprint words, its
-`host:port`, the time the link has left, and the device-code fallback's
-code.
+The Details button and what it shows: the daemon's `host:port`, the
+remote details modal's Fingerprint row (its copy, `remote_details_*`, is
+in SETTINGS_COPY.md), the time the link has left, and the device-code
+fallback's code. On a finished pairing, Details opens the remote's details
+modal.
 
 # [Copy] pairing_details
 
@@ -125,17 +127,6 @@ code.
 # [Copy] pairing_details_hide
 
 - text: Hide details
-
-# [Copy] pairing_fingerprint
-
-- text: Daemon fingerprint
-
-The whole fingerprint in Details: BLAKE2s-256 of the daemon's key, as 64
-hex digits in groups of four, under this label.
-
-# [Copy] pairing_fingerprint_full
-
-- text: BLAKE2s-256 fingerprint
 
 # [Copy] pairing_address
 

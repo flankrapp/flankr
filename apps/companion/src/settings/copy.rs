@@ -198,7 +198,7 @@ mod tests {
         );
         // The generated consts are the files' text.
         assert_eq!(REMOTES_EMPTY.text, "No remotes paired");
-        assert_eq!(PAIRING_FINGERPRINT.text, "Daemon fingerprint");
+        assert_eq!(PAIRING_DETAILS.text, "Details");
     }
 
     #[test]

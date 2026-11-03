@@ -2,7 +2,7 @@
 //! decision 3.7): full width at the end of the overview's grid, below the
 //! agent cards, in the agent cards' colours and corner, with its plugin's
 //! name as a small dim header over the device half's content. A tap goes
-//! to the device half; held for 2 s it offers **Unpin**.
+//! to the device half; held for 500 ms it offers **Unpin**.
 
 use libcontrols::{DrawContext, Rect};
 use libmsdf::drawlist::DrawList;
@@ -14,8 +14,10 @@ use crate::theme::theme;
 /// The card's padding and its header's size, in points.
 const PAD: f32 = 12.0;
 const HEADER_PT: f32 = 12.0;
-/// How long a press is held to offer Unpin, as the drawer's remote cards.
-pub const HOLD: std::time::Duration = std::time::Duration::from_secs(2);
+/// How long a press is held to offer Unpin: the app's one hold time, as
+/// the drawer's remote cards (plan 20261028_04, the 2026-11-03 12:13 EST
+/// amendment).
+pub const HOLD: std::time::Duration = crate::controls::hold::HOLD;
 
 /// The card's height for content `content_h` tall, at scale `s`.
 pub fn height(content_h: f32, s: f32) -> f32 {

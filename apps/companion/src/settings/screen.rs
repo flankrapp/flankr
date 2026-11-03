@@ -1938,8 +1938,18 @@ impl SettingsScreen {
         self.open(what);
     }
 
+    /// The remote whose details are open, for the tests' probe.
+    #[cfg(test)]
+    pub fn details_of(&self) -> Option<RemoteId> {
+        match self.asking {
+            Some((Asking::Details(id), ..)) => Some(id),
+            _ => None,
+        }
+    }
+
     /// Opens `id`'s details over the screen, as a tap on its row does: from
-    /// a 2 s press on its card in the drawer (plan 20261028_03, step 8).
+    /// a 500 ms press on its card in the drawer (plan 20261028_03, step 8),
+    /// or a finished pairing's Details.
     pub fn show_details(&mut self, id: RemoteId) {
         self.open_details(id);
     }

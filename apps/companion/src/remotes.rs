@@ -16,12 +16,16 @@
 //!   connection, shouldn't we show them in a confirmation modal?"). Quiet,
 //!   as the 14:42 EDT amendment has it: the six pairing words, large, and
 //!   one line saying to confirm on the Mac. Its Details: the daemon's name
-//!   and `host:port`, its fingerprint as six words and as BLAKE2s-256 in
-//!   hex, the time the link has left, and in the device-code fallback the
-//!   code to paste into `flankr pair`.
+//!   and `host:port`, then the remote details modal's Fingerprint row
+//!   ([`Pairing::fingerprint_row`]: collapsed, and expanding to the same
+//!   six words and BLAKE2s-256 hex; plan 20261028_02, the 2026-11-03 12:13
+//!   EST amendment, item 2), the time the link has left, and in the
+//!   device-code fallback the code to paste into `flankr pair`.
 //! - A finished pairing (`Paired`, or `RemoteUpdated` for one already
 //!   listed) stays on the window until **Done** (the owner, 2026-10-28:
-//!   "currently it just closes and looks like it failed").
+//!   "currently it just closes and looks like it failed"); its Details,
+//!   once its row is known, is the remote's details modal (the same
+//!   amendment, item 1), which the app opens.
 //! - The lines are Markdown (drawn with `flankr-markdown`), so the copy can
 //!   set `flankr pair` in bold; values put into them go through
 //!   [`md_escape`].
@@ -36,18 +40,13 @@ use flankr_companion::{DeviceCodeFallback, Input, RemoteId, RemoteInfo};
 
 use crate::settings::copy;
 use crate::theme::{Role, theme};
-use crate::ui::{Layout, Line, chunk, wrap};
+use crate::ui::{FingerprintRow, Layout, Line, chunk, wrap};
 
 /// The pairing words' size, in points: large, to be read against the
 /// Mac's terminal at a glance.
 pub const WORDS_PT: f32 = 34.0;
 /// The notes' and labels' size, in points.
 const NOTE_PT: f32 = 15.0;
-/// The fingerprint words' size in Details, in points.
-const FINGERPRINT_PT: f32 = 20.0;
-/// The hex fingerprint's size, in points, and its groups of four a line.
-pub const HEX_PT: f32 = 15.0;
-const HEX_GROUPS_PER_LINE: usize = 4;
 /// The device code's size, in points.
 const CODE_PT: f32 = 26.0;
 /// The pairing words on one line: two lines of three, as `flankr pair`
@@ -164,9 +163,6 @@ pub struct Finished {
     pub address: Option<String>,
     /// The remote's short fingerprint, `3f9a 12c4`, from its row.
     pub label: Option<String>,
-    /// The daemon's fingerprint as six words, and in hex.
-    pub words: Option<String>,
-    pub hex: Option<String>,
     /// It was already paired (`RemoteUpdated`).
     pub already: bool,
     /// Its addresses changed: its row's first address is not the old one.
@@ -215,19 +211,10 @@ impl Finished {
         out
     }
 
-    /// Its Details: the daemon's name and address, and the full
-    /// fingerprint.
-    pub fn details(&self, layout: &Layout) -> Vec<Line> {
-        let mut out = Vec::new();
-        identity(
-            &mut out,
-            layout,
-            &self.server,
-            self.address.as_deref(),
-            self.words.as_deref(),
-            self.hex.as_deref(),
-        );
-        out
+    /// The remote whose details its Details opens, once its row is known:
+    /// until then the window shows Done alone.
+    pub fn details_of(&self) -> Option<RemoteId> {
+        self.id
     }
 }
 
@@ -242,8 +229,11 @@ pub struct Pairing {
     pub waiting: Option<Waiting>,
     /// A pairing that ended well, until **Done**.
     pub finished: Option<Finished>,
-    /// Details are open (the modal's, or the finished pairing's).
+    /// The waiting modal's Details are open.
     pub details: bool,
+    /// The Fingerprint row in them is expanded; collapsed each time
+    /// Details opens.
+    pub fingerprint_open: bool,
 }
 
 impl Pairing {
@@ -267,9 +257,13 @@ impl Pairing {
     /// at once, as the code there is all there is to do.
     pub fn show(&mut self, waiting: Waiting) {
         if waiting.words.is_none() {
+            if !self.details {
+                self.fingerprint_open = false;
+            }
             self.details = true;
         } else if self.waiting.as_ref().map(|w| &w.words) != Some(&waiting.words) {
             self.details = false;
+            self.fingerprint_open = false;
         }
         self.finished = None;
         self.waiting = Some(waiting);
@@ -280,9 +274,32 @@ impl Pairing {
         self.waiting.is_some()
     }
 
-    /// The Details button: opens or closes them.
+    /// The waiting modal's Details button: opens or closes them, the
+    /// Fingerprint row collapsed.
     pub fn toggle_details(&mut self) {
         self.details = !self.details;
+        self.fingerprint_open = false;
+    }
+
+    /// A tap on the Fingerprint row in the waiting modal's Details:
+    /// expands or collapses it, as in the remote details modal.
+    pub fn toggle_fingerprint(&mut self) {
+        self.fingerprint_open = !self.fingerprint_open;
+    }
+
+    /// The Fingerprint row of the waiting modal's Details, while they are
+    /// open: after their first line (the daemon's name and `host:port`),
+    /// expanded to the remote details modal's own section.
+    pub fn fingerprint_row(&self) -> Option<FingerprintRow> {
+        let w = self.waiting.as_ref().filter(|_| self.details)?;
+        Some(FingerprintRow {
+            at: 1,
+            open: self.fingerprint_open,
+            section: crate::settings::remote_details::fingerprint_section(
+                &w.fingerprint,
+                &w.fingerprint_hex,
+            ),
+        })
     }
 
     /// Cancel, the add mode's "<", or the system Back: the pairing in
@@ -310,8 +327,6 @@ impl Pairing {
                 .map(|w| w.address.clone())
                 .or_else(|| link.as_ref().map(|l| l.address.clone())),
             label: None,
-            words: waiting.as_ref().map(|w| w.fingerprint.clone()),
-            hex: waiting.as_ref().map(|w| w.fingerprint_hex.clone()),
             already: false,
             updated: false,
             id: None,
@@ -319,6 +334,7 @@ impl Pairing {
         };
         fill_from_rows(&mut finished, rows);
         self.details = false;
+        self.fingerprint_open = false;
         self.finished = Some(finished);
         server
     }
@@ -330,13 +346,12 @@ impl Pairing {
         self.link = None;
         self.waiting = None;
         self.details = false;
+        self.fingerprint_open = false;
         let row = rows.iter().find(|r| r.id == id);
         self.finished = Some(Finished {
             server: name.to_string(),
             address: row.map(|r| r.host.clone()),
             label: row.map(|r| r.fingerprint.clone()),
-            words: row.map(|r| r.fingerprint_words.clone()),
-            hex: row.map(|r| hex_groups(&r.fingerprint_hex)),
             already: true,
             updated: false,
             id: Some(id),
@@ -366,6 +381,7 @@ impl Pairing {
         self.waiting = None;
         self.link = None;
         self.details = false;
+        self.fingerprint_open = false;
     }
 
     /// The pairing area's lines at `now`, Markdown: in the add mode with
@@ -412,9 +428,8 @@ impl Pairing {
     }
 }
 
-/// `f`'s row, by id or else by name: its short fingerprint, its id, its
-/// whole fingerprint where the pairing gave none, and for an update
-/// whether its first address changed.
+/// `f`'s row, by id or else by name: its short fingerprint, its id, and
+/// for an update whether its first address changed.
 fn fill_from_rows(f: &mut Finished, rows: &[RemoteInfo]) {
     let row = match f.id {
         Some(id) => rows.iter().find(|r| r.id == id),
@@ -425,12 +440,6 @@ fn fill_from_rows(f: &mut Finished, rows: &[RemoteInfo]) {
     };
     f.id = Some(row.id);
     f.label = Some(row.fingerprint.clone());
-    if f.words.is_none() {
-        f.words = Some(row.fingerprint_words.clone());
-    }
-    if f.hex.is_none() {
-        f.hex = Some(hex_groups(&row.fingerprint_hex));
-    }
     if f.already {
         if f.old_host.as_deref().is_some_and(|old| old != row.host) {
             f.updated = true;
@@ -488,70 +497,27 @@ fn words_lines(out: &mut Vec<Line>, layout: &Layout, words: &str) {
     word_rows(out, layout, words, size, theme().text);
 }
 
-/// The daemon's name and `host:port`, then its fingerprint: six words, and
-/// BLAKE2s-256 in hex in the terminal face, four groups a line.
-fn identity(
-    out: &mut Vec<Line>,
-    layout: &Layout,
-    server: &str,
-    address: Option<&str>,
-    words: Option<&str>,
-    hex: Option<&str>,
-) {
-    if let Some(address) = address {
-        let line = copy::PAIRING_ADDRESS.fill(
-            None,
-            &[
-                ("server", &md_escape(server)),
-                ("address", &md_escape(address)),
-            ],
-        );
-        para(out, layout, &line, theme().text, 0.0);
-    }
-    if let Some(words) = words {
-        para(
-            out,
-            layout,
-            copy::PAIRING_FINGERPRINT.text,
-            theme().muted,
-            12.0,
-        );
-        word_rows(out, layout, words, FINGERPRINT_PT, theme().text);
-    }
-    if let Some(hex) = hex {
-        para(
-            out,
-            layout,
-            copy::PAIRING_FINGERPRINT_FULL.text,
-            theme().muted,
-            12.0,
-        );
-        let groups: Vec<&str> = hex.split_whitespace().collect();
-        for row in groups.chunks(HEX_GROUPS_PER_LINE) {
-            out.push(Line {
-                text: format!("`{}`", row.join(" ")),
-                size: HEX_PT,
-                color: theme().code,
-                gap: 4.0,
-            });
-        }
-    }
+/// The daemon's name and `host:port`: the first line of the waiting
+/// modal's Details, the Fingerprint row under it
+/// ([`Pairing::fingerprint_row`]).
+fn identity(out: &mut Vec<Line>, layout: &Layout, server: &str, address: &str) {
+    let line = copy::PAIRING_ADDRESS.fill(
+        None,
+        &[
+            ("server", &md_escape(server)),
+            ("address", &md_escape(address)),
+        ],
+    );
+    para(out, layout, &line, theme().text, 0.0);
 }
 
-/// The modal's Details: the daemon's name and `host:port`, its full
-/// fingerprint, the time the link has left, then the device-code
-/// fallback's code (or, without words, why there are none).
+/// The modal's Details: the daemon's name and `host:port` (then, drawn by
+/// the screen, the Fingerprint row), the time the link has left, then the
+/// device-code fallback's code (or, without words, why there are none).
 fn details(out: &mut Vec<Line>, layout: &Layout, w: &Waiting, now: Instant) {
     let escaped = md_escape(&w.server);
     let server = [("server", escaped.as_str())];
-    identity(
-        out,
-        layout,
-        &w.server,
-        Some(&w.address),
-        Some(&w.fingerprint),
-        Some(&w.fingerprint_hex),
-    );
+    identity(out, layout, &w.server, &w.address);
     if let Some(at) = w.expires_at {
         let left = at.saturating_duration_since(now);
         let text = if left.is_zero() {
@@ -789,23 +755,51 @@ mod tests {
     }
 
     #[test]
-    fn details_show_the_fingerprint_address_and_time_left() {
+    fn details_show_the_address_the_fingerprint_row_and_time_left() {
         let now = Instant::now();
         let mut p = Pairing::default();
         p.show(held(now));
+        assert_eq!(p.fingerprint_row(), None, "no row while Details are shut");
         p.toggle_details();
         let lines = p.lines(&PHONE, None, now + Duration::from_millis(15_500));
         let all: Vec<String> = lines.iter().map(|l| plain(&l.text)).collect();
         let all: Vec<&str> = all.iter().map(String::as_str).collect();
-        // The hostname first, then the fingerprint: its words and, from the
-        // event, its whole hex in the mono face.
+        // The hostname first, then (drawn by the screen) the Fingerprint
+        // row, then the time left; the fingerprint is not in the lines.
         assert_eq!(all[0], "m4 at m4.ts.net:7347");
-        assert_eq!(all[1], "Daemon fingerprint");
-        assert_eq!(all[2..4], ["zoo zone youth", "wrist wrong yellow"]);
-        assert_eq!(all[4], "BLAKE2s-256 fingerprint");
-        assert_eq!(all[5], "`3f9a 12c4 3f9a 12c4`");
-        assert_eq!(all[5..9].len(), 4, "four lines of four groups");
-        assert!(all.contains(&"The link expires in 45 s."), "{all:?}");
+        assert_eq!(all[1], "The link expires in 45 s.", "{all:?}");
+        assert!(!all.join(" ").contains("zoo zone"), "{all:?}");
+        // The row: after the first line, collapsed, and expanding to the
+        // remote details modal's own section, built by the same function.
+        let row = p.fingerprint_row().expect("the Fingerprint row");
+        assert_eq!((row.at, row.open), (1, false));
+        let mut info = remote(4, false);
+        info.fingerprint_words = FINGERPRINT.into();
+        info.fingerprint_hex = HEX.repeat(8);
+        assert_eq!(
+            row.section,
+            crate::settings::remote_details::fingerprint_markdown(&info),
+            "the same section as the details modal's"
+        );
+        let section = plain(&row.section);
+        assert!(
+            section.contains("zoo zone youth wrist wrong yellow"),
+            "{section}"
+        );
+        assert!(section.contains("BLAKE2s-256 of its key"), "{section}");
+        assert!(section.contains("`3f9a 12c4 3f9a 12c4`"), "{section}");
+        p.toggle_fingerprint();
+        assert!(p.fingerprint_row().unwrap().open);
+        p.toggle_fingerprint();
+        assert!(
+            !p.fingerprint_row().unwrap().open,
+            "a second tap collapses it"
+        );
+        // Opened again later, it starts collapsed.
+        p.toggle_fingerprint();
+        p.toggle_details();
+        p.toggle_details();
+        assert!(!p.fingerprint_row().unwrap().open);
         // The pairing words are not the fingerprint: not repeated here, and
         // no device code without the fallback.
         assert!(!all.join(" ").contains("abandon"));
@@ -813,9 +807,10 @@ mod tests {
         assert!(lines.iter().all(|l| l.size < WORDS_PT));
         let later = texts(&p, now + Duration::from_secs(61)).join(" ");
         assert!(later.contains("The link has expired"), "{later}");
-        // Closed again: the quiet screen.
+        // Closed again: the quiet screen, and no row.
         p.toggle_details();
         assert!(texts(&p, now)[0].starts_with("abandon"));
+        assert_eq!(p.fingerprint_row(), None);
     }
 
     #[test]
@@ -953,7 +948,7 @@ mod tests {
     }
 
     #[test]
-    fn details_show_the_full_fingerprint_the_event_carries() {
+    fn the_fingerprint_row_shows_the_full_fingerprint_the_event_carries() {
         let now = Instant::now();
         let key = [7u8; 32];
         let url = libflankr_proto::link::PairingPayload {
@@ -987,20 +982,8 @@ mod tests {
         assert_eq!(all[0], "127.0.0.1 at 127.0.0.1:7347", "{all:?}");
         let groups: Vec<&str> = grouped.split(' ').collect();
         let first = format!("`{}`", groups[..4].join(" "));
-        assert!(all.contains(&first), "{all:?}");
-        assert!(all.contains(&"BLAKE2s-256 fingerprint".to_string()));
-        // Paired: the finished pairing keeps the event's hex.
-        p.paired(&[]);
-        assert_eq!(
-            p.finished.as_ref().unwrap().hex.as_deref(),
-            Some(grouped.as_str())
-        );
-        // Already paired: the row's.
-        let row = remote(4, true);
-        p.remote_updated(row.id, "m4", std::slice::from_ref(&row));
-        let f = p.finished.as_ref().unwrap();
-        assert_eq!(f.hex, Some(hex_groups(&HEX.repeat(8))));
-        assert_eq!(f.words.as_deref(), Some(FINGERPRINT));
+        let section = p.fingerprint_row().unwrap().section;
+        assert!(section.contains(&first), "{section}");
     }
 
     #[test]

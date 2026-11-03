@@ -343,9 +343,13 @@ pub struct View {
     /// titled *Confirm on your Mac*, with Details and Cancel (the owner,
     /// 2026-10-28). Nothing under it takes a tap.
     pub waiting: bool,
-    /// Details are open (the modal's or a finished pairing's): the Details
-    /// button reads "Hide details".
+    /// The waiting modal's Details are open: its Details button reads
+    /// "Hide details".
     pub details: bool,
+    /// The remote details modal's Fingerprint row in the waiting modal's
+    /// Details (plan 20261028_02, the 2026-11-03 12:13 EST amendment,
+    /// item 2), while they are open.
+    pub fingerprint: Option<FingerprintRow>,
     /// The add mode (**+** in Settings' Remotes): its title, and a "<"
     /// back to Settings.
     pub adding: bool,
@@ -353,6 +357,20 @@ pub struct View {
     /// there is a camera, and the read and finished states everywhere;
     /// `code` is under it. `None`: the paste screen.
     pub camera: Option<CameraView>,
+}
+
+/// The Fingerprint row in the waiting modal's Details: the remote details
+/// modal's own control ([`crate::settings::remote_details::Disclosure`])
+/// and, expanded, its own section.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FingerprintRow {
+    /// The row comes after this many of the modal's lines.
+    pub at: usize,
+    /// It is expanded.
+    pub open: bool,
+    /// What it expands to, Markdown
+    /// ([`crate::settings::remote_details::fingerprint_section`]).
+    pub section: String,
 }
 
 /// What the area at the top shows.
@@ -376,8 +394,12 @@ pub enum Row {
     Scan,
     /// Cancel alone: a scanned code is being paired.
     Cancel,
-    /// Details and **Done**: the pairing is done.
+    /// Details and **Done**: the pairing is done, and its remote's row is
+    /// known, so Details opens its details modal.
     Done,
+    /// **Done** alone: the pairing is done, its remote's row not yet
+    /// known.
+    DoneOnly,
 }
 
 /// What the pairing window shows of the camera (plan 20261028_02,
@@ -414,9 +436,12 @@ pub enum Hit {
     /// Cancel: in the pairing modal, while a scanned code is paired, or in
     /// the add mode's camera row.
     Cancel,
-    /// Details, in the pairing modal or on a finished pairing: opens or
-    /// closes them.
+    /// Details: in the pairing modal, opens or closes them; on a finished
+    /// pairing, opens the remote's details modal.
     Details,
+    /// The Fingerprint row in the pairing modal's Details: expands or
+    /// collapses it.
+    Fingerprint,
     /// The add mode's "<": back to Settings.
     Back,
     /// The camera's area: the placeholder's Tap to scan.
@@ -793,9 +818,12 @@ impl Screen {
                     row.push((Hit::Details, self.details));
                     row.push((Hit::Done, self.done));
                 }
+                Row::DoneOnly => row.push((Hit::Done, self.done)),
             }
         }
-        set_details_label(&mut self.router, self.details, view.details);
+        // A finished pairing's Details opens the details modal: never
+        // "Hide details".
+        set_details_label(&mut self.router, self.details, false);
         let n = row.len().max(1) as f32;
         let each = (layout.w - 2.0 * pad - 12.0 * s * (n - 1.0)) / n;
         for (i, &(hit, id)) in row.iter().enumerate() {
@@ -871,17 +899,32 @@ impl Screen {
         let title_h = MODAL_TITLE_PT * s * 1.35;
         let room = layout.h - layout.top - layout.bottom - 2.0 * MODAL_MARGIN * s;
         let fixed = pad + title_h + gap + 2.0 * gap + button_h + pad;
-        // The lines that fit, in order.
-        let mut lines: Vec<(f32, MarkdownView)> = Vec::new();
+        // The lines that fit, in order, with the Fingerprint row (and its
+        // section, expanded) after the first `at` of them, spaced as in
+        // the remote details modal.
+        let mut lines: Vec<(f32, Part)> = Vec::new();
         let mut lines_h = 0.0;
-        for line in &view.code {
-            let md = self.markdown(line, 0.0, inner, s);
-            let h = line.gap * s + md.height();
+        let mut parts: Vec<(f32, Part)> = Vec::new();
+        for (i, line) in view.code.iter().enumerate() {
+            if let Some(f) = view.fingerprint.as_ref().filter(|f| f.at == i) {
+                self.fingerprint_parts(&mut parts, f, inner, s);
+            }
+            parts.push((line.gap * s, Part::Text(self.markdown(line, 0.0, inner, s))));
+        }
+        if let Some(f) = view
+            .fingerprint
+            .as_ref()
+            .filter(|f| f.at >= view.code.len())
+        {
+            self.fingerprint_parts(&mut parts, f, inner, s);
+        }
+        for (part_gap, part) in parts {
+            let h = part_gap + part.height();
             if fixed + lines_h + h > room {
                 break;
             }
             lines_h += h;
-            lines.push((line.gap * s, md));
+            lines.push((part_gap, part));
         }
         let h = fixed + lines_h;
         let viewport_mid = layout.top + (layout.h - layout.top - layout.bottom) / 2.0;
@@ -898,11 +941,22 @@ impl Screen {
             title.rect = Rect::new(x, y, inner, MODAL_TITLE_PT * s * 1.3);
         }
         y += title_h + gap;
-        for (line_gap, mut md) in lines {
+        for (line_gap, part) in lines {
             y += line_gap;
-            md.move_to(x, y);
-            y += md.height();
-            self.modal_lines.push(self.modal.add(None, md));
+            let h = part.height();
+            let id = match part {
+                Part::Text(mut md) => {
+                    md.move_to(x, y);
+                    self.modal.add(None, md)
+                }
+                Part::Row(mut row) => {
+                    row.rect = Rect::new(x, y, inner, row.rect.h);
+                    self.hits.push((Hit::Fingerprint, row.rect));
+                    self.modal.add(None, row)
+                }
+            };
+            y += h;
+            self.modal_lines.push(id);
         }
         let by = card.y + h - pad - button_h;
         let bw = (inner - gap) / 2.0;
@@ -922,6 +976,32 @@ impl Screen {
             card,
             radius: MODAL_RADIUS * s,
         });
+    }
+
+    /// The Fingerprint row, `GAP` above it, and expanded its section under
+    /// it, as the remote details modal spaces them.
+    fn fingerprint_parts(
+        &self,
+        parts: &mut Vec<(f32, Part)>,
+        f: &FingerprintRow,
+        inner: f32,
+        s: f32,
+    ) {
+        use crate::settings::remote_details::{ROW_H, SECTION_PT, fingerprint_row};
+        let rect = Rect::new(0.0, 0.0, inner, ROW_H * s);
+        parts.push((12.0 * s, Part::Row(fingerprint_row(rect, f.open, s))));
+        if f.open {
+            let md = MarkdownView::new(
+                &f.section,
+                0.0,
+                0.0,
+                inner,
+                SECTION_PT * s,
+                theme().text,
+                self.faces.clone(),
+            );
+            parts.push((4.0 * s, Part::Text(md)));
+        }
     }
 
     /// The camera's area, from the top safe area to the line under it,
@@ -1119,12 +1199,30 @@ fn texts_of(router: &Router, ids: &[NodeId]) -> Vec<String> {
             } else if let Some(md) = router.get::<MarkdownView>(id) {
                 // Its wrapped lines as one text.
                 md.text().replace('\n', " ")
+            } else if let Some(row) = router.get::<crate::settings::remote_details::Disclosure>(id)
+            {
+                row.label.clone()
             } else {
                 router.get::<Button>(id)?.text.clone()
             };
             (!text.is_empty()).then_some(text)
         })
         .collect()
+}
+
+/// One part of the pairing modal's body: a line, or the Fingerprint row.
+enum Part {
+    Text(MarkdownView),
+    Row(crate::settings::remote_details::Disclosure),
+}
+
+impl Part {
+    fn height(&self) -> f32 {
+        match self {
+            Part::Text(md) => md.height(),
+            Part::Row(row) => row.rect.h,
+        }
+    }
 }
 
 /// What the area draws under its labels and buttons: the placeholder's
@@ -1353,24 +1451,22 @@ mod tests {
     #[test]
     fn a_finished_pairing_shows_a_check_details_and_done() {
         let mut screen = Screen::new();
-        let view = |details: bool| View {
+        let view = |row: Row| View {
             adding: true,
-            details,
-            code: if details {
-                vec![line("m4 at m4.ts.net:7347")]
-            } else {
-                Vec::new()
-            },
             camera: Some(CameraView {
                 glyph: Glyph::Check,
                 prompt: Some("Paired with m4".into()),
                 detail: Some("m4.ts.net:7347 · fingerprint 3f9a 12c4".into()),
-                row: Row::Done,
+                row,
                 ..CameraView::default()
             }),
             ..View::default()
         };
-        screen.set(PHONE, view(false));
+        // Before its row is known: Done alone.
+        screen.set(PHONE, view(Row::DoneOnly));
+        let hits: Vec<Hit> = screen.hits.iter().map(|&(h, _)| h).collect();
+        assert_eq!(hits, [Hit::Back, Hit::Done]);
+        screen.set(PHONE, view(Row::Done));
         let hits: Vec<Hit> = screen.hits.iter().map(|&(h, _)| h).collect();
         assert_eq!(hits, [Hit::Back, Hit::Details, Hit::Done], "no Area");
         let texts = screen.shown_texts();
@@ -1390,14 +1486,10 @@ mod tests {
             .filter(|i| matches!(i.kind, libmsdf::drawlist::SdfKind::Line { .. }))
             .count();
         assert_eq!(lines, 2);
-        screen.set(PHONE, view(true));
-        assert!(
-            screen
-                .shown_texts()
-                .contains(&"m4 at m4.ts.net:7347".to_string())
-        );
+        // Its Details opens the remote's details modal (the app's): it
+        // never reads "Hide details" here.
         let b = screen.router.get::<Button>(screen.details).unwrap();
-        assert_eq!(b.text, "Hide details");
+        assert_eq!(b.text, "Details");
     }
 
     #[test]
@@ -1427,6 +1519,7 @@ mod tests {
             code: p.lines(&modal_layout(&PHONE), None, now),
             waiting: p.waiting(),
             details: p.details,
+            fingerprint: p.fingerprint_row(),
             adding: p.adding,
             ..View::default()
         };
@@ -1455,9 +1548,9 @@ mod tests {
         let shown = |s: &Screen| -> Vec<(String, f32)> {
             s.modal_lines
                 .iter()
-                .map(|&id| {
-                    let md = s.modal.get::<MarkdownView>(id).unwrap();
-                    (md.text(), md.px())
+                .filter_map(|&id| {
+                    let md = s.modal.get::<MarkdownView>(id)?;
+                    Some((md.text(), md.px()))
                 })
                 .collect()
         };
@@ -1484,17 +1577,65 @@ mod tests {
             let r = screen.modal.get::<MarkdownView>(id).unwrap().rect();
             assert!(r.x >= card.x && r.x + r.w <= card.x + card.w, "{r:?}");
         }
-        // Details: the hostname and the fingerprint, all of it drawn.
+        // Details: the hostname, then the remote details modal's
+        // Fingerprint row, collapsed, then the time left.
         p.toggle_details();
         screen.set(PHONE, view(&p));
         let details: Vec<String> = shown(&screen).into_iter().map(|(t, _)| t).collect();
-        assert!(
-            details.iter().any(|t| t == "Daemon fingerprint"),
-            "{details:?}"
+        assert_eq!(
+            details,
+            ["m4 at m4.ts.net:7347", "The link expires in 60 s."],
+            "the fingerprint collapsed"
         );
-        assert!(details.iter().any(|t| t == "zoo zone youth"));
-        assert!(details.iter().any(|t| t == "m4 at m4.ts.net:7347"));
-        assert!(details.iter().any(|t| t == "The link expires in 60 s."));
+        let row = |s: &Screen| {
+            s.modal_lines
+                .iter()
+                .find_map(|&id| {
+                    s.modal
+                        .get::<crate::settings::remote_details::Disclosure>(id)
+                })
+                .cloned()
+                .expect("the Fingerprint row")
+        };
+        let r = row(&screen);
+        assert_eq!(r.label, "Fingerprint");
+        assert!(!r.open);
+        assert_eq!(
+            r.rect.h,
+            44.0 * PHONE.scale,
+            "the details modal's row height"
+        );
+        let hit = screen
+            .hits
+            .iter()
+            .find(|(h, _)| *h == Hit::Fingerprint)
+            .expect("the row takes a tap")
+            .1;
+        assert_eq!(hit, r.rect);
+        // A tap expands it: the details modal's section, at its size.
+        p.toggle_fingerprint();
+        screen.set(PHONE, view(&p));
+        assert!(row(&screen).open);
+        let open = shown(&screen);
+        let section = open
+            .iter()
+            .find(|(t, _)| t.contains("BLAKE2s-256 of its key"))
+            .expect("the section");
+        assert!(
+            section.0.contains("zoo zone youth wrist wrong yellow"),
+            "{open:?}"
+        );
+        assert!(section.0.contains("3f9a 12c4 3f9a 12c4"), "{open:?}");
+        assert_eq!(
+            section.1,
+            crate::settings::remote_details::SECTION_PT * PHONE.scale
+        );
+        assert_eq!(open.last().unwrap().0, "The link expires in 60 s.");
+        // A second tap collapses it.
+        p.toggle_fingerprint();
+        screen.set(PHONE, view(&p));
+        assert!(!row(&screen).open);
+        assert_eq!(shown(&screen).len(), 2);
     }
 
     fn card(state: CardState) -> Card {

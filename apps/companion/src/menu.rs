@@ -46,6 +46,9 @@ pub const SETTINGS: &str = "app/settings";
 pub const SPEAK_CODING: &str = "app/speak_coding";
 pub const SPEAK_GEMINI: &str = "app/speak_gemini";
 pub const SKIP: &str = "app/skip";
+/// The volume menu's Stop, while something is being said (the 2026-11-03
+/// 12:13 EST amendment, item 4).
+pub const STOP: &str = "app/stop";
 /// The + menu's (decision 8 and the 23:39 EDT amendment).
 pub const PASTE_TEXT: &str = "app/paste_text";
 pub const ATTACH_IMAGE: &str = "app/attach_image";
@@ -64,10 +67,11 @@ pub enum Choice {
     Settings,
     /// The volume menu: *Speak coding responses* or *Speak agent (Gemini)
     /// responses* toggled in place, to the state given (the menu stays
-    /// open); or Skip.
+    /// open); Skip; or Stop.
     SpeakCoding(bool),
     SpeakGemini(bool),
     Skip,
+    Stop,
     /// The + menu: the clipboard's text at the cursor, or the media
     /// chooser.
     PasteText,
@@ -110,6 +114,7 @@ impl Choice {
         match id {
             SETTINGS => Some(Choice::Settings),
             SKIP => Some(Choice::Skip),
+            STOP => Some(Choice::Stop),
             PASTE_TEXT => Some(Choice::PasteText),
             ATTACH_IMAGE => Some(Choice::AttachImage),
             SHOW_CHANGES => Some(Choice::ShowChanges),
@@ -209,13 +214,14 @@ fn speak_item(id: &'static str, label: &str, on: bool, enabled: bool) -> PopupIt
     PopupItem::toggle(id, label, on).with_enabled(enabled)
 }
 
-/// The volume menu (plan 20261028_06, decision 3), top to bottom: *Speak
-/// coding responses*, *Speak agent (Gemini) responses* (dim while
-/// `gemini_offered` is not: the general agent off or not offered), and,
-/// while `speaking`, a separator and Skip, last, nearest the finger.
-/// While `muted` (the 2026-10-29 00:26 EDT amendment, item 3), both speak
-/// items are dim with their checks kept, showing what unmuting brings
-/// back, and there is no Skip.
+/// The volume menu (plan 20261028_06, decision 3), top to bottom: while
+/// `speaking`, **Stop** and a separator (the 2026-11-03 12:13 EST
+/// amendment, item 4); *Speak coding responses*, *Speak agent (Gemini)
+/// responses* (dim while `gemini_offered` is not: the general agent off
+/// or not offered); and, while `speaking`, a separator and Skip, last,
+/// nearest the finger. While `muted` (the 2026-10-29 00:26 EDT
+/// amendment, item 3), both speak items are dim with their checks kept,
+/// showing what unmuting brings back, and there is no Stop or Skip.
 pub fn volume_items(
     speak_coding: bool,
     speak_gemini: bool,
@@ -223,7 +229,13 @@ pub fn volume_items(
     speaking: bool,
     muted: bool,
 ) -> Vec<PopupItem> {
-    let mut out = vec![
+    let speaking = speaking && !muted;
+    let mut out = Vec::new();
+    if speaking {
+        out.push(PopupItem::action(STOP, copy::MENU_STOP.text));
+        out.push(PopupItem::separator());
+    }
+    out.extend([
         speak_item(SPEAK_CODING, copy::SPEAK_CODING.text, speak_coding, !muted),
         speak_item(
             SPEAK_GEMINI,
@@ -231,8 +243,7 @@ pub fn volume_items(
             speak_gemini,
             gemini_offered && !muted,
         ),
-    ];
-    let speaking = speaking && !muted;
+    ]);
     if speaking {
         out.push(PopupItem::separator());
         out.push(PopupItem::action(SKIP, copy::MENU_SKIP.text));
@@ -673,10 +684,16 @@ mod tests {
         assert_eq!(i[0].kind, libcontrols::PopupItemKind::Toggle);
         // Gemini's dim without the general agent.
         assert!(!volume_items(true, true, false, false, false)[1].enabled);
-        // Speaking: a separator and Skip, last.
+        // Speaking: Stop at the top, then a separator; a separator and
+        // Skip, last.
         let i = volume_items(true, false, true, true, false);
-        assert_eq!(ids(&i), [SPEAK_CODING, SPEAK_GEMINI, "---", SKIP]);
-        assert_eq!(i[3].label, "Skip");
+        assert_eq!(
+            ids(&i),
+            [STOP, "---", SPEAK_CODING, SPEAK_GEMINI, "---", SKIP]
+        );
+        assert_eq!(i[0].label, "Stop");
+        assert_eq!(i[5].label, "Skip");
+        assert_eq!(Choice::parse(STOP), Some(Choice::Stop));
         assert_eq!(
             Choice::toggled(SPEAK_CODING, true),
             Some(Choice::SpeakCoding(true))
@@ -685,8 +702,8 @@ mod tests {
             Choice::toggled(SPEAK_GEMINI, false),
             Some(Choice::SpeakGemini(false))
         );
-        // Muted: both dim with their checks kept, and no Skip while
-        // speaking.
+        // Muted: both dim with their checks kept, and no Stop or Skip
+        // while speaking.
         let i = volume_items(true, false, true, true, true);
         assert_eq!(ids(&i), [SPEAK_CODING, SPEAK_GEMINI]);
         assert_eq!((i[0].checked, i[1].checked), (Some(true), Some(false)));
@@ -732,21 +749,30 @@ mod tests {
         m.open(anchor, volume_items(false, true, true, true, false));
         let mut list = DrawList::new();
         m.draw(&mut list, &DrawContext::default());
-        let last = m.item_rect(3).expect("laid out");
+        // Speaking: Stop, a separator, the two options, a separator, Skip.
+        let last = m.item_rect(5).expect("laid out");
         assert!(last.y + last.h <= anchor.y, "above its anchor");
         // A tap on Speak coding responses toggles it and the menu stays
         // open; Skip then chooses and closes it.
-        let [x, y] = m.item_rect(0).unwrap().center();
+        let [x, y] = m.item_rect(2).unwrap().center();
         m.touch(1, TouchPhase::Started, x, y);
         m.touch(1, TouchPhase::Ended, x, y);
         assert_eq!(m.take_choice(), Some(Choice::SpeakCoding(true)));
         assert!(m.is_open(), "a toggle keeps the menu open");
-        assert_eq!(m.items()[0].checked, Some(true));
+        assert_eq!(m.items()[2].checked, Some(true));
         m.draw(&mut DrawList::new(), &DrawContext::default());
-        let [x, y] = m.item_rect(3).unwrap().center();
+        let [x, y] = m.item_rect(5).unwrap().center();
         m.touch(2, TouchPhase::Started, x, y);
         m.touch(2, TouchPhase::Ended, x, y);
         assert_eq!(m.take_choice(), Some(Choice::Skip));
+        assert!(!m.is_open());
+        // Stop, at the top, chooses and closes it too.
+        m.open(anchor, volume_items(false, true, true, true, false));
+        m.draw(&mut DrawList::new(), &DrawContext::default());
+        let [x, y] = m.item_rect(0).unwrap().center();
+        m.touch(3, TouchPhase::Started, x, y);
+        m.touch(3, TouchPhase::Ended, x, y);
+        assert_eq!(m.take_choice(), Some(Choice::Stop));
         assert!(!m.is_open());
     }
 

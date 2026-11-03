@@ -337,16 +337,28 @@ fn a_confirmed_pairing_shows_paired_until_done() {
     let hits: Vec<Hit> = p.hits.iter().map(|&(h, _)| h).collect();
     assert_eq!(hits, [Hit::Details, Hit::Done], "no Tap to scan");
     // Still there many frames later: it waits for Done.
+    let again = run(&scan(&first, &daemon, 90), &["--camera"]).unwrap();
+    assert!(again.shows("Paired with 127.0.0.1"), "{:?}", again.texts);
+    // Details: the finished pairing ends as Done does, and the remote's
+    // details modal opens over Settings, as a press on its card in the
+    // drawer opens it (`drawer_tests`): the same screen, by the same call.
     let script = format!(
-        "{}{}frames 2\n",
+        "{}{}frames 4\n",
         scan(&first, &daemon, 60),
         tap(p.at(Hit::Details))
     );
     let d = run(&script, &["--camera"]).unwrap();
-    assert!(d.shows("Paired with 127.0.0.1"), "{:?}", d.texts);
-    assert!(d.shows("Daemon fingerprint"), "{:?}", d.texts);
-    assert!(d.shows("BLAKE2s-256 fingerprint"), "{:?}", d.texts);
-    assert!(d.shows("Hide details"));
+    assert!(
+        d.log.iter().any(|l| l == "pairing done, overview"),
+        "{:?}",
+        d.log
+    );
+    assert!(d.drawer.settings && d.drawer.details, "{:?}", d.drawer);
+    assert!(d.drawer.details_of.is_some(), "the remote's details");
+    assert!(!d.shows("Hide details"), "no inline Details any more");
+    // Closed, Settings closes with it, as from the card: the overview.
+    let closed = run(&format!("{script}key back\nframes 4\n"), &["--camera"]).unwrap();
+    assert!(!closed.drawer.settings && !closed.drawer.details);
     // Done: on to the overview.
     let script = format!(
         "{}{}frames 2\n",

@@ -17,11 +17,12 @@
 //! - a **tap** on a remote's card switches to that remote
 //!   ([`DrawerHit::Remote`]; a tap on the one in use does nothing, which
 //!   the app decides); on the **+**, the pairing window's add mode;
-//! - a **2 s press** on any remote's card opens that remote's details
-//!   ([`DrawerHit::Details`]); the card shows the press while it is held,
-//!   and a press that became a hold is no tap (the owner, 2026-10-28:
-//!   "only pressing for 2s should open the details and allow removing
-//!   remote from card view");
+//! - a **500 ms press** on any remote's card opens that remote's details
+//!   ([`DrawerHit::Details`]); the card shows the press colour while it is
+//!   held, with no progress bar, and a press that became a hold is no tap
+//!   (the owner, 2026-10-28: "only pressing for 2s should open the details
+//!   and allow removing remote from card view"; 2026-11-03, the 12:13 EST
+//!   amendment: "make them all 500ms", with no progress bar);
 //! - a tap on a session's row opens its agent view;
 //! - a drag in the list scrolls it; a tap on the scrim closes the drawer.
 
@@ -43,8 +44,9 @@ use libmsdf::drawlist::DrawList;
 use self::content::DrawerContent;
 use self::remote_card::Slot;
 
-/// How long a card is held to open its remote's details.
-pub const HOLD: Duration = Duration::from_secs(2);
+/// How long a card is held to open its remote's details: the app's one
+/// hold time.
+pub const HOLD: Duration = crate::controls::hold::HOLD;
 /// How far a finger moves, in points, before a press on a card is no tap.
 const SLOP: f32 = 10.0;
 
@@ -55,7 +57,7 @@ pub enum DrawerHit {
     Remote(RemoteId),
     /// A tap on the **+**.
     AddRemote,
-    /// A 2 s press on a remote's card.
+    /// A [`HOLD`] press on a remote's card.
     Details(RemoteId),
     /// A tap on a session's row: its pane.
     Session(String),
@@ -282,6 +284,8 @@ impl AppDrawer {
         }
         let mut hit = None;
         let mut press = None;
+        // The card held shows the press colour until the hold, a move or
+        // the release; nothing marks how far the hold has come.
         if let Some(p) = self.press.as_mut()
             && let Some(card) = p.card
             && !p.moved
@@ -294,7 +298,7 @@ impl AppDrawer {
                     hit = Some(DrawerHit::Details(r.id));
                 }
             } else {
-                press = Some((card, held.as_secs_f32() / HOLD.as_secs_f32()));
+                press = Some(card);
             }
         }
         let router = self.layout.content_mut();
@@ -546,7 +550,8 @@ mod tests {
     }
 
     #[test]
-    fn a_2_s_press_on_any_card_opens_its_details_and_is_no_tap() {
+    fn a_500_ms_press_on_any_card_opens_its_details_and_is_no_tap() {
+        assert_eq!(HOLD, Duration::from_millis(500));
         for i in [0usize, 1] {
             let mut d = opened(2);
             let t0 = Duration::from_secs(10);
@@ -555,13 +560,11 @@ mod tests {
                 d.touch(7, TouchPhase::Started, x, y, t0),
                 DrawerTouch::Nothing
             );
-            // Held: the card shows the press, and how far it has come.
+            // Held short of 500 ms: nothing opens yet.
             assert_eq!(
-                d.tick(Duration::from_millis(33), t0 + Duration::from_secs(1)),
+                d.tick(Duration::from_millis(33), t0 + Duration::from_millis(499)),
                 None
             );
-            let press = d.content().slots().len();
-            assert!(press > 0);
             assert_eq!(
                 d.tick(Duration::from_millis(33), t0 + HOLD),
                 Some(DrawerHit::Details(RemoteId([i as u8; 8]))),
@@ -587,12 +590,24 @@ mod tests {
         let [x, y] = d.card_on_screen(1).unwrap().center();
         d.touch(1, TouchPhase::Started, x, y, t0);
         assert_eq!(
-            d.tick(Duration::from_millis(33), t0 + Duration::from_millis(1900)),
+            d.tick(Duration::from_millis(33), t0 + Duration::from_millis(450)),
             None
         );
         assert_eq!(
-            d.touch(1, TouchPhase::Ended, x, y, t0 + Duration::from_millis(1950)),
+            d.touch(1, TouchPhase::Ended, x, y, t0 + Duration::from_millis(480)),
             DrawerTouch::Hit(DrawerHit::Remote(RemoteId([1; 8])))
+        );
+        // Held to a frame at 500 ms: the details open, and the release
+        // is no tap.
+        d.touch(3, TouchPhase::Started, x, y, t0);
+        assert_eq!(
+            d.tick(Duration::from_millis(33), t0 + HOLD),
+            Some(DrawerHit::Details(RemoteId([1; 8])))
+        );
+        assert_eq!(
+            d.touch(3, TouchPhase::Ended, x, y, t0 + HOLD),
+            DrawerTouch::Nothing,
+            "no tap at 500 ms"
         );
         d.touch(2, TouchPhase::Started, x, y, t0);
         d.touch(2, TouchPhase::Moved, x + 80.0, y, t0);

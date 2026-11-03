@@ -296,11 +296,11 @@ pub enum AgentHit {
     Back,
     /// The ≡ button at the header's left: open the session drawer.
     Menu,
-    /// The right button: a tap takes a message to this agent; a 2 s press
+    /// The right button: a tap takes a message to this agent; a 500 ms press
     /// opens the message card typed (plan 20261028_06, decision 7).
     Message,
     /// The centre button: a tap starts the general agent chat (Gemini) by
-    /// voice; a 2 s press opens its card typed (decision 7).
+    /// voice; a 500 ms press opens its card typed (decision 7).
     GeneralAgent,
     /// Slot 1 of 4 (plan 20261027_07, decision 7 and the 20:44 EDT
     /// amendment; plan 20261028_06, decision 1): the terminal glyph while
@@ -2622,10 +2622,6 @@ pub struct AgentScreen {
     /// The volume glyph's state: muted, and either speak option on (plan
     /// 20261028_06, decision 4, and its 2026-10-29 00:26 EDT amendment).
     volume: Volume,
-    /// A 2 s press timed on a control of the bar or the card's row, and
-    /// its progress: its bar is drawn along the control's bottom
-    /// (decision 7).
-    hold: Option<(AgentHit, f32)>,
     /// Typing's tools as the app gives them: the card rows' and the keys
     /// row's + and toggle (plan 20261028_06, decisions 8 and 9).
     tools: crate::prompt::InputTools,
@@ -3665,14 +3661,6 @@ impl AgentScreen {
 
     pub fn volume(&self) -> Volume {
         self.volume
-    }
-
-    /// The press being timed on `hit`, and its progress, for its bar.
-    pub fn set_hold(&mut self, hold: Option<(AgentHit, f32)>) {
-        if hold != self.hold {
-            self.hold = hold;
-            self.dirty = true;
-        }
     }
 
     /// Typing's tools: the cards' rows and the keys row's ends. The keys
@@ -6249,33 +6237,11 @@ impl AgentScreen {
             let tools = self.keys_tools();
             keys_row::draw(list, ctx, row, &self.frame.keys, self.term_latch, tools, s);
         }
-        // A 2 s press's progress along its control's bottom (plan
-        // 20261028_06, decision 7).
-        if let Some((hit, progress)) = self.hold
-            && let Some(r) = self.rect_of(hit)
-        {
-            fill(
-                list,
-                crate::controls::hold::bar(r, progress, s),
-                hold_colour(hit),
-                0.0,
-            );
-        }
     }
 
     /// Marks the screen to be drawn again.
     pub fn invalidate(&mut self) {
         self.dirty = true;
-    }
-}
-
-/// A press's progress bar's colour: the accent along the +, the text
-/// colour along the bar's buttons (visible on record's blue and on the
-/// centre's background).
-pub(crate) fn hold_colour(hit: AgentHit) -> [f32; 4] {
-    match hit {
-        AgentHit::PromptAttach(_) => theme().accent,
-        _ => theme().fg,
     }
 }
 
@@ -8650,29 +8616,31 @@ mod tests {
     }
 
     #[test]
-    fn a_held_press_draws_its_bar_along_the_buttons_bottom() {
+    fn no_progress_bar_is_drawn_along_a_buttons_bottom() {
+        // The 2026-11-03 12:13 EST amendment of plan 20261028_06, item 2:
+        // the view is told nothing of a held press, and draws nothing in
+        // the old bar's place (3 pt high, 6 pt in from the bottom) under
+        // any of the bar's buttons.
         let mut a = screen(conversation(3), vec![], None);
-        let r = a.rect_of(AgentHit::Message).unwrap();
-        let bars = |a: &mut AgentScreen| {
-            let mut list = DrawList::new();
-            a.invalidate();
-            a.draw(&mut list, &DrawContext::default(), None);
-            list.instances
+        let mut list = DrawList::new();
+        a.invalidate();
+        a.draw(&mut list, &DrawContext::default(), None);
+        let s = PHONE.scale;
+        for hit in [AgentHit::Volume, AgentHit::GeneralAgent, AgentHit::Message] {
+            let r = a.rect_of(hit).unwrap();
+            let bar_y = r.y + r.h - 6.0 * s - 3.0 * s;
+            let bars = list
+                .instances
                 .iter()
                 .filter(|i| {
-                    i.color == theme().fg
-                        && i.position[1] > r.y + r.h - 12.0 * PHONE.scale
-                        && i.position[1] < r.y + r.h
+                    (i.position[1] - bar_y).abs() < 0.5
+                        && (i.size[1] - 3.0 * s).abs() < 0.5
                         && i.position[0] >= r.x
                         && i.position[0] < r.x + r.w
                 })
-                .count()
-        };
-        let none = bars(&mut a);
-        a.set_hold(Some((AgentHit::Message, 0.5)));
-        assert_eq!(bars(&mut a), none + 1, "the bar under record");
-        a.set_hold(None);
-        assert_eq!(bars(&mut a), none);
+                .count();
+            assert_eq!(bars, 0, "no bar under {hit:?}");
+        }
     }
 
     #[test]

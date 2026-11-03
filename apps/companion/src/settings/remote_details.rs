@@ -1,9 +1,15 @@
 //! A remote's details modal (plan 20261024_02, the 2026-10-28 17:46, 17:56
 //! and 17:57 EDT amendments): a tap on a Remotes row, anywhere but its X,
-//! opens it, and so does a 2 s press on the remote's card in the drawer
-//! (plan 20261028_03, step 8). In the settings style, as the confirm
-//! modals: libcontrols' `ModalDialog`, centred on an opaque card, opened
-//! and closed at once.
+//! opens it, and so do a 500 ms press on the remote's card in the drawer
+//! (plan 20261028_03, step 8 and the 2026-11-03 12:13 EST amendment) and
+//! a finished pairing's Details (plan 20261028_02, the 2026-11-03 12:13
+//! EST amendment, item 1), both through `App::open_remote_details`. In
+//! the settings style, as the confirm modals: libcontrols' `ModalDialog`,
+//! centred on an opaque card, opened and closed at once.
+//!
+//! Its Fingerprint row ([`Disclosure`]) and what it expands to
+//! ([`fingerprint_section`]) are also the pairing modal's, in its Details
+//! (the same amendment, item 2), so the two expand the same way.
 //!
 //! From the top:
 //!
@@ -133,20 +139,40 @@ pub fn hex_lines(hex: &str) -> Vec<String> {
 /// The Markdown of the expanded Fingerprint section: the six words, then
 /// the hex, each under its label, the hex in the mono face.
 pub fn fingerprint_markdown(info: &RemoteInfo) -> String {
+    fingerprint_section(&info.fingerprint_words, &info.fingerprint_hex)
+}
+
+/// The expanded Fingerprint section of `words` (the six fingerprint
+/// words) and `hex` (the 64 hex digits, grouped or not), as the details
+/// modal and the pairing modal's Details both show it.
+pub fn fingerprint_section(words: &str, hex: &str) -> String {
+    let hex: String = hex.split_whitespace().collect();
     let mut out = vec![
         copy::REMOTE_DETAILS_FINGERPRINT_WORDS
             .text
             .trim()
             .to_string(),
-        md_escape(&info.fingerprint_words),
+        md_escape(words),
         copy::REMOTE_DETAILS_FINGERPRINT_HEX.text.trim().to_string(),
     ];
-    out.extend(
-        hex_lines(&info.fingerprint_hex)
-            .into_iter()
-            .map(|l| format!("`{l}`")),
-    );
+    out.extend(hex_lines(&hex).into_iter().map(|l| format!("`{l}`")));
     out.join("\n\n")
+}
+
+/// The Fingerprint row's height, in points: the details modal's and the
+/// pairing modal's.
+pub const ROW_H: f32 = FIELD_H;
+/// The expanded section's size, in points.
+pub const SECTION_PT: f32 = TEXT_PT;
+
+/// The Fingerprint row over `rect`, `open` or not, at scale `s`.
+pub fn fingerprint_row(rect: Rect, open: bool, s: f32) -> Disclosure {
+    Disclosure {
+        rect,
+        label: copy::REMOTE_DETAILS_FINGERPRINT.text.to_string(),
+        open,
+        scale: s,
+    }
 }
 
 /// The nickname's `EditableLabel` in `rect`, over `state`, at scale `s`:
@@ -297,7 +323,7 @@ impl DetailsModal {
         let paired = view(&paired, TEXT_PT, theme().text);
         let print = state
             .fingerprint_open
-            .then(|| view(&fingerprint_markdown(info), TEXT_PT, theme().text));
+            .then(|| view(&fingerprint_markdown(info), SECTION_PT, theme().text));
 
         let small = 4.0 * s;
         let gap = GAP * s;
@@ -348,12 +374,7 @@ impl DetailsModal {
         content.add(None, nickname_label(field, state, &placeholder, s));
         content.add(
             None,
-            Disclosure {
-                rect: fingerprint,
-                label: copy::REMOTE_DETAILS_FINGERPRINT.text.to_string(),
-                open: state.fingerprint_open,
-                scale: s,
-            },
+            fingerprint_row(fingerprint, state.fingerprint_open, s),
         );
         let by = top + h - pad - BUTTON_H * s;
         let bw = (inner_w - gap) / 2.0;
