@@ -245,3 +245,21 @@ Adds to decision 1:
    running it fails as `pair` does today.
 4. **The daemon** takes the next patch with its `UPDATES.md` entry
    (FLANKR RULE 2).
+
+## Amendment — 2026-11-02 22:33 EST: `--version`, `version`, and unknown arguments are errors
+
+On the owner's instruction (Rule 1.5), 2026-11-02: "neither --version nor
+version seem to be supported, which should we add?", then, offered both
+and making unknown flags an error, "go ahead". `flankr --version` on the
+MacBook had started a daemon: an unknown flag was only warned about, and
+bare `flankr` is `serve`. Adds to decision 1:
+
+1. **`flankr --version`, `flankr -V` and `flankr version`** print one
+   line, `flankr <version> (<short commit>)`, the commit the binary was
+   built from (`unknown` when built outside a git checkout), and exit 0.
+   Nothing is started.
+2. **An unknown argument is an error** for every command: `flankr: unknown
+   argument '<arg>'; see flankr --help` on stderr, exit 2, nothing
+   started. Bare `flankr` with no arguments is still `serve`.
+3. **The daemon** takes the next patch with its `UPDATES.md` entry
+   (FLANKR RULE 2).
