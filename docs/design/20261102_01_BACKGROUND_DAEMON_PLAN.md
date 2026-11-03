@@ -263,3 +263,46 @@ bare `flankr` is `serve`. Adds to decision 1:
    started. Bare `flankr` with no arguments is still `serve`.
 3. **The daemon** takes the next patch with its `UPDATES.md` entry
    (FLANKR RULE 2).
+
+## Amendment — 2026-11-03 11:51 EST: `flankr serve --replace`, a stale daemon noticed, and `install.sh --restart`
+
+On the owner's instruction (Rule 1.5), 2026-11-03: "should we add serve
+--replace or --upgrade ?", then, offered `--replace` with the two items
+below, "yes, write the amendment and build it". Restarting the MacBook's
+daemon onto a new install took `flankr serve --stop` and then
+`flankr serve`, and nothing said the running daemon was an older copy.
+Adds to decision 1:
+
+1. **`flankr serve --replace`** stops the flankr daemon answering on the
+   socket, whatever its version and however it was started (in the
+   background, or with `serve --foreground` or `server` in a terminal),
+   as `--stop` does, then starts this binary in the background with the
+   server's flags given, as `serve` does. With no daemon running it is
+   plain `serve`. It prints `--stop`'s line, then `serve`'s
+   `flankr is running on <socket>; log: <file>` line. If the stop fails
+   it exits with `--stop`'s code and starts nothing. `--replace` goes
+   with neither `--stop` nor `--foreground` (an error, exit 2).
+   `--upgrade` is not added: the daemon does not report its version, and
+   a rebuild of the same version should restart too.
+2. **A stale daemon is noticed.** When `flankr serve` (or `pair`, which
+   starts one the same way) finds a daemon already running, it compares
+   that process's executable with its own, by pid and file, with no change
+   to the protocol: a different path, or the same path whose file was
+   replaced after the daemon started. When they differ, `serve` adds a
+   line after `flankr is already running on <socket> (pid <pid>)`:
+   `It runs an older copy of <path>; run flankr serve --replace to
+   restart it.` (or `It runs <its path>, not <this path>; …`). Nothing is
+   stopped. When the process's executable cannot be read, nothing is said.
+3. **`scripts/install.sh --restart`** runs `~/.local/bin/flankr serve
+   --replace` after installing, here and on each `--remote`, by its full
+   path (a login shell over SSH may not have `~/.local/bin` on `PATH`).
+   Without `--restart` it still never stops or starts a daemon.
+4. **The daemon** takes the next patch, 0.7.4, with its `UPDATES.md` entry
+   (FLANKR RULE 2), in its 0.7 series on the owner's instruction "keep the
+   same version series".
+5. **Done when:** tests on temporary sockets and `HOME` cover
+   `serve --replace` with a daemon running (started in the background,
+   and in the foreground) and with none, `--replace` with `--stop` or
+   `--foreground` refused, and the stale-daemon line (a replaced file, a
+   different path, an unreadable one); `install.sh --restart` restarts
+   the MacBook's daemon onto the installed build.
