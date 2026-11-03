@@ -4461,3 +4461,50 @@ record with `continuedInSessionId`, and the new transcript starts with a
 copy of the old one's conversation since its last compaction (about 990
 lines in the owner's case), which the daemon now counts but does not read,
 so the list view does not show it twice.
+
+## 2026-11-03 17:52 EST — The keyboard's Enter key in the terminal: libmobile 0.4.0 and libmorph 0.6.0; app 0.7.17
+
+Plan: the terminal taps and shell panes plan (20261103_01), its
+2026-11-03 15:36 EST amendment, item 1: the keyboard's half that the
+15:38 EST entry above left open, on the owner's word of 2026-11-03 ("Yes,
+start on libmobile's text input options so the keyboard's key sends
+Enter"). Built in libmobile (its text input options plan, released as
+0.4.0) and libmorph (its text input plan's Android path, released as
+0.6.0, with libmorph-build 0.4.0); this repository only moves onto them.
+
+- `75a992d`: flankr-audio's libmorph pin, to the app's revision.
+- `7249d9b`: the app's libmorph pins to libmorph 0.6.0 (`befe374`) and
+  libmorph-build to 0.4.0 (`c497b82`), with libmobile 0.4.0
+  (`0b2929c`) and libdevice 0.1.3 (`948f924`, which libmorph 0.5.3 and
+  later need on macOS) in the locks; app 0.7.17. No app code changes:
+  `terminal_keys::ime_keys` and `terminal_text_options()` already match
+  the real API (`TextInputEvent::Action`, `TextAction::None`, one line,
+  `autocorrect: false`).
+
+What the user sees change, besides the terminal's Enter: every keyboard
+the app opens now gets its options. A prompt's keyboard is many lines, so
+its Enter key starts a new line; a nickname's Done saves it; Back or the
+keyboard's hide key is reported as a dismissal; and
+`TextInputOptions::default()` now has autocorrect on, so prompts keep
+the keyboard's suggestions.
+
+Departures, on the owner's instruction of 2026-11-03 to keep the version
+series: the app's change is a patch (0.7.17), though new keyboard
+behaviour would be a minor under FLANKR RULE 1 item 4; flankr-audio, whose
+public API carries libmorph's `Sink`, `Source` and `CaptureFormat`,
+takes libmorph 0.6.0 without the minor bump Critical Rule 5.5 would give
+it (those types are unchanged in 0.6.0).
+
+The pins are to commits on the `text-input-options` branches of libmobile
+and libmorph, not yet on their pushed mains: this builds only once those
+branches are merged and pushed (they are fast-forwards of their mains, so
+the hashes hold). If they change, the pins and locks move with them.
+
+Checks: `cargo fmt -p companion -- --check`, `cargo clippy -p companion
+--all-targets` (no warnings) and `cargo test -p companion` (633 passed)
+on the host, before the version bump; fmt and clippy again after it.
+flankr-audio: `cargo fmt -p flankr-audio -- --check` only (its clippy and
+tests compile libvoicexn from nothing in the root workspace, and the disk
+had under 1 GB free); its code is unchanged, and its `morph` feature is
+built with the app for Android. The APK is not built here; the Kotlin is
+compiled (libmobile's example project) but not run.
