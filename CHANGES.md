@@ -4096,3 +4096,12 @@ amendment). Small departures needed to build it:
    1. `LinkSettings` has `loopback_offers`, false in the daemon, which
    the link's tests over `127.0.0.1` set to keep pairing there.
 6. With `--vpn none` the start log has `[link] vpn: none`.
+
+## 2026-11-03 00:07 EST — the link VPN plan: the daemon stays in its 0.7 series
+
+Plan `docs/design/20261102_03_LINK_VPN_PLAN.md`, decision 10, and FLANKR
+RULE 2 make the link's VPN work a minor bump (0.8.0). On the owner's
+instruction (2026-11-03): "keep the same version series, we don't need to
+bump it that much while we work this out", it is 0.7.1 instead (0.8.0 was
+never pushed or tagged). While this work settles, changes take patch
+numbers in their current series.
