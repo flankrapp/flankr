@@ -1912,3 +1912,31 @@ items 1, 2 and 4 stand.
 2. **A hold that fired** keeps the touch to its release, as now.
 3. **The app's version** is 0.7.10, a patch, in the same series.
 flankr-companion does not change.
+
+## Amendment — 2026-11-03 14:49 EST: More and Less at the bottom right of the card's text (living section L3)
+
+On the owner's explicit instruction (Rule 1.5), 2026-11-03, in
+`docs/OWNER_REPORTS.md` (14:35 EST): "Small thing, but the more or less
+link should always be at the bottom right of the card", then, asked where
+it goes on a card with buttons, "Yes, on cards with buttons, put More Less
+at the text's bottom right, above the buttons". This replaces "at its
+bottom right" in item 1 of the 2026-10-30 15:20 EDT amendment ("A pinned
+card cut off shows *More* at its bottom right"), and "a small dim \"more\"
+sits at the card's bottom right" in item 2 of the 2026-10-24 12:08 EDT
+amendment; the rest of both stands.
+
+1. **Where.** A pinned card's *More* and *Less*, and a summary card's dim
+   "more", folded or open, pinned or in the conversation, sit at the
+   bottom right of the card's text: right-aligned to the card's inner
+   right edge, on their own line below the text's last line. That is the
+   card's bottom right when it has no buttons, and just above the button
+   row when it has one (Approve and Deny, Yes and No, the daemon's
+   answers, approve, discuss and implement, the record).
+2. **Not the replay.** The replay button beside a summary card's dim
+   "spoken" label is not part of the button row: an open pinned summary
+   card with spoken text shows *Less* below the spoken text, and the
+   replay stays beside "spoken".
+3. **Unchanged:** the link's tap area (at least 40 pt square, within the
+   card) and when it shows.
+4. **The app's version** is the next patch, a fix, in the same 0.7
+   series. flankr-companion does not change.
