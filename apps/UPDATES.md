@@ -244,3 +244,8 @@ These changes came before the app had version numbers.
 **Fixed**
 - Pairing another remote with **+**, and pairing the first one, opens the camera at once, with no tap on *Tap to scan*. If the Camera permission isn't allowed, including after an "Only this time" allowance has run out, Android asks for it each time the screen opens.
 - If the Camera permission is refused, the screen says *Camera is off for flankr*: *Tap to scan* asks again, and the pairing link can still be pasted. When Android won't ask again, *Open Settings* goes to flankr's page in Settings, and the camera opens as soon as you come back with it allowed.
+
+## 0.7.3 — 2026-11-02
+
+**Fixed**
+- Pairing another remote with **+** in the drawer, opened over a session, shows the pairing screen with its camera and the paste field, instead of a blank screen.

@@ -91,6 +91,12 @@ fn connected() {
 /// Runs `script` on a fresh app with [`connected`]'s events; `None`
 /// without a GPU. Its keys and data are in a directory of its own.
 fn run(script: &str, more: impl FnOnce()) -> Option<Probe> {
+    run_with(script, &[], more)
+}
+
+/// As [`run`], the app started with `args` too (`--camera`: the Android
+/// window's camera on the host).
+fn run_with(script: &str, args: &[&str], more: impl FnOnce()) -> Option<Probe> {
     let dir = tempfile::tempdir().unwrap();
     let keys = dir.path().join("keys");
     let data = dir.path().join("data");
@@ -103,6 +109,7 @@ fn run(script: &str, more: impl FnOnce()) -> Option<Probe> {
         args: ["companion", "--keys", keys.to_str().unwrap()]
             .into_iter()
             .chain(["--data", data.to_str().unwrap()])
+            .chain(args.iter().copied())
             .map(String::from)
             .collect(),
     };
@@ -338,6 +345,52 @@ fn a_tap_on_the_card_in_use_does_nothing_and_on_the_plus_opens_the_add_mode() {
     let p = run(&script, || {}).unwrap();
     assert!(p.drawer.adding, "the pairing window's add mode");
     assert!(!p.drawer.shown, "closed at once");
+    assert!(p.shows("Pair another remote"), "{:?}", p.texts);
+}
+
+/// The owner's report of 2026-11-02 ("it just showed a blank screen"):
+/// the **+** tapped in the drawer opened over a session's view shows the
+/// pairing window, its words and paste field laid out for the frame, with
+/// and without the camera.
+#[test]
+fn the_plus_from_a_sessions_view_shows_the_pairing_window() {
+    let Some(at) = places() else { return };
+    let (menu, row1) = (at.drawer.menu.unwrap(), at.drawer.rows[0]);
+    let open_view = format!(
+        "frames {SETTLE}\n{}frames {SLIDE}\n{}frames {SLIDE}\n",
+        tap(menu),
+        tap(row1)
+    );
+    let view = run(&open_view, || {}).unwrap();
+    assert_eq!(view.drawer.agent_pane.as_deref(), Some("p1"));
+    let agent_menu = view.drawer.menu.unwrap();
+    let drawer = run(
+        &format!("{open_view}{}frames {SLIDE}\n", tap(agent_menu)),
+        || {},
+    )
+    .unwrap();
+    assert!(drawer.drawer.shown);
+    let plus = drawer.drawer.cards[2];
+    let script = format!(
+        "{open_view}{}frames {SLIDE}\n{}frames 4\n",
+        tap(agent_menu),
+        tap(plus)
+    );
+    // Without a camera: what to run and paste, and the field.
+    let p = run(&script, || {}).unwrap();
+    assert!(p.drawer.adding && !p.drawer.shown, "{:?}", p.drawer);
+    assert_eq!(p.frames.last().unwrap().0, Shown::Pairing);
+    assert!(p.shows("Pair another remote"), "{:?}", p.texts);
+    assert!(p.shows("flankr stays connected"), "{:?}", p.texts);
+    assert!(p.shows("paste a pairing URL"), "the field: {:?}", p.texts);
+    // With the camera: it starts, its area and line laid out (the
+    // viewfinder is drawn into that area), and Paste a link.
+    let p = run_with(&script, &["--camera"], || {}).unwrap();
+    assert!(p.drawer.adding, "{:?}", p.drawer);
+    assert_eq!(p.frames.last().unwrap().0, Shown::Pairing);
+    assert!(p.shows("Pair another remote"), "{:?}", p.texts);
+    assert!(p.shows("Point at the QR code"), "{:?}", p.texts);
+    assert!(p.shows("Paste a link"), "{:?}", p.texts);
 }
 
 #[test]

@@ -4050,12 +4050,13 @@ impl App {
                 .and_then(|p| self.agents.iter().find(|a| a.pane_id == p))
                 .map(flankr_companion::cross::colour_of);
             agent.set_session_colour(colour);
-            self.lay_out_session_cards(layout);
-            return;
         }
         self.lay_out_session_cards(layout);
 
-        if !self.pairing() {
+        // The pairing window is drawn over a session's view only in the
+        // add mode (the drawer's **+**); it is laid out whenever it is
+        // drawn, or it draws nothing (the owner's report of 2026-11-02).
+        if !self.pairing() || (self.agent.is_some() && !self.pairing.adding) {
             return;
         }
 
