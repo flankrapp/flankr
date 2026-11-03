@@ -240,3 +240,10 @@ These changes came before the program had version numbers.
 **Changed**
 - Pairing a device under a name that is already paired no longer fails and needs a second `flankr pair --replace` run. After you type `yes` to the six words, `flankr pair` asks `'<name>' is already paired (paired <date>). Replace it with this device? [y/N]`. `y` replaces the old entry (keeping its `agents` and `approve` settings) and disconnects the old key; anything else keeps it, prints `Not paired: '<name>' was kept.` and exits 1. The phone waits while you answer, within the same offer time. With `--name`, the name asked about is that one.
 - `--replace` still works and skips the question.
+
+## 0.7.4 — 2026-11-03
+
+**Added**
+- `flankr serve --restart` stops the flankr daemon running on the socket, whichever copy it is and however it was started (in the background, or with `flankr serve --foreground` or `flankr server` in a terminal), then starts this `flankr` in the background. It prints the `flankr stopped on …` line, then `flankr is running on <socket>; log: <file>`. With no daemon running it is plain `flankr serve`. If the stop fails, nothing is started. `--restart` with `--stop` or `--foreground` is refused: `flankr: --restart and --stop do not go together`, exit 2.
+- When `flankr serve` finds a daemon already running from another copy of `flankr`, it says so after `flankr is already running on <socket> (pid <pid>)`: `It runs an older copy of <path>; run flankr serve --restart to restart it.` when the file at its path was replaced since it started (as `scripts/install.sh` does), or `It runs <its path>, not <this path>; run flankr serve --restart to restart it.` when it runs from somewhere else. `flankr pair` shows the same two lines when it finds such a daemon. Nothing is stopped.
+- `scripts/install.sh --restart` runs `~/.local/bin/flankr serve --restart` after installing, here and on each `--remote`. Without it the script still never stops or starts a daemon.

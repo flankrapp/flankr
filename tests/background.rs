@@ -57,8 +57,13 @@ impl Rig {
     /// `flankr <command> --mock --config … --listen … --vpn none` here, with only the
     /// test environment and `extra`.
     fn command(&self, command: &[&str], extra: &[(&str, &str)]) -> Command {
+        self.command_of(Path::new(BIN), command, extra)
+    }
+
+    /// [`Rig::command`] with the binary at `bin`.
+    fn command_of(&self, bin: &Path, command: &[&str], extra: &[(&str, &str)]) -> Command {
         let home = self.home();
-        let mut cmd = Command::new(BIN);
+        let mut cmd = Command::new(bin);
         cmd.args(command)
             .arg("--mock")
             .arg("--config")
@@ -84,6 +89,37 @@ impl Rig {
 
     fn run(&self, command: &[&str], extra: &[(&str, &str)]) -> Output {
         self.command(command, extra).output().unwrap()
+    }
+
+    fn run_of(&self, bin: &Path, command: &[&str]) -> Output {
+        self.command_of(bin, command, &[]).output().unwrap()
+    }
+
+    /// A copy of the built binary at `<home>/<folder>/flankr`, put there
+    /// as `install.sh` does: copied next to it and renamed over it.
+    fn install_copy(&self, folder: &str) -> PathBuf {
+        let dir = self.home().join(folder);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("flankr");
+        let new = dir.join("flankr.new");
+        std::fs::copy(BIN, &new).unwrap();
+        std::fs::rename(&new, &path).unwrap();
+        path
+    }
+
+    fn running_line(&self) -> String {
+        format!(
+            "flankr is running on {}; log: {}",
+            self.socket.display(),
+            self.files().log.display()
+        )
+    }
+
+    fn already_line(&self, pid: u32) -> String {
+        format!(
+            "flankr is already running on {} (pid {pid})",
+            self.socket.display()
+        )
     }
 
     fn answers(&self) -> bool {
@@ -485,4 +521,229 @@ fn version_and_unknown_arguments_start_nothing() {
         );
         assert!(!rig.answers(), "{args:?} started a daemon");
     }
+}
+
+/// `serve --restart` with a daemon started in the background, and with
+/// none (plan 20261102_01, the 2026-11-03 11:51 and 11:53 EST amendments).
+#[test]
+fn restart_replaces_a_background_daemon_and_with_none_is_serve() {
+    let rig = Rig::new();
+    let files = rig.files();
+    // None running: plain `serve`.
+    let out = rig.run(&["serve", "--restart"], &[]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(text(&out.stdout), format!("{}\n", rig.running_line()));
+    rig.wait_until("the pid file", || files.pid.exists());
+    let first = read_pid(&files.pid).unwrap();
+    // The server was not given `--restart`.
+    let ps = Command::new("ps")
+        .args(["-o", "command=", "-p", &first.to_string()])
+        .output()
+        .unwrap();
+    let line = text(&ps.stdout);
+    assert!(
+        line.contains(" server ") && !line.contains("--restart"),
+        "{line}"
+    );
+
+    // Running: stopped as `--stop` does, then started again.
+    let out = rig.run(&["serve", "--restart"], &[]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(
+        text(&out.stdout),
+        format!(
+            "flankr stopped on {} (pid {first})\n{}\n",
+            rig.socket.display(),
+            rig.running_line()
+        )
+    );
+    assert!(!flankr::daemon::alive(first));
+    assert!(rig.answers(), "the new server does not answer");
+    rig.wait_until("the new pid file", || {
+        read_pid(&files.pid).is_some_and(|p| p != first)
+    });
+    let out = rig.run(&["serve", "--stop"], &[]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+}
+
+/// `serve --restart` stops a daemon run in a terminal (`serve
+/// --foreground`) and starts one in the background.
+#[test]
+fn restart_replaces_a_foreground_daemon() {
+    let rig = Rig::new();
+    let files = rig.files();
+    let child = rig
+        .command(&["serve", "--foreground"], &[])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+    // Reaped as soon as it exits, as a terminal's shell would.
+    let waiter = std::thread::spawn(move || {
+        let mut child = child;
+        child.wait().unwrap()
+    });
+    rig.wait_until("the foreground server answers", || rig.answers());
+    rig.wait_until("the pid file", || read_pid(&files.pid) == Some(pid));
+    let out = rig.run(&["serve", "--restart"], &[]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(
+        text(&out.stdout),
+        format!(
+            "flankr stopped on {} (pid {pid})\n{}\n",
+            rig.socket.display(),
+            rig.running_line()
+        )
+    );
+    assert_eq!(waiter.join().unwrap().code(), Some(0));
+    assert!(rig.answers(), "the background server does not answer");
+    rig.wait_until("the background pid file", || {
+        read_pid(&files.pid).is_some_and(|p| p != pid)
+    });
+    let out = rig.run(&["serve", "--stop"], &[]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+}
+
+/// `--restart` goes with neither `--stop` nor `--foreground`, and is not
+/// `server`'s or `pair`'s; `pair --replace` is not passed to the daemon
+/// `pair` starts.
+#[test]
+fn restart_is_refused_where_it_does_not_belong() {
+    let rig = Rig::new();
+    for other in ["--stop", "--foreground"] {
+        let out = rig.run(&["serve", "--restart", other], &[]);
+        assert_eq!(out.status.code(), Some(2), "{other}: {out:?}");
+        assert_eq!(
+            text(&out.stderr),
+            format!("flankr: --restart and {other} do not go together\n"),
+            "{other}"
+        );
+        assert!(!rig.answers(), "{other} started a daemon");
+    }
+    let out = rig.run(&["server", "--restart"], &[]);
+    assert_ne!(out.status.code(), Some(0), "{out:?}");
+    assert!(!rig.answers(), "server --restart started a daemon");
+    let out = rig.run(&["pair", "--restart", "--timeout", "1"], &[]);
+    assert_ne!(out.status.code(), Some(0), "{out:?}");
+    assert!(text(&out.stderr).contains("usage: flankr pair"), "{out:?}");
+    assert!(!rig.answers(), "pair --restart started a daemon");
+
+    // `pair --replace` starts a daemon without it.
+    let files = rig.files();
+    let out = rig.run(
+        &["pair", "--replace", "--name", "phone", "--timeout", "1"],
+        &[],
+    );
+    assert_eq!(
+        text(&out.stdout).lines().next(),
+        Some(rig.running_line().as_str()),
+        "{out:?}"
+    );
+    rig.wait_until("the pid file", || files.pid.exists());
+    let pid = read_pid(&files.pid).unwrap();
+    let ps = Command::new("ps")
+        .args(["-o", "command=", "-p", &pid.to_string()])
+        .output()
+        .unwrap();
+    let line = text(&ps.stdout);
+    assert!(line.contains(" server "), "{line}");
+    assert!(
+        !line.contains("--replace") && !line.contains("--restart") && !line.contains("--name"),
+        "{line}"
+    );
+}
+
+/// A daemon whose file was replaced since it started is named an older
+/// copy, by `serve` and `pair`; `--restart` moves it onto the new file.
+#[test]
+fn a_replaced_file_is_an_older_copy() {
+    let rig = Rig::new();
+    let files = rig.files();
+    let bin = rig.install_copy("bin");
+    let out = rig.run_of(&bin, &["serve"]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    rig.wait_until("the pid file", || files.pid.exists());
+    let pid = read_pid(&files.pid).unwrap();
+    // The same file: nothing more is said.
+    let out = rig.run_of(&bin, &["serve"]);
+    assert_eq!(text(&out.stdout), format!("{}\n", rig.already_line(pid)));
+
+    std::thread::sleep(Duration::from_millis(20));
+    rig.install_copy("bin");
+    let stale = format!(
+        "It runs an older copy of {}; run flankr serve --restart to restart it.",
+        bin.display()
+    );
+    let out = rig.run_of(&bin, &["serve"]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(
+        text(&out.stdout),
+        format!("{}\n{stale}\n", rig.already_line(pid))
+    );
+    assert!(flankr::daemon::alive(pid), "it was stopped");
+    // `pair` says the same, and pairs with it as it is.
+    let out = rig.run_of(&bin, &["pair", "--timeout", "1"]);
+    let stdout = text(&out.stdout);
+    assert!(
+        stdout.starts_with(&format!("{}\n{stale}\n", rig.already_line(pid))),
+        "{out:?}"
+    );
+    assert_eq!(read_pid(&files.pid), Some(pid));
+
+    let out = rig.run_of(&bin, &["serve", "--restart"]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    rig.wait_until("the new pid file", || {
+        read_pid(&files.pid).is_some_and(|p| p != pid)
+    });
+    let new = read_pid(&files.pid).unwrap();
+    let out = rig.run_of(&bin, &["serve"]);
+    assert_eq!(text(&out.stdout), format!("{}\n", rig.already_line(new)));
+    let out = rig.run(&["serve", "--stop"], &[]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+}
+
+/// A daemon run from another path is named with both paths.
+#[test]
+fn a_daemon_from_another_path_is_named() {
+    let rig = Rig::new();
+    let files = rig.files();
+    let out = rig.run(&["serve"], &[]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    rig.wait_until("the pid file", || files.pid.exists());
+    let pid = read_pid(&files.pid).unwrap();
+    let bin = rig.install_copy("bin");
+    let out = rig.run_of(&bin, &["serve"]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(
+        text(&out.stdout),
+        format!(
+            "{}\nIt runs {}, not {}; run flankr serve --restart to restart it.\n",
+            rig.already_line(pid),
+            Path::new(BIN).canonicalize().unwrap().display(),
+            bin.display()
+        )
+    );
+    let out = rig.run(&["serve", "--stop"], &[]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+}
+
+/// When the daemon's executable cannot be read (on macOS, its file was
+/// removed), nothing is said about it.
+#[cfg(target_os = "macos")]
+#[test]
+fn an_unreadable_executable_says_nothing() {
+    let rig = Rig::new();
+    let files = rig.files();
+    let bin = rig.install_copy("gone");
+    let out = rig.run_of(&bin, &["serve"]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    rig.wait_until("the pid file", || files.pid.exists());
+    let pid = read_pid(&files.pid).unwrap();
+    std::fs::remove_file(&bin).unwrap();
+    let out = rig.run(&["serve"], &[]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(text(&out.stdout), format!("{}\n", rig.already_line(pid)));
+    let out = rig.run(&["serve", "--stop"], &[]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
 }

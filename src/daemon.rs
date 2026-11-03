@@ -247,6 +247,146 @@ fn executable(pid: u32) -> Option<PathBuf> {
     }
 }
 
+/// How a running daemon's executable compares with this binary's (the
+/// 2026-11-03 11:51 EST amendment, item 2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DaemonCopy {
+    /// The same file this binary runs from.
+    Same,
+    /// The same path, whose file was replaced after the daemon started.
+    Replaced { path: PathBuf },
+    /// Another path.
+    Other { theirs: PathBuf, ours: PathBuf },
+}
+
+/// Compare process `pid`'s executable with `own` (this binary's,
+/// `std::env::current_exe()`): by path, both resolved, then by whether
+/// the file at that path is still the one the process runs. `None` when
+/// either cannot be read.
+///
+/// On Linux, the file the process runs is `/proc/<pid>/exe` (which still
+/// opens after the path was renamed over or removed): a different device
+/// and inode from the file at the path is a replaced file. On macOS,
+/// where `proc_pidpath` keeps giving the old path after a rename over it,
+/// the file at the path is a replacement when its status-change time
+/// (set when it is created, and by a rename onto the path) is later than
+/// the process's start.
+pub fn compare_copy(pid: u32, own: &Path) -> Option<DaemonCopy> {
+    let (theirs, deleted) = executable_of(pid)?;
+    let ours = own.canonicalize().ok()?;
+    let theirs = theirs.canonicalize().unwrap_or(theirs);
+    if theirs != ours {
+        return Some(DaemonCopy::Other { theirs, ours });
+    }
+    if deleted || replaced_since_start(pid, &ours)? {
+        Some(DaemonCopy::Replaced { path: ours })
+    } else {
+        Some(DaemonCopy::Same)
+    }
+}
+
+/// The line `serve` adds after `flankr is already running …` when the
+/// daemon runs another copy than this binary.
+pub fn stale_line(copy: &DaemonCopy) -> Option<String> {
+    const RESTART: &str = "run flankr serve --restart to restart it.";
+    match copy {
+        DaemonCopy::Same => None,
+        DaemonCopy::Replaced { path } => Some(format!(
+            "It runs an older copy of {}; {RESTART}",
+            path.display()
+        )),
+        DaemonCopy::Other { theirs, ours } => Some(format!(
+            "It runs {}, not {}; {RESTART}",
+            theirs.display(),
+            ours.display()
+        )),
+    }
+}
+
+/// `flankr is already running on <socket> (pid <pid>)`, and the stale
+/// line when process `pid` runs another copy than `own`.
+pub fn already_running_lines(socket: &Path, pid: Option<u32>, own: &Path) -> Vec<String> {
+    let shown = pid.map_or_else(|| "unknown".to_string(), |p| p.to_string());
+    let mut lines = vec![format!(
+        "flankr is already running on {} (pid {shown})",
+        socket.display()
+    )];
+    if let Some(line) = pid
+        .and_then(|pid| compare_copy(pid, own))
+        .as_ref()
+        .and_then(stale_line)
+    {
+        lines.push(line);
+    }
+    lines
+}
+
+/// Process `pid`'s executable path, and on Linux whether the system marks
+/// it deleted (renamed over or removed since it started).
+fn executable_of(pid: u32) -> Option<(PathBuf, bool)> {
+    let exe = executable(pid)?;
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        const DELETED: &[u8] = b" (deleted)";
+        let bytes = exe.as_os_str().as_bytes();
+        if let Some(path) = bytes.strip_suffix(DELETED) {
+            return Some((PathBuf::from(OsStr::from_bytes(path)), true));
+        }
+    }
+    Some((exe, false))
+}
+
+/// Whether the file at `path` is not the one process `pid` runs: `None`
+/// when the system does not tell.
+#[cfg(target_os = "linux")]
+fn replaced_since_start(pid: u32, path: &Path) -> Option<bool> {
+    use std::os::unix::fs::MetadataExt;
+    let running = std::fs::metadata(format!("/proc/{pid}/exe")).ok()?;
+    let file = std::fs::metadata(path).ok()?;
+    Some((running.dev(), running.ino()) != (file.dev(), file.ino()))
+}
+
+#[cfg(target_os = "macos")]
+fn replaced_since_start(pid: u32, path: &Path) -> Option<bool> {
+    use std::os::unix::fs::MetadataExt;
+    let started = start_time(pid)?;
+    let file = std::fs::metadata(path).ok()?;
+    let changed = Duration::new(
+        u64::try_from(file.ctime()).ok()?,
+        u32::try_from(file.ctime_nsec()).ok()?,
+    );
+    Some(changed > started)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn replaced_since_start(_pid: u32, _path: &Path) -> Option<bool> {
+    None
+}
+
+/// When process `pid` started, since the Unix epoch.
+#[cfg(target_os = "macos")]
+fn start_time(pid: u32) -> Option<Duration> {
+    let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
+    let size = libc::c_int::try_from(std::mem::size_of::<libc::proc_bsdinfo>()).ok()?;
+    // SAFETY: `info` is a `proc_bsdinfo` of the size given.
+    let n = unsafe {
+        libc::proc_pidinfo(
+            libc::c_int::try_from(pid).ok()?,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            size,
+        )
+    };
+    if n != size {
+        return None;
+    }
+    // SAFETY: filled in whole, as checked above.
+    let info = unsafe { info.assume_init() };
+    Some(Duration::from_secs(info.pbi_start_tvsec) + Duration::from_micros(info.pbi_start_tvusec))
+}
+
 /// Whether process `pid` runs a flankr binary (its file name starts with
 /// `flankr`). Without a way to tell, a living process counts.
 pub fn is_flankr(pid: u32) -> bool {
@@ -282,21 +422,30 @@ pub struct Background {
     pub working_dir: PathBuf,
     /// The whole environment passed ([`passed_env`]).
     pub env: Vec<(OsString, OsString)>,
+    /// `serve --restart`: stop a daemon answering first, as `--stop` does
+    /// (the 2026-11-03 11:51 and 11:53 EST amendments, item 1).
+    pub restart: bool,
 }
 
-/// `flankr serve` (decision 1): report a daemon already answering, else
-/// start the server detached and wait for its socket. Prints what it did
-/// and returns the exit code.
+/// `flankr serve` (decision 1): report a daemon already answering, and
+/// whether it runs another copy than this binary, else start the server
+/// detached and wait for its socket. With `restart`, a daemon answering is
+/// stopped first, as `--stop` does, and nothing is started if that fails.
+/// Prints what it did and returns the exit code.
 pub async fn serve_background(b: &Background) -> i32 {
     if let Some(peer) = answers(&b.socket).await {
-        let pid = peer
-            .or_else(|| read_pid(&b.files.pid))
-            .map_or_else(|| "unknown".to_string(), |p| p.to_string());
-        println!(
-            "flankr is already running on {} (pid {pid})",
-            b.socket.display()
-        );
-        return 0;
+        if b.restart {
+            let code = stop(&b.socket, &b.files).await;
+            if code != 0 {
+                return code;
+            }
+        } else {
+            let pid = peer.or_else(|| read_pid(&b.files.pid));
+            for line in already_running_lines(&b.socket, pid, &b.program) {
+                println!("{line}");
+            }
+            return 0;
+        }
     }
     if let Some(dir) = b.files.log.parent()
         && let Err(e) = create_private_dir(dir)
@@ -430,6 +579,50 @@ pub async fn termination() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_stale_line_names_the_copy() {
+        assert_eq!(stale_line(&DaemonCopy::Same), None);
+        assert_eq!(
+            stale_line(&DaemonCopy::Replaced {
+                path: PathBuf::from("/h/.local/bin/flankr")
+            })
+            .as_deref(),
+            Some(
+                "It runs an older copy of /h/.local/bin/flankr; run flankr serve --restart to restart it."
+            )
+        );
+        assert_eq!(
+            stale_line(&DaemonCopy::Other {
+                theirs: PathBuf::from("/a/flankr"),
+                ours: PathBuf::from("/b/flankr")
+            })
+            .as_deref(),
+            Some("It runs /a/flankr, not /b/flankr; run flankr serve --restart to restart it.")
+        );
+    }
+
+    #[test]
+    fn an_unreadable_executable_says_nothing() {
+        let own = std::env::current_exe().unwrap();
+        // No such process: its executable cannot be read.
+        let dead = u32::try_from(i32::MAX).unwrap();
+        assert_eq!(compare_copy(dead, &own), None);
+        let socket = Path::new("/tmp/f.sock");
+        assert_eq!(
+            already_running_lines(socket, Some(dead), &own),
+            ["flankr is already running on /tmp/f.sock (pid 2147483647)"]
+        );
+        assert_eq!(
+            already_running_lines(socket, None, &own),
+            ["flankr is already running on /tmp/f.sock (pid unknown)"]
+        );
+        // This binary itself, by a path that cannot be read.
+        let me = std::process::id();
+        assert_eq!(compare_copy(me, Path::new("/nonexistent/flankr")), None);
+        // This process compared with its own file: the same copy.
+        assert_eq!(compare_copy(me, &own), Some(DaemonCopy::Same));
+    }
 
     #[test]
     fn only_the_listed_variables_and_xdg_pass() {

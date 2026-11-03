@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! flankr version | --version | -V
-//! flankr [serve [--foreground | --stop] | server]
+//! flankr [serve [--foreground | --stop | --restart] | server]
 //!        [--config <file>] [--transport <name> | --remote <user@host> |
 //!         --socket <herdr.sock> | --mock] [--listen <flankr.sock>] [--show-tokens]
 //!        [--vpn tailscale|none] [--bind <addr:port>]...
@@ -82,6 +82,10 @@ struct AppArgs {
     foreground: bool,
     /// `serve --stop`: stop the background server.
     stop: bool,
+    /// `serve --restart`: stop the daemon answering, then start this binary
+    /// in the background (the 2026-11-03 11:51 and 11:53 EST amendments).
+    /// Not `pair`'s `--replace`, which is about a paired name.
+    restart: bool,
     /// Arguments `parse_args` does not know: an error (the 2026-11-02
     /// 22:33 EST amendment, item 2).
     unknown: Vec<String>,
@@ -121,6 +125,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> AppArgs {
         agent: None,
         foreground: false,
         stop: false,
+        restart: false,
         unknown: Vec::new(),
     };
 
@@ -165,6 +170,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> AppArgs {
             "--agent" => parsed.agent = args.next(),
             "--foreground" => parsed.foreground = true,
             "--stop" => parsed.stop = true,
+            "--restart" => parsed.restart = true,
             _ if !arg.starts_with('-') => parsed.positional.push(arg),
             // An unknown argument is an error, never a reason to go on
             // (plan 20261102_01, the 2026-11-02 22:33 EST amendment, item 2).
@@ -418,6 +424,7 @@ async fn serve_background(
             .collect(),
         working_dir,
         env: flankr::daemon::passed_env(std::env::vars_os()),
+        restart: args.restart,
     };
     Ok(flankr::daemon::serve_background(&background).await)
 }
@@ -458,20 +465,39 @@ async fn pair(args: AppArgs) -> Result<i32, Box<dyn std::error::Error>> {
     let config = flankr::config::AppConfig::load_or_default(args.config.as_deref().map(Path::new));
     let socket = daemon_socket(&args, &config);
     let usage = "usage: flankr pair [--foreground] [--listen <socket>] [--name <name>] [--protocols companion,harness] [--replace] [--code <code>] [--qr-png <file>] [--timeout <secs>] [--vpn tailscale|none] [--bind <addr:port>]...";
-    if !args.positional.is_empty() || args.stop {
+    // `--restart` is `serve`'s; `pair`'s `--replace` is about the paired
+    // name (the 2026-11-03 11:53 EST amendment, item 4).
+    if !args.positional.is_empty() || args.stop || args.restart {
         return Err(usage.into());
     }
     // No daemon answering: start one in the background first, as `serve`
     // would, unless `--foreground` (the 22:26 EST amendment, items 1 and 3).
-    if !args.foreground
-        && flankr::daemon::answers(&flankr::daemon::absolute(&socket))
-            .await
-            .is_none()
-    {
-        let rest = server_flags(&args);
-        let code = serve_background(&args, rest).await?;
-        if code != 0 {
-            return Ok(code);
+    if !args.foreground {
+        let listen = flankr::daemon::absolute(&socket);
+        match flankr::daemon::answers(&listen).await {
+            None => {
+                let rest = server_flags(&args);
+                let code = serve_background(&args, rest).await?;
+                if code != 0 {
+                    return Ok(code);
+                }
+            }
+            // Running: said only when it runs another copy than this one
+            // (the 2026-11-03 11:51 EST amendment, item 2).
+            Some(peer) => {
+                let pid = peer.or_else(|| {
+                    daemon_files(&listen).and_then(|f| flankr::daemon::read_pid(&f.pid))
+                });
+                let lines = match std::env::current_exe() {
+                    Ok(own) => flankr::daemon::already_running_lines(&listen, pid, &own),
+                    Err(_) => Vec::new(),
+                };
+                if lines.len() > 1 {
+                    for line in lines {
+                        println!("{line}");
+                    }
+                }
+            }
         }
     }
     let timeout_secs = match args.timeout.as_deref() {
@@ -586,14 +612,15 @@ const PROMPT_USAGE: &str = "usage: flankr prompt [--use general_agent] [--agent 
 
 const USAGE: &str = "\
 flankr version | --version | -V
-flankr [serve [--foreground | --stop] | server]
+flankr [serve [--foreground | --stop | --restart] | server]
        [--config <file>] [--transport <name> | --remote <user@host> |
         --socket <herdr.sock> | --mock] [--listen <flankr.sock>] [--show-tokens]
        [--vpn tailscale|none] [--bind <addr:port>]...
        [--prompts <ADDITIONAL_PROMPTS.md>] [--suggestions <SUGGESTIONS.md>]
   serve (the default) starts `flankr server` in the background and returns;
   log and pid in ~/.local/state/flankr/. --foreground runs it here, as
-  `server` does; --stop stops it.
+  `server` does; --stop stops it; --restart stops the daemon running on
+  the socket, whichever copy it is, and starts this one in the background.
   The link listens on 127.0.0.1:7347; --bind <addr:port> (repeatable, e.g.
   0.0.0.0:7347) replaces [link] listen for the run. --vpn tailscale (the
   default) makes Tailscale forward its port 7347 to the link, adding the
@@ -753,13 +780,23 @@ async fn run(
     if args.foreground && args.stop {
         return Err("--foreground and --stop do not go together".into());
     }
-    if command == "server" && (args.foreground || args.stop) {
+    // `--restart` goes with neither (the 2026-11-03 11:51 EST amendment,
+    // item 1): exit 2, nothing stopped or started.
+    for (given, other) in [(args.stop, "--stop"), (args.foreground, "--foreground")] {
+        if args.restart && given {
+            eprintln!("flankr: --restart and {other} do not go together");
+            std::process::exit(2);
+        }
+    }
+    if command == "server" && (args.foreground || args.stop || args.restart) {
         return Err(
             "`flankr server` runs in the foreground; use `flankr serve --stop` to stop it".into(),
         );
     }
     if background {
-        std::process::exit(serve_background(&args, argv).await?);
+        // `server` is given the server's own flags, not `--restart`.
+        let rest = argv.into_iter().filter(|a| a != "--restart").collect();
+        std::process::exit(serve_background(&args, rest).await?);
     }
     serve(args).await
 }
