@@ -634,3 +634,21 @@ Grouping is recorded as working (CHANGES.md, the workspace groups plan
 implemented).
 
 **In hand.** Items 1 to 3 handed to a subagent.
+
+## 2026-11-03 15:40 EST — Owner: the list view falling behind the terminal again
+
+Device: Galaxy S23 Ultra (app 0.7.13, daemon 0.7.7).
+
+**Report.** "Check the list mode is getting behind the terminal again".
+
+**Cause.** The lead's own Claude Code session (pane w2:pZ) was continued
+after its context ran out: Claude now writes a new transcript,
+`a915472d-….jsonl`, while herdr still reports the pane's session as the
+old one, `992c3f44-…`, whose file stopped growing at 15:21. The daemon
+reads the file herdr names, so the transcript view stopped while the
+terminal stayed live; a pull to refresh at 15:37:56 found nothing new. The
+new transcript's first user record is Claude's continuation summary, which
+ends "read the full transcript at: <the old file's path>".
+
+**In hand.** Handed to a subagent: the daemon follows a continued session
+from the file herdr names to the newer transcript that names it.
