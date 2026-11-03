@@ -4387,3 +4387,18 @@ Two readings, within the amendments:
 2. With no buttons, the link's tap area is as before; with buttons, it is
    the 40 pt from the row's bottom to the card's, so the card grows by
    about 10 pt more than the link's line alone.
+
+## 2026-11-03 15:05 EST — A test count next to failed read in both orders; daemon 0.7.7, app 0.7.13 in their 0.7 series
+
+Plan: the harness protocol plan (20261022_03), living section L3, by its
+2026-11-03 15:03 EST amendment, from the owner's report of 14:58 EST in
+`docs/OWNER_REPORTS.md` ("reported a passing test as something broke").
+A fix, so daemon 0.7.7 and, since the app's user sees the card go, app
+0.7.13 (FLANKR RULE 2 item 4), both patches. flankr-companion does not
+change.
+
+Why the exit-code check did not catch it: a successful Claude Code Bash
+result carries only the command's output, with no exit code at all
+(Claude Code writes `Exit code <n>` only when the command fails), so
+`parse_command_exit_code` found none and `fails_tests` went on to read
+the counts.
