@@ -1,8 +1,10 @@
 //! Tailscale, through its CLI (plan 20261102_03, decision 2; the reading
 //! moved here from `link/tailscale.rs`).
 //!
-//! * The CLI is `tailscale` on `PATH`, else the macOS app's
-//!   `/Applications/Tailscale.app/Contents/MacOS/Tailscale`.
+//! * The CLI is `tailscale` on `PATH`, else Homebrew's or `/usr/local`'s,
+//!   else the macOS app's, in `/Applications` or `~/Applications`
+//!   ([`candidates`]): a daemon started over SSH or by launchd may not have
+//!   Homebrew on its `PATH`.
 //! * `running` and the machine's name: `tailscale status --json`
 //!   (`BackendState == "Running"`, `Self.DNSName` without its final dot).
 //! * `forwards`: `tailscale serve status --json` has a TCP handler for the
@@ -22,6 +24,28 @@ use super::{Vpn, VpnAddress, VpnError};
 pub const TIMEOUT: Duration = Duration::from_secs(10);
 /// The macOS app's CLI, when `tailscale` is not on `PATH`.
 pub const APP_CLI: &str = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
+/// Where `tailscale` is installed when it is not on `PATH`: Homebrew on
+/// Apple silicon, then on Intel and other installs.
+pub const INSTALLED_CLIS: [&str; 2] = ["/opt/homebrew/bin/tailscale", "/usr/local/bin/tailscale"];
+
+/// Where to look for the CLI, in order: each `PATH` directory, then
+/// [`INSTALLED_CLIS`], then the app's in `/Applications`, then in
+/// `<home>/Applications`.
+pub fn candidates(path: Option<&std::ffi::OsStr>, home: Option<&Path>) -> Vec<PathBuf> {
+    let mut found: Vec<PathBuf> = path
+        .map(|p| {
+            std::env::split_paths(p)
+                .map(|dir| dir.join("tailscale"))
+                .collect()
+        })
+        .unwrap_or_default();
+    found.extend(INSTALLED_CLIS.iter().map(PathBuf::from));
+    found.push(PathBuf::from(APP_CLI));
+    if let Some(home) = home {
+        found.push(home.join("Applications/Tailscale.app/Contents/MacOS/Tailscale"));
+    }
+    found
+}
 
 /// Tailscale through its CLI.
 #[derive(Debug, Clone)]
@@ -44,15 +68,12 @@ enum Ran {
 }
 
 impl Tailscale {
-    /// The CLI on `PATH`, else the app's, else none.
+    /// The first of [`candidates`] that is there, else none.
     pub fn find() -> Tailscale {
-        let program = std::env::var_os("PATH")
-            .and_then(|path| {
-                std::env::split_paths(&path)
-                    .map(|dir| dir.join("tailscale"))
-                    .find(|p| is_executable(p))
-            })
-            .or_else(|| Some(PathBuf::from(APP_CLI)).filter(|p| is_executable(p)));
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let program = candidates(std::env::var_os("PATH").as_deref(), home.as_deref())
+            .into_iter()
+            .find(|p| is_executable(p));
         Tailscale {
             program,
             timeout: TIMEOUT,
@@ -255,6 +276,27 @@ fn tcp_map_forwards(tcp: &Value, port: u16) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_cli_is_looked_for_on_path_then_homebrew_then_the_app() {
+        let path = std::ffi::OsString::from("/a:/b");
+        let got = candidates(Some(&path), Some(Path::new("/Users/u")));
+        let want: Vec<PathBuf> = [
+            "/a/tailscale",
+            "/b/tailscale",
+            "/opt/homebrew/bin/tailscale",
+            "/usr/local/bin/tailscale",
+            APP_CLI,
+            "/Users/u/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+        ]
+        .iter()
+        .map(PathBuf::from)
+        .collect();
+        assert_eq!(got, want);
+        // No PATH and no home: the installed places and the app's.
+        assert_eq!(candidates(None, None).len(), 3);
+    }
+
     use super::*;
     use serde_json::json;
 

@@ -229,3 +229,8 @@ These changes came before the program had version numbers.
 **Changed**
 - When every address the link has is this machine's own (127.0.0.1), `flankr pair` shows no QR code or pairing URL: it prints `flankr is only reachable from this machine (127.0.0.1:7347): a phone can't connect to it.` and what would fix it (start Tailscale, or `--vpn none --bind 0.0.0.0:7347`, or Tailscale's error), and exits 1. The daemon's log says the same at start.
 - A pairing offer through Tailscale names the tailnet address first, then 127.0.0.1:7347, as before; it no longer needs you to run `tailscale serve`.
+
+## 0.7.2 — 2026-11-03
+
+**Fixed**
+- The daemon finds Tailscale's command when it is not on `PATH`: it also looks in `/opt/homebrew/bin`, `/usr/local/bin`, and the Tailscale app in `/Applications` or `~/Applications`. Before, a daemon started over SSH or in the background could miss a Homebrew install and report Tailscale as not running.
