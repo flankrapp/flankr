@@ -55,6 +55,45 @@ pub fn read(input: &str) -> Result<Pairing, String> {
     })
 }
 
+impl Pairing {
+    /// The link without its loopback addresses ([`is_loopback`]), for a
+    /// device that does not run the daemon itself (plan 20261028_01, the
+    /// 2026-11-03 00:07 EST amendment, item 1): the others in their order,
+    /// with the name from the first of them when it came from a loopback
+    /// one. `None` when every address is a loopback one. Added in 0.8.1.
+    pub fn without_loopback(mut self) -> Option<Pairing> {
+        let before = self.payload.addresses.len();
+        self.payload.addresses.retain(|a| !is_loopback(a));
+        let first = self.payload.addresses.first()?;
+        if self.payload.addresses.len() != before && is_loopback(&self.server) {
+            self.server = server_name(first);
+        }
+        Some(self)
+    }
+}
+
+/// Whether `address` (`host:port`, or a bare host) names this device
+/// itself: a host in 127.0.0.0/8, `::1` (bracketed or not), or
+/// `localhost` in any case, with or without a trailing dot. Added in
+/// 0.8.1.
+pub fn is_loopback(address: &str) -> bool {
+    let address = address.trim();
+    let host = if let Some(rest) = address.strip_prefix('[') {
+        rest.split(']').next().unwrap_or(rest)
+    } else {
+        match address.rsplit_once(':') {
+            // A bare IPv6 address has more than one colon.
+            Some((host, port)) if !host.contains(':') && port.parse::<u16>().is_ok() => host,
+            _ => address,
+        }
+    };
+    let host = host.strip_suffix('.').unwrap_or(host);
+    match host.parse::<std::net::IpAddr>() {
+        Ok(ip) => ip.is_loopback(),
+        Err(_) => host.eq_ignore_ascii_case("localhost"),
+    }
+}
+
 /// `m4` for `m4.tail1a2b3c.ts.net:7347`; `127.0.0.1` for `127.0.0.1:7347`.
 fn server_name(address: &str) -> String {
     let host = match address.rsplit_once(':') {
@@ -209,6 +248,48 @@ mod tests {
         );
         // No addresses.
         assert!(read(&payload(&[]).encode().unwrap()).is_err());
+    }
+
+    #[test]
+    fn loopback_addresses_are_known() {
+        for a in [
+            "127.0.0.1:7347",
+            "127.8.9.10:1",
+            "[::1]:7347",
+            "::1",
+            "localhost:7347",
+            "LocalHost.:7347",
+            "127.0.0.1",
+        ] {
+            assert!(is_loopback(a), "{a}");
+        }
+        for a in [
+            "m4.ts.net:7347",
+            "100.64.0.1:7347",
+            "[fe80::1]:7347",
+            "128.0.0.1:7347",
+            "localhost.example.com:7347",
+            "0.0.0.0:7347",
+        ] {
+            assert!(!is_loopback(a), "{a}");
+        }
+    }
+
+    #[test]
+    fn a_link_drops_its_loopback_addresses() {
+        // Only loopback: nothing left.
+        let p = payload(&["127.0.0.1:7347", "[::1]:7347"]);
+        assert_eq!(read(&p.url().unwrap()).unwrap().without_loopback(), None);
+        // Mixed: the rest in order, the name from the first left.
+        let p = payload(&["127.0.0.1:7347", "box.example.com:7347", "[::1]:7347"]);
+        let read_back = read(&p.encode().unwrap()).unwrap();
+        assert_eq!(read_back.server, "127.0.0.1");
+        let kept = read_back.without_loopback().unwrap();
+        assert_eq!(kept.payload.addresses, ["box.example.com:7347"]);
+        assert_eq!(kept.server, "box");
+        // No loopback: unchanged.
+        let p = read(&payload(&["m4.ts.net:7347"]).url().unwrap()).unwrap();
+        assert_eq!(p.clone().without_loopback(), Some(p));
     }
 
     #[test]

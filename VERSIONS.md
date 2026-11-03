@@ -1117,3 +1117,29 @@ first release:
   stdout and stderr appended to `log`. `leave_job` does nothing without
   the marker; with it, the program forks into a new session and the
   job's process exits.
+
+## flankr-companion 0.8.1 — 2026-11-03 (the commit tagged `flankr-companion-v0.8.1`)
+
+Plan 20261028_01 (several remotes), its 2026-11-03 00:07 EST amendment.
+A behaviour change a caller can observe, which Rule 5.4 would make 0.9.0;
+kept in the 0.8 series on the owner's instruction (2026-11-03: "keep the
+same version series, we don't need to bump it that much while we work
+this out"; `CHANGES.md`, the 2026-11-03 entry). So flankr-audio, which
+carries `Event`, takes it without a bump of its own.
+
+- **Added:** `CompanionConfig::loopback_pairing` (`true` from
+  `CompanionConfig::new`). Off, a pairing link's loopback addresses
+  (127.0.0.0/8, `::1`, `localhost`) are dropped before anything is done
+  with it.
+- **Added:** `Event::PairLocalOnly { server }`: with `loopback_pairing`
+  off, a link whose every address is a loopback one is refused without
+  connecting or making a key.
+- **Added:** `Event::PairUnreachable { server, addresses }`: a pairing
+  request that opened no TCP connection to any of the link's addresses
+  ends with its key deleted.
+- **Added:** `scan::is_loopback` and `scan::Pairing::without_loopback`.
+- **Breaking (behaviour):** a pairing request that opened no TCP
+  connection to any address no longer falls back to the device code
+  (`Event::PairingWords` with `fallback`); it gives
+  `Event::PairUnreachable`. The fallback stays for a request an address
+  took but no daemon answered, and for a version 2 link.

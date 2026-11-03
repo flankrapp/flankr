@@ -96,6 +96,14 @@ pub struct CompanionConfig {
     /// 6.4). `None`: `data_dir`'s `cache/`, else the system's temp folder.
     /// Added in 0.5.4.
     pub cache_dir: Option<PathBuf>,
+    /// Whether a pairing link's loopback addresses (127.0.0.0/8, `::1`,
+    /// `localhost`) can reach its daemon: `true` (the default) where the
+    /// client may run beside its daemon, `false` on a phone, where they
+    /// name the phone itself. With `false` they are dropped from every
+    /// link, and a link with only loopback addresses gives
+    /// [`Event::PairLocalOnly`] without connecting (plan 20261028_01, the
+    /// 2026-11-03 00:07 EST amendment, item 1). Added in 0.8.1.
+    pub loopback_pairing: bool,
 }
 
 impl CompanionConfig {
@@ -113,6 +121,7 @@ impl CompanionConfig {
             data_dir: None,
             pairing_window: PAIRING_WINDOW,
             cache_dir: None,
+            loopback_pairing: true,
         }
     }
 

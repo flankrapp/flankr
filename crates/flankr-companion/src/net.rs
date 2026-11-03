@@ -30,12 +30,19 @@
 //!   added, refused or expired. A refusal at once, a refusal or expiry
 //!   later, a dropped connection or Cancel ends the pairing with the key
 //!   deleted ([`Event::PairFailed`]).
-//! - a link without an offer (version 2), or a request no address answered,
-//!   gets the **device-code fallback**: [`Event::PairingWords`] with the
+//! - a link without an offer (version 2), or a request no daemon answered
+//!   though an address took its TCP connection, gets the **device-code
+//!   fallback**: [`Event::PairingWords`] with the
 //!   device code (and the six words for its key when the link has an
 //!   offer), and a **pairing probe**, a task that tries `IK` with `hello`
 //!   every [`PAIRING_RETRY`] for the pairing window while the server drops
 //!   it, until the code is pasted into `flankr pair`.
+//! - a request that opened no TCP connection to any address ends with
+//!   [`Event::PairUnreachable`]: the probe would need the same addresses.
+//!   Without [`CompanionConfig::loopback_pairing`] (a phone), a link's
+//!   loopback addresses are dropped first, and one with nothing else ends
+//!   at once with [`Event::PairLocalOnly`] (plan 20261028_01, the
+//!   2026-11-03 00:07 EST amendment).
 //!
 //! Once the daemon adds the key, the remote is added to the list (and made
 //! active only if none was) and [`Event::Paired`] and [`Event::Remotes`]
@@ -91,7 +98,7 @@
 //! how a transfer keeps at most two queued.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
@@ -423,9 +430,12 @@ enum Done {
         address: String,
         expires_in_secs: u16,
     },
-    /// The pairing request `token` reached no daemon that answered it: the
-    /// device-code fallback follows.
-    Unreachable { token: u64 },
+    /// The pairing request `token` reached no daemon that answered it.
+    /// `opened`: a TCP connection to one of its addresses was opened, so
+    /// the device-code fallback follows; else the pairing ends with
+    /// [`Event::PairUnreachable`] (plan 20261028_01, the 2026-11-03
+    /// 00:07 EST amendment, item 2).
+    Unreachable { token: u64, opened: bool },
     /// The pairing request `token` ended with nothing added.
     Ended { token: u64, ended: Ended },
     /// The address check `token` ended; `reached`: its `hello` was
@@ -1184,7 +1194,7 @@ impl Net {
                 address,
                 expires_in_secs,
             } => self.asked(token, address, expires_in_secs),
-            Done::Unreachable { token } => self.unreachable(token),
+            Done::Unreachable { token, opened } => self.unreachable(token, opened),
             Done::Ended { token, ended } => {
                 let Some(probe) = self.probe.as_ref().filter(|p| p.token == token) else {
                     return;
@@ -1304,12 +1314,41 @@ impl Net {
     }
 
     /// Reads a pairing input before any connection is made. A refusal is
-    /// given as [`Event::PairFailed`].
+    /// given as [`Event::PairFailed`]. Without
+    /// [`CompanionConfig::loopback_pairing`], the link's loopback
+    /// addresses are dropped, and a link with nothing else is refused as
+    /// [`Event::PairLocalOnly`] (plan 20261028_01, the 2026-11-03 00:07 EST
+    /// amendment, item 1).
     fn check_pairing(&self, text: &str) -> Option<Pairing> {
-        match scan::read(text) {
-            Ok(p) => Some(p),
+        let p = match scan::read(text) {
+            Ok(p) => p,
             Err(why) => {
                 self.emit(Event::PairFailed(why));
+                return None;
+            }
+        };
+        if self.config.loopback_pairing {
+            return Some(p);
+        }
+        let server = p.server.clone();
+        let before = p.payload.addresses.len();
+        match p.without_loopback() {
+            Some(p) => {
+                let dropped = before - p.payload.addresses.len();
+                if dropped > 0 {
+                    log::info!(
+                        "pairing: {dropped} loopback address(es) dropped from the link for {}",
+                        p.server
+                    );
+                }
+                Some(p)
+            }
+            None => {
+                log::info!(
+                    "pairing: every address in the link for {server} is a loopback one; \
+                     not connecting"
+                );
+                self.emit(Event::PairLocalOnly { server });
                 None
             }
         }
@@ -1514,13 +1553,23 @@ impl Net {
         self.emit(shown);
     }
 
-    /// No address answered the probe `token`'s request: the device-code
-    /// fallback.
-    fn unreachable(&mut self, token: u64) {
-        if self.probe.as_ref().is_some_and(|p| p.token == token) {
+    /// No address answered the probe `token`'s request. With a TCP
+    /// connection `opened` to one of them, the device-code fallback;
+    /// else the pairing ends, since the fallback's probe would need the
+    /// same addresses (the 2026-11-03 00:07 EST amendment, item 2).
+    fn unreachable(&mut self, token: u64, opened: bool) {
+        let Some(probe) = self.probe.as_ref().filter(|p| p.token == token) else {
+            return;
+        };
+        if opened {
             log::info!("pairing: the request reached no daemon; the device code instead");
             self.fallback();
+            return;
         }
+        let server = probe.record.name.clone();
+        let addresses = probe.record.addresses.clone();
+        self.end_probe("no address could be reached; no device code");
+        self.emit(Event::PairUnreachable { server, addresses });
     }
 
     /// The device-code fallback of the probe in progress (the 14:37 EDT
@@ -2203,7 +2252,8 @@ async fn probe(
 /// refusal ends it; an accepted request is reported as [`Done::Asked`] on
 /// `tasks`, and the daemon's [`PairResult`] is awaited for the offer's time
 /// left and [`RESULT_GRACE`]. Returns how it ended: [`Done::Paired`] once
-/// the key is added, [`Done::Unreachable`] if no address answered.
+/// the key is added, [`Done::Unreachable`] if no address answered (with
+/// whether any TCP connection was opened).
 /// Dropping the task (Cancel) closes the connection.
 async fn pair_request(
     addresses: &[String],
@@ -2212,9 +2262,11 @@ async fn pair_request(
     token: u64,
     tasks: &UnboundedSender<Done>,
 ) -> Done {
+    let opened = AtomicBool::new(false);
     for addr in addresses {
         let attempt = async {
             let stream = tcp_connect(addr).await.map_err(|e| e.to_string())?;
+            opened.store(true, Ordering::Relaxed);
             link::request_pairing(stream, server_key, request)
                 .await
                 .map_err(|e| e.to_string())
@@ -2258,7 +2310,10 @@ async fn pair_request(
         };
         return Done::Ended { token, ended };
     }
-    Done::Unreachable { token }
+    Done::Unreachable {
+        token,
+        opened: opened.load(Ordering::Relaxed),
+    }
 }
 
 /// What the phone says when a pairing request with `name` ended without

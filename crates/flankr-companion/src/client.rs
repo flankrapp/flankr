@@ -674,8 +674,9 @@ pub enum Event {
     /// words and asks for **yes**. [`Event::Paired`] or
     /// [`Event::PairFailed`] follows.
     ///
-    /// With `fallback` `Some`, the daemon could not be asked directly (it
-    /// was not reached, or the link is version 2, without an offer): the
+    /// With `fallback` `Some`, the daemon could not be asked directly (an
+    /// address took the connection but no daemon answered the request, or
+    /// the link is version 2, without an offer): the
     /// device code is pasted into `flankr pair`, which then prints the
     /// words for that code's key, and the client keeps trying the daemon
     /// until it knows the key.
@@ -713,6 +714,24 @@ pub enum Event {
     /// bad checksum, a request the daemon refused, an offer that expired,
     /// a connection that closed. Its new key is deleted.
     PairFailed(String),
+    /// A pairing link was refused before anything was connected to: every
+    /// address in it is a loopback one, which on this device names the
+    /// device itself ([`crate::CompanionConfig::loopback_pairing`] off).
+    /// `server` is the name from the link. No key was made and no device
+    /// code is offered: the daemon is reachable only from its own machine
+    /// (plan 20261028_01, the 2026-11-03 00:07 EST amendment, item 1).
+    /// Added in 0.8.1.
+    PairLocalOnly {
+        server: String,
+    },
+    /// A pairing request opened no TCP connection to any of the link's
+    /// `addresses`: the pairing ended with its key deleted, and no device
+    /// code is offered, since its probe would need the same addresses
+    /// (the 2026-11-03 00:07 EST amendment, item 2). Added in 0.8.1.
+    PairUnreachable {
+        server: String,
+        addresses: Vec<String>,
+    },
     /// Speak this.
     Say(String),
     /// The catch-up after a voice input (plan 20261023_02, the 2026-10-30

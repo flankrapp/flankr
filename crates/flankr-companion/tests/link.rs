@@ -403,6 +403,17 @@ fn companion_with(dir: &tempfile::TempDir, window: Duration) -> Companion {
     Companion::spawn(config, Box::new(FileKeyStore::new(keys_dir(dir))))
 }
 
+/// As [`companion`], as on a phone: loopback addresses name the phone
+/// itself (`loopback_pairing` off).
+fn phone(dir: &tempfile::TempDir) -> Companion {
+    let mut config = CompanionConfig::new("test");
+    config.device_name = DEVICE.to_string();
+    config.socket = dir.path().join("no-socket");
+    config.data_dir = Some(data_dir(dir));
+    config.loopback_pairing = false;
+    Companion::spawn(config, Box::new(FileKeyStore::new(keys_dir(dir))))
+}
+
 fn keys_dir(dir: &tempfile::TempDir) -> std::path::PathBuf {
     dir.path().join("keys")
 }
@@ -1583,6 +1594,84 @@ fn a_request_no_daemon_answers_falls_back_to_the_device_code_with_words() {
     assert_eq!(server.next_seen().peer_key, added.key);
     expect_connected(&c);
     assert_eq!(ids(&dir), [RemoteId::of(&server.key.public)]);
+}
+
+// Loopback links and unreachable daemons (plan 20261028_01, the
+// 2026-11-03 00:07 EST amendment).
+
+#[test]
+fn a_loopback_only_link_is_refused_on_a_phone_without_connecting() {
+    let server = Server::start();
+    let dir = tempfile::tempdir().unwrap();
+    let c = phone(&dir);
+    let port = server.addr.rsplit_once(':').unwrap().1.to_string();
+    let link = server.pair_run(vec![
+        server.addr.clone(),
+        format!("localhost:{port}"),
+        format!("[::1]:{port}"),
+    ]);
+    for text in [link.url().unwrap(), link.encode().unwrap()] {
+        c.send(Input::Pair(text));
+        match next_event(&c) {
+            Event::PairLocalOnly { server } => assert_eq!(server, "127.0.0.1"),
+            e => panic!("expected PairLocalOnly, got {e:?}"),
+        }
+    }
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(
+        server.accepts.load(Ordering::SeqCst),
+        0,
+        "nothing connected"
+    );
+    assert!(server.held.try_recv().is_err());
+    assert_eq!(stored(&dir), Remotes::default());
+    let id = RemoteId::of(&server.key.public);
+    assert!(!key_exists(&dir, &id.key_name()), "no key was made");
+}
+
+#[test]
+fn a_mixed_link_drops_its_loopback_addresses_on_a_phone() {
+    let server = Server::start();
+    let dir = tempfile::tempdir().unwrap();
+    let c = phone(&dir);
+    // The test daemon is on loopback, so only the `.invalid` address
+    // (which resolves nowhere) is left, and the daemon is never tried.
+    let link = server.pair_run(vec![server.addr.clone(), "box.invalid:7347".into()]);
+    c.send(Input::Pair(link.url().unwrap()));
+    match next_event(&c) {
+        Event::PairUnreachable { server, addresses } => {
+            assert_eq!(server, "box");
+            assert_eq!(addresses, ["box.invalid:7347"]);
+        }
+        e => panic!("expected PairUnreachable, got {e:?}"),
+    }
+    assert_eq!(server.accepts.load(Ordering::SeqCst), 0, "loopback dropped");
+    assert_eq!(stored(&dir), Remotes::default());
+    let id = RemoteId::of(&server.key.public);
+    assert!(!key_exists(&dir, &id.key_name()));
+}
+
+#[test]
+fn a_request_that_reaches_no_address_ends_without_the_device_code() {
+    let dir = tempfile::tempdir().unwrap();
+    let c = companion(&dir);
+    let server_key = link::generate_keypair().unwrap().public;
+    let closed = closed_addr();
+    let link = PairingPayload {
+        server_key,
+        addresses: vec![closed.clone()],
+        offer: Some([4; OFFER_LEN]),
+    };
+    c.send(Input::Pair(link.encode().unwrap()));
+    match next_event(&c) {
+        Event::PairUnreachable { server, addresses } => {
+            assert_eq!(server, "127.0.0.1");
+            assert_eq!(addresses, [closed]);
+        }
+        e => panic!("expected PairUnreachable, not the fallback: {e:?}"),
+    }
+    assert_eq!(stored(&dir), Remotes::default());
+    assert!(!key_exists(&dir, &RemoteId::of(&server_key).key_name()));
 }
 
 #[test]
