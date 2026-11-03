@@ -464,3 +464,19 @@ card".
 modals".
 
 **In hand.** Given to the same subagent, for the same amendment.
+
+## 2026-11-03 12:08 EST — Owner: no progress bars on holds
+
+This adds to the entry "one details screen for a remote; a 1 s hold on its
+card".
+
+**Report.** "you can remove the progress bar for that in the app, it's bad
+ux, the time should be adjusted instead of it's too long".
+
+**Seen.** Four holds draw a bar filling along the control's bottom: a
+remote's card in the drawer (2 s), the overview's and the agent view's
+2 s presses, and the bottom bar's 500 ms hold.
+
+**In hand.** Given to the same subagent: every hold's bar removed, the
+drawer card's hold made 1 s, and the other holds' times kept for the owner
+to decide.
