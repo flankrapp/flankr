@@ -3933,3 +3933,37 @@ detached and returns, `flankr server` is the foreground server process,
 `--foreground` keeps today's behaviour, `--stop` stops it; a new crate,
 `flankr-daemon`, written from the OS documentation (not herdr's code),
 does the detaching.
+
+## 2026-11-02 22:18 EST — the daemon in the background: small departures in the build (plan 20261102_01, steps 1 and 2)
+
+1. **Step 1, `leave_job`.** Decision 2 has the job's process exit "at
+   once" after `fork()`. It waits first, on a pipe, until the child has
+   called `setsid()`: launchd kills what is left in a finished job's
+   process group (launchd.plist(5), `AbandonProcessGroup`), so the child
+   must be in its own session before the parent exits.
+2. **Step 1, the cleanup.** Of this crate's jobs older than 60 s (from
+   `launchctl list`), only those not running (PID `-`) are booted out,
+   so a job whose process somehow still runs is never stopped by it.
+3. **Step 1, values a plist cannot carry.** Besides a NUL byte, a value
+   that is not UTF-8 or holds another character XML 1.0 forbids (most
+   control characters, U+FFFE, U+FFFF) also makes `start` start
+   directly; a carriage return is written as `&#13;` so it reads back
+   exactly.
+4. **Step 2, the pid in "already running".** It is the socket peer's pid
+   where the system gives it (`LOCAL_PEERPID` on macOS, `SO_PEERCRED` on
+   Linux, through tokio), else the pid file's, else `unknown`. `--stop`
+   with no pid file but an answering flankr stops that peer.
+5. **Step 2, a clean exit.** `flankr server` (and `serve --foreground`)
+   now handles SIGTERM and SIGINT: it logs `flankr server stopping on
+   <signal>`, removes its pid file and exits 0. The socket file is left
+   for the next start to replace, as before.
+6. **Step 2, `.env`.** `flankr serve` in the background does not load
+   `.env` itself (the server does, from the same folder), so the key
+   line of decision 3 is about the shell's own `GEMINI_API_KEY`. The line
+   is printed when that is set and `.private/gemini_api_key` is not in
+   the working folder; it names `.env` too, which it does not read.
+7. **Step 2, "a flankr".** A pid file's process counts as a flankr when
+   its executable's file name starts with `flankr` (`proc_pidpath` on
+   macOS, `/proc/<pid>/exe` on Linux).
+8. **Step 2, `flankr server --stop` and `--foreground`** are refused
+   with a line pointing to `flankr serve --stop`.
