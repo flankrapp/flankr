@@ -1210,3 +1210,29 @@ decisions 1, 3 and 5.2):
   and `TerminalChoiceTapResult { question, option, label }`: a tap on a
   choice question's option in the terminal, picked by the agent's keys;
   `NOT_PERMITTED` when the row is no option. Gated as `terminal.input` is.
+
+## flankr-companion 0.8.3 — 2026-11-03 (the commit tagged `flankr-companion-v0.8.3`)
+
+Plan 20261103_01 (terminal taps and shell panes), decisions 1, 2, 3 and
+5.2. A behaviour change a caller can observe (keys into an unarmed
+terminal), which Rule 5.4 would make 0.9.0; kept in the 0.8 series on
+the owner's instruction "keep the same version series" (`CHANGES.md`,
+the 2026-11-03 entries). It takes libflankr_proto 0.5.11 and
+libflankr_term 0.1.2, both additive.
+
+- **Added:** `Input::TerminalChoiceTap { session, row }` and
+  `Companion::terminal_choice_tap(session, row)`: `terminal.choice_tap`,
+  arming first; one in flight, a newer tap replacing one that waits; a
+  refusal (the row is no option) is logged, not an `Event::Error`.
+- **Added:** `TerminalStatus::input: bool` (appended): the terminal is
+  open and takes typing once armed, from `TerminalInfo::input` and the
+  `terminal.open` answer's `input`.
+- **Added:** `RowSpan` re-exported from libflankr_term; `terminal.open`
+  asks for the input rows trailer (`input_rows: true`), so
+  `Screen::input_rows()` has the agent's input bar.
+- **Changed (behaviour):** `Input::TerminalKeys` and the terminal paste
+  into an open terminal that takes typing but is not armed arm it first
+  (`terminal.input_arm`) and go once the arm is answered; a refused arm
+  drops them. Before, they were refused with an `Event::Error`. Keys into
+  a terminal that does not take typing, or is not open, are still
+  refused.

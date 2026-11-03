@@ -58,7 +58,7 @@ pub use terminal::{TerminalStatus, Terminals, key_batches};
 pub use libflankr_proto::common::{
     MouseButton, TerminalClosedReason, TerminalMouseKind, TerminalSource,
 };
-pub use libflankr_term::{Cursor, Grid, Screen};
+pub use libflankr_term::{Cursor, Grid, RowSpan, Screen};
 pub use view::{
     AgentCard, Bookend, CardKind, KEPT_BYTES, KEPT_SECTIONS, KeptView, Shows, ViewSection,
 };
@@ -263,8 +263,8 @@ impl Companion {
         self.send(Input::TerminalArm(session.to_string()));
     }
 
-    /// Sends keys into the session's armed terminal
-    /// ([`Input::TerminalKeys`]).
+    /// Sends keys into the session's terminal ([`Input::TerminalKeys`]),
+    /// arming it first when it takes typing and is not armed.
     pub fn terminal_send_keys(&self, session: &str, keys: &str) {
         self.send(Input::TerminalKeys {
             session: session.to_string(),
@@ -317,6 +317,17 @@ impl Companion {
             col,
             row,
             modifiers,
+        });
+    }
+
+    /// A tap on `row` of the session's terminal while a choice question is
+    /// open for it ([`Input::TerminalChoiceTap`], plan 20261103_01 decision
+    /// 5.2): the daemon picks the option on that row by the agent's keys,
+    /// arming the terminal first.
+    pub fn terminal_choice_tap(&self, session: &str, row: u16) {
+        self.send(Input::TerminalChoiceTap {
+            session: session.to_string(),
+            row,
         });
     }
 

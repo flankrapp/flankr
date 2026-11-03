@@ -296,6 +296,12 @@ pub enum Input {
         row: u16,
         modifiers: u8,
     },
+    /// A tap on `row` of the session's terminal while a choice question is
+    /// open for it (`terminal.choice_tap`, plan 20261103_01 decision 5.2):
+    /// the daemon picks the option on that row by the agent's keys. Arms
+    /// first, as a key does; a refusal (the row is no option) is only
+    /// logged. Added in 0.8.3.
+    TerminalChoiceTap { session: String, row: u16 },
     /// A call to a plugin's own method (docs/design/20261028_04_PLUGINS_PLAN.md,
     /// 3.10 item 1), sent as `plugin.call` to the remote in use. With
     /// `id`, its answer comes as [`Event::PluginResult`] with the same
@@ -1355,6 +1361,8 @@ enum Sent {
     TerminalResize(String),
     /// `terminal.mouse` of this session.
     TerminalMouse(String),
+    /// `terminal.choice_tap` of this session.
+    TerminalChoiceTap(String),
     /// `plugin.call` to `ns`, with the device's `id` if it has one.
     PluginCall {
         ns: String,
@@ -1676,6 +1684,9 @@ pub struct State {
     cross: crate::cross::Cross,
     /// The terminals, shared with the app (plan 20261027_07, step 4).
     terminals: Arc<Terminals>,
+    /// A paste waiting for its terminal's arm (plan 20261103_01, decision
+    /// 2): the pane, the text and the images.
+    paste_after_arm: Option<(String, Option<String>, Vec<u8>)>,
     /// The drawer is shown ([`Input::DrawerShown`]).
     drawer: bool,
     /// The server's name, vocabulary and terminal mode from the last
@@ -2215,6 +2226,7 @@ impl State {
     pub fn with_terminals(client: impl Into<String>, terminals: Arc<Terminals>) -> Self {
         State {
             terminals,
+            paste_after_arm: None,
             client: client.into(),
             link: Link::Offline,
             session_id: None,
@@ -2592,6 +2604,8 @@ impl State {
                         rows_hint,
                         // libflankr_term 0.1.1 decodes the trailer.
                         cursor: true,
+                        // And 0.1.2 the input rows (plan 20261103_01).
+                        input_rows: true,
                     };
                     out.push(self.request(
                         methods::TERMINAL_OPEN,
@@ -2662,6 +2676,15 @@ impl State {
                         modifiers: e.modifiers,
                     },
                     Sent::TerminalMouse(session),
+                )),
+                Act::ChoiceTap {
+                    session,
+                    terminal_id,
+                    row,
+                } => out.push(self.request(
+                    methods::TERMINAL_CHOICE_TAP,
+                    common::TerminalChoiceTapParams { terminal_id, row },
+                    Sent::TerminalChoiceTap(session),
                 )),
                 Act::Error(message) => out.push(event(Event::Error(message))),
             }
@@ -3033,6 +3056,10 @@ impl State {
                 let acts = self.terminals.update(|b| b.mouse(&session, e));
                 self.terminal_acts(acts, &mut out);
             }
+            Input::TerminalChoiceTap { session, row } => {
+                let acts = self.terminals.update(|b| b.choice_tap(&session, row));
+                self.terminal_acts(acts, &mut out);
+            }
             Input::PluginCall {
                 ns,
                 id,
@@ -3145,6 +3172,17 @@ impl State {
             out.push(event(Event::Error("No session is open.".to_string())));
             return;
         };
+        // Not armed, but it takes typing: armed first, then pasted (plan
+        // 20261103_01, decision 2).
+        if self.online()
+            && self.terminals.armed_id(&pane).is_none()
+            && self.terminals.status(&pane).is_some_and(|s| s.input)
+        {
+            let acts = self.terminals.update(|b| (b.arm_for_input(&pane), false));
+            self.paste_after_arm = Some((pane, text, images));
+            self.terminal_acts(acts, out);
+            return;
+        }
         let terminal_id = if !self.online() {
             Err("I'm not connected to flankr.".to_string())
         } else {
@@ -5503,7 +5541,14 @@ impl State {
                     out.push(event(Event::Error(line)));
                 }
                 Sent::TerminalArm(session) => {
+                    self.paste_after_arm = None;
                     let acts = self.terminals.update(|b| b.armed(&session, Err(message)));
+                    self.terminal_acts(acts, out);
+                }
+                Sent::TerminalChoiceTap(session) => {
+                    let acts = self
+                        .terminals
+                        .update(|b| b.choice_tapped(&session, Err(message)));
                     self.terminal_acts(acts, out);
                 }
                 Sent::TerminalInput(session) => {
@@ -5617,7 +5662,23 @@ impl State {
                 let secs = parse::<common::TerminalInputArmResult>(result)
                     .map(|r| r.expires_in_s)
                     .map_err(|e| format!("a bad result: {e}"));
+                let ok = secs.is_ok();
                 let acts = self.terminals.update(|b| b.armed(&session, secs));
+                self.terminal_acts(acts, out);
+                // A paste that waited for the arm (plan 20261103_01,
+                // decision 2).
+                if let Some((pane, text, images)) = self.paste_after_arm.take()
+                    && ok
+                    && pane == session
+                {
+                    self.terminal_paste(text, images, out);
+                }
+            }
+            Sent::TerminalChoiceTap(session) => {
+                let r = parse::<common::TerminalChoiceTapResult>(result)
+                    .map(|r| format!("option {} ({})", r.option + 1, r.label))
+                    .map_err(|e| format!("a bad result: {e}"));
+                let acts = self.terminals.update(|b| b.choice_tapped(&session, r));
                 self.terminal_acts(acts, out);
             }
             Sent::TerminalInput(session) => {

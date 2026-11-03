@@ -22,7 +22,13 @@
 //! Keys ([`Input::TerminalKeys`](crate::Input::TerminalKeys)) are cut into
 //! batches of at most [`TERMINAL_INPUT_MAX`] bytes ([`key_batches`]) and
 //! sent one at a time, each after the last was answered; a refusal drops
-//! the rest.
+//! the rest. Since 0.8.3 (plan 20261103_01, decision 2) keys, a paste or a
+//! choice tap ([`Input::TerminalChoiceTap`](crate::Input::TerminalChoiceTap))
+//! into an open terminal that takes typing ([`TerminalStatus::input`]) but
+//! is not armed arm it first, and go once the arm is answered; a refused
+//! arm drops them. `terminal.open` asks for the input rows trailer
+//! (`input_rows: true`), so [`Screen::input_rows`] has the agent's input
+//! bar.
 //!
 //! Scrolls ([`Input::TerminalScroll`](crate::Input::TerminalScroll), a drag
 //! on the terminal) are coalesced: one `terminal.scroll` is in flight per
@@ -112,6 +118,12 @@ pub struct TerminalStatus {
     /// Where the daemon reads the terminal from, as its `terminal.open`
     /// answer said; [`TerminalSource::Poll`] before it.
     pub source: TerminalSource,
+    /// The terminal takes typing once armed: it is open, the daemon allows
+    /// terminal input on this connection, and its `terminal.open` answer
+    /// did not say the pane is read-only (plan 20261103_01, decision 1).
+    /// The first key, paste or choice tap arms it (decision 2). Added in
+    /// 0.8.3.
+    pub input: bool,
 }
 
 impl Terminals {
@@ -188,6 +200,7 @@ impl Terminals {
             scroll_max: t.scroll_max,
             cursor: t.cursor,
             source: t.source,
+            input: book.typing(t),
         })
     }
 
@@ -276,6 +289,11 @@ pub(crate) enum Act {
         terminal_id: u32,
         event: MouseEvent,
     },
+    ChoiceTap {
+        session: String,
+        terminal_id: u32,
+        row: u16,
+    },
     Error(String),
 }
 
@@ -343,6 +361,12 @@ struct Term {
     /// Mouse events not yet sent, and whether one is in flight.
     mouse: VecDeque<MouseEvent>,
     mouse_in_flight: bool,
+    /// From `terminal.open`'s answer: the pane takes typing (`None` from
+    /// an older daemon).
+    input: Option<bool>,
+    /// A choice tap's row waiting for the arm or for the one in flight.
+    choice_tap: Option<u16>,
+    choice_in_flight: bool,
 }
 
 impl Term {
@@ -355,6 +379,8 @@ impl Term {
         self.scroll_in_flight = false;
         self.mouse.clear();
         self.mouse_in_flight = false;
+        self.choice_tap = None;
+        self.choice_in_flight = false;
     }
 
     /// The fit, when the app gave both of its parts.
@@ -366,6 +392,56 @@ impl Term {
 const NO_MODE: &str = "the daemon offers no terminal mode";
 
 impl Book {
+    /// Whether `t` takes typing once armed (plan 20261103_01, decision 1):
+    /// open, the daemon's terminal input on, and the pane not read-only.
+    fn typing(&self, t: &Term) -> bool {
+        self.online
+            && self.info.is_some_and(|i| i.input)
+            && t.terminal_id.is_some()
+            && t.input != Some(false)
+    }
+
+    /// Arms `session`'s terminal for an input waiting on it, unless an arm
+    /// is on its way: the first key, paste or choice tap arms (plan
+    /// 20261103_01, decision 2).
+    pub(crate) fn arm_for_input(&mut self, session: &str) -> Vec<Act> {
+        let Some(t) = self.sessions.get_mut(session) else {
+            return Vec::new();
+        };
+        let Some(terminal_id) = t.terminal_id else {
+            return Vec::new();
+        };
+        if t.arming || t.is_armed {
+            return Vec::new();
+        }
+        t.arming = true;
+        vec![Act::Arm {
+            session: session.to_string(),
+            terminal_id,
+        }]
+    }
+
+    /// Whether `session`'s terminal may arm for an input now; the error
+    /// to give when not.
+    fn may_type(&mut self, session: &str, method: &str) -> Result<(), Act> {
+        let typing = self.sessions.get(session).is_some_and(|t| self.typing(t));
+        let Some(t) = self.sessions.get_mut(session) else {
+            return Err(Act::Error(format!(
+                "{method}: no terminal open for {session}"
+            )));
+        };
+        if !typing {
+            let message = if t.terminal_id.is_none() {
+                "the terminal is not open"
+            } else {
+                "this terminal does not take typing"
+            };
+            t.error = Some(message.to_string());
+            return Err(Act::Error(format!("{method}: {message}")));
+        }
+        Ok(())
+    }
+
     /// `hello` was answered (`online`) with this terminal mode, or a
     /// `server.capabilities` changed it. Opens what is wanted.
     pub(crate) fn set_info(&mut self, info: Option<TerminalInfo>) -> (Vec<Act>, bool) {
@@ -500,6 +576,7 @@ impl Book {
         t.scroll_max = None;
         t.cursor = result.cursor;
         t.source = result.source;
+        t.input = result.input;
         // A fit that changed while the open was on its way.
         let mut acts = self.next_resize(session);
         let early: Vec<Frame> = self.early.iter().cloned().collect();
@@ -612,7 +689,7 @@ impl Book {
                 true,
             );
         };
-        if !allowed {
+        if !allowed || t.input == Some(false) {
             let message = "the daemon does not allow terminal input".to_string();
             t.error = Some(message.clone());
             return (
@@ -644,10 +721,15 @@ impl Book {
             Ok(_) => {
                 t.is_armed = true;
                 t.error = None;
-                (Vec::new(), true)
+                // What waited for the arm goes now.
+                let mut acts = self.next_keys(session);
+                acts.extend(self.next_choice_tap(session));
+                (acts, true)
             }
             Err(message) => {
                 t.is_armed = false;
+                t.keys.clear();
+                t.choice_tap = None;
                 t.error = Some(message.clone());
                 (
                     vec![Act::Error(format!("terminal.input_arm: {message}"))],
@@ -658,23 +740,85 @@ impl Book {
     }
 
     /// The app sends keys: queued in batches, the first sent if none is
-    /// in flight. Refused here unless open and armed.
+    /// in flight. An open terminal that takes typing but is not armed is
+    /// armed first, and the keys go once the arm is answered (plan
+    /// 20261103_01, decision 2); refused here otherwise.
     pub(crate) fn send_keys(&mut self, session: &str, keys: &str) -> (Vec<Act>, bool) {
-        let Some(t) = self.sessions.get_mut(session) else {
-            return (
-                vec![Act::Error(format!(
-                    "terminal.input: no terminal open for {session}"
-                ))],
-                false,
-            );
-        };
-        if t.terminal_id.is_none() || !t.is_armed {
-            let message = "terminal input is not armed".to_string();
-            t.error = Some(message.clone());
-            return (vec![Act::Error(format!("terminal.input: {message}"))], true);
+        let armed = self.sessions.get(session).is_some_and(|t| t.is_armed);
+        if !armed && let Err(act) = self.may_type(session, "terminal.input") {
+            return (vec![act], true);
         }
+        let Some(t) = self.sessions.get_mut(session) else {
+            return (Vec::new(), false);
+        };
         t.keys.extend(key_batches(keys));
+        if !armed {
+            return (self.arm_for_input(session), true);
+        }
         (self.next_keys(session), true)
+    }
+
+    /// A tap on `row` of the session's terminal while a choice question
+    /// is open (plan 20261103_01, decision 5.2): `terminal.choice_tap`,
+    /// arming first as a key does. One in flight; a newer tap meanwhile
+    /// replaces the one waiting.
+    pub(crate) fn choice_tap(&mut self, session: &str, row: u16) -> (Vec<Act>, bool) {
+        let armed = self.sessions.get(session).is_some_and(|t| t.is_armed);
+        if !armed && let Err(act) = self.may_type(session, "terminal.choice_tap") {
+            return (vec![act], true);
+        }
+        let Some(t) = self.sessions.get_mut(session) else {
+            return (Vec::new(), false);
+        };
+        t.choice_tap = Some(row);
+        if !armed {
+            return (self.arm_for_input(session), false);
+        }
+        (self.next_choice_tap(session), false)
+    }
+
+    fn next_choice_tap(&mut self, session: &str) -> Vec<Act> {
+        let Some(t) = self.sessions.get_mut(session) else {
+            return Vec::new();
+        };
+        let Some(terminal_id) = t.terminal_id.filter(|_| t.is_armed) else {
+            return Vec::new();
+        };
+        if t.choice_in_flight {
+            return Vec::new();
+        }
+        let Some(row) = t.choice_tap.take() else {
+            return Vec::new();
+        };
+        t.choice_in_flight = true;
+        vec![Act::ChoiceTap {
+            session: session.to_string(),
+            terminal_id,
+            row,
+        }]
+    }
+
+    /// A `terminal.choice_tap` was answered: the option it picked is
+    /// logged, as is a refusal (the row was no option), which shows no
+    /// error; the tap waiting, if any, goes.
+    pub(crate) fn choice_tapped(
+        &mut self,
+        session: &str,
+        result: Result<String, String>,
+    ) -> (Vec<Act>, bool) {
+        let Some(t) = self
+            .sessions
+            .get_mut(session)
+            .filter(|t| t.choice_in_flight)
+        else {
+            return (Vec::new(), false);
+        };
+        t.choice_in_flight = false;
+        match result {
+            Ok(picked) => log::info!("terminal.choice_tap in {session}: picked {picked}"),
+            Err(message) => log::info!("terminal.choice_tap in {session}: {message}"),
+        }
+        (self.next_choice_tap(session), false)
     }
 
     fn next_keys(&mut self, session: &str) -> Vec<Act> {
@@ -1012,6 +1156,7 @@ mod tests {
                 rows: 24,
                 cursor: false,
                 source: Default::default(),
+                input: None,
             },
         );
     }
@@ -1072,6 +1217,7 @@ mod tests {
                 rows: 24,
                 cursor: false,
                 source: Default::default(),
+                input: None,
             },
         );
         // The old screen until the first frame.
@@ -1097,6 +1243,7 @@ mod tests {
                 rows: 1,
                 cursor: false,
                 source: Default::default(),
+                input: None,
             },
         );
         assert_eq!(
@@ -1125,21 +1272,32 @@ mod tests {
     #[test]
     fn keys_need_an_arm_and_go_one_batch_at_a_time() {
         let mut b = online(true);
+        // No terminal: refused.
+        assert!(matches!(&b.send_keys("other", "ls").0[..], [Act::Error(_)]));
         opened(&mut b, "claude", 7);
-        assert!(matches!(
-            &b.send_keys("claude", "ls").0[..],
-            [Act::Error(_)]
-        ));
+        // The first key arms (plan 20261103_01, decision 2), and waits.
+        let arm = vec![Act::Arm {
+            session: "claude".into(),
+            terminal_id: 7,
+        }];
+        assert_eq!(b.send_keys("claude", "ls").0, arm);
+        assert_eq!(b.send_keys("claude", "x").0, vec![], "one arm");
+        assert_eq!(b.arm("claude").0, vec![], "the arm is on its way");
+        // 0: no expiry, as the daemon answers since the L3 amendment of
+        // 2026-10-28 10:42 EDT. What waited goes, in order.
         assert_eq!(
-            b.arm("claude").0,
-            vec![Act::Arm {
+            b.armed("claude", Ok(0)).0,
+            vec![Act::Keys {
                 session: "claude".into(),
-                terminal_id: 7
+                terminal_id: 7,
+                keys: "ls".into()
             }]
         );
-        // 0: no expiry, as the daemon answers since the L3 amendment of
-        // 2026-10-28 10:42 EDT.
-        b.armed("claude", Ok(0));
+        assert!(matches!(
+            &b.keys_sent("claude", Ok(())).0[..],
+            [Act::Keys { keys, .. }] if keys == "x"
+        ));
+        b.keys_sent("claude", Ok(()));
         let keys = "a ".repeat(50);
         let (acts, _) = b.send_keys("claude", &keys);
         assert_eq!(acts.len(), 1);
@@ -1156,6 +1314,70 @@ mod tests {
         // The connection drops: the arm ends with it.
         st.lock().disconnected();
         assert_eq!(st.status("claude").unwrap().armed_for, None);
+    }
+
+    #[test]
+    fn a_refused_arm_drops_what_waited_and_a_read_only_pane_takes_nothing() {
+        let mut b = online(true);
+        opened(&mut b, "claude", 7);
+        b.send_keys("claude", "ls");
+        b.choice_tap("claude", 3);
+        let (acts, _) = b.armed("claude", Err("no".into()));
+        assert!(matches!(&acts[..], [Act::Error(_)]));
+        assert!(b.sessions["claude"].keys.is_empty());
+        assert_eq!(b.sessions["claude"].choice_tap, None);
+
+        // The daemon said the pane is read-only: nothing arms.
+        let mut b = online(true);
+        b.open("shell".into(), None, None);
+        b.opened(
+            "shell",
+            TerminalOpenResult {
+                terminal_id: 2,
+                cols: 80,
+                rows: 24,
+                cursor: false,
+                source: Default::default(),
+                input: Some(false),
+            },
+        );
+        let st = Terminals::default();
+        *st.lock() = std::mem::take(&mut b);
+        assert!(!st.status("shell").unwrap().input);
+        let mut b = std::mem::take(&mut *st.lock());
+        assert!(matches!(&b.send_keys("shell", "ls").0[..], [Act::Error(_)]));
+        assert!(matches!(&b.choice_tap("shell", 1).0[..], [Act::Error(_)]));
+        assert!(matches!(&b.arm("shell").0[..], [Act::Error(_)]));
+        // An older daemon's answer, and the connection's input on: typing.
+        opened(&mut b, "claude", 7);
+        *st.lock() = b;
+        assert!(st.status("claude").unwrap().input);
+    }
+
+    #[test]
+    fn a_choice_tap_arms_first_and_goes_one_at_a_time() {
+        let mut b = online(true);
+        opened(&mut b, "claude", 7);
+        assert_eq!(
+            b.choice_tap("claude", 4).0,
+            vec![Act::Arm {
+                session: "claude".into(),
+                terminal_id: 7
+            }]
+        );
+        let tap = |row| Act::ChoiceTap {
+            session: "claude".into(),
+            terminal_id: 7,
+            row,
+        };
+        assert_eq!(b.armed("claude", Ok(0)).0, vec![tap(4)]);
+        // One in flight; a newer tap waits, replacing an older one.
+        assert_eq!(b.choice_tap("claude", 5).0, vec![]);
+        assert_eq!(b.choice_tap("claude", 6).0, vec![]);
+        assert_eq!(b.choice_tapped("claude", Ok("2".into())).0, vec![tap(6)]);
+        // A refusal (no option on the row) shows no error.
+        assert_eq!(b.choice_tapped("claude", Err("no option".into())).0, vec![]);
+        assert_eq!(b.sessions["claude"].error, None);
     }
 
     #[test]
@@ -1213,6 +1435,7 @@ mod tests {
                 rows: 30,
                 cursor: true,
                 source: TerminalSource::Attached,
+                input: None,
             },
         );
         assert_eq!(acts, vec![], "the open's own hints are not resent");
@@ -1294,6 +1517,7 @@ mod tests {
                 rows: 25,
                 cursor: true,
                 source: TerminalSource::Attached,
+                input: None,
             },
         );
         assert_eq!(

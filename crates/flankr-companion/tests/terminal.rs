@@ -435,7 +435,7 @@ fn a_full_frame_then_a_diff_match_the_buffer_and_are_acked() {
     let open = daemon.next("terminal.open");
     assert_eq!(
         open["params"],
-        json!({"pane_id": SESSION, "cols_hint": 60, "rows_hint": 30, "cursor": true})
+        json!({"pane_id": SESSION, "cols_hint": 60, "rows_hint": 30, "cursor": true, "input_rows": true})
     );
     let ack = daemon.next("terminal.ack");
     assert_eq!(ack["params"], json!({"terminal_id": 7, "seq": 1}));
@@ -743,7 +743,7 @@ fn resizes_are_deduplicated_and_the_newest_wins() {
     let open = daemon.next("terminal.open");
     assert_eq!(
         open["params"],
-        json!({"pane_id": SESSION, "cols_hint": 44, "rows_hint": 17, "cursor": true})
+        json!({"pane_id": SESSION, "cols_hint": 44, "rows_hint": 17, "cursor": true, "input_rows": true})
     );
 }
 
