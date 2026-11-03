@@ -4204,3 +4204,22 @@ Two readings, within the amendments:
    plan's amendment): the owner's "make them all 500ms" answered a
    proposal that every press-and-hold in the app fire at 500 ms, and that
    card's Unpin was the one hold the proposal did not list by name.
+
+## 2026-11-03 12:52 EST — A finished pairing opens the remote's details modal, with a flash; the app stays in its 0.7 series
+
+Plans: the pairing QR scan plan (20261028_02), the multiple remotes plan
+(20261028_01) and the settings screen plan (20261024_02), each by its
+2026-11-03 12:40 EST amendment, from the owner's report of 12:36 EST in
+`docs/OWNER_REPORTS.md`. Behaviour a user would notice changing, which
+FLANKR RULE 1 would make a minor bump (0.8.0); on the owner's
+instruction "keep the same version series", as for 0.7.3 to 0.7.5, the
+app is 0.7.6 instead. flankr-companion does not change.
+
+Two readings, within the amendments:
+
+1. "Already paired with <name>" (`RemoteUpdated`) is the flash for a
+   daemon already listed, as "Paired with <name>" is for a new one; its
+   row is known at once, so its details open without waiting.
+2. The remote's row after `Paired` is found by the daemon's name in the
+   next `Remotes`, a row not listed before `Paired` taken before one
+   that was, so an older remote of the same name is not the one opened.
