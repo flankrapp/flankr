@@ -1084,3 +1084,67 @@ approved, and that step is built now.
 The previous amendment's list "14:42 EDT (both), 14:45 EDT" means the
 amendments of **14:42 EDT** (the quiet phone; `flankr pair` exits on
 expiry) and **14:44 EDT** (one attempt per run); there is none at 14:45.
+
+## Amendment — 2026-11-03 00:07 EST: no pairing from loopback addresses, and no device code for a daemon the phone cannot reach
+
+The owner (2026-11-03), on app 0.7.3: "the phone says 127.0.0.1 cannot be
+accessed directly and suggests pasting the bip code, but that's not
+actually going to set up the connection" (`docs/OWNER_REPORTS.md`, the
+00:04 EST entry). A link whose only address was `127.0.0.1:7347` was sent
+the pairing request, which reached nothing, and then fell back to the
+device code. This adds to the 14:37 EDT amendment's item 2 (the device-code
+fallback "for a phone that cannot reach the daemon directly") and replaces
+it where they disagree.
+
+**What the device code needs.** Pasting the code into `flankr pair` adds
+this phone's key on the Mac without any network, but the pairing only
+completes when the phone's probe (`net::probe`) reaches the daemon over
+`IK` with that key: at the **same addresses** from the same link, every
+`PAIRING_RETRY` for the pairing window. A phone that could not open a TCP
+connection to any of them for the request has nothing more to reach them
+with for the probe, so the code cannot work there. It can work only where
+an address accepted the connection and the request then failed (the
+handshake or the request timed out or was refused below the pairing
+protocol), and for a version 2 link, which has no request.
+
+1. **Loopback addresses.** An address is a loopback one when its host is
+   in 127.0.0.0/8, is `::1` (with or without brackets), or is `localhost`
+   (any case, with or without a trailing dot). On a device that does not
+   run the daemon itself (the Android app), the client drops a pairing
+   link's loopback addresses before anything else is done with it, for a
+   new remote and for an address check alike:
+   - **Every address loopback:** nothing is connected to, no key is made
+     and no device code is offered. The pairing window shows: *This pairing
+     code only works on the computer that made it: flankr there is
+     reachable only from that computer. Set up Tailscale on it, or run
+     **flankr** there with **--vpn none --bind 0.0.0.0:7347**, then pair
+     again.* with *Tap to scan again* (the copy key `pairing_local_only`).
+   - **Some loopback, some not:** the loopback ones are dropped and the
+     pairing goes on with the rest, in their order; the remote's name comes
+     from the first address left when the URL's host was a loopback one,
+     and the remote is saved without the loopback addresses.
+   The client's `CompanionConfig` gets `loopback_pairing: bool`: `true`
+   (loopback addresses are used, as before) on a desktop, where the app
+   may run beside its daemon; `false` on Android. The app sets it `false`
+   on Android; its scripted tests set it with `--remote-loopback`.
+   flankr-companion gives the case as a new `Event::PairLocalOnly {
+   server }`, beside `Event::PairFailed`.
+2. **A daemon the phone cannot reach.** When the pairing request opened
+   no TCP connection to any of the link's addresses, the pairing ends
+   with its key deleted and no device code. The window shows: *Can't
+   reach {server} at {addresses}. Check that this phone is on the same
+   Tailscale network or Wi-Fi as {server}, then pair again.* with *Tap to
+   scan again* (`pairing_unreachable`; the addresses joined by `, `).
+   flankr-companion gives it as `Event::PairUnreachable { server,
+   addresses }`. When at least one address accepted the TCP connection
+   and the request still failed, the device-code fallback stays as
+   today; a version 2 link goes to the fallback as today.
+3. **Versions.** flankr-companion 0.8.1 and the app 0.7.4 (the owner's
+   instruction of 2026-11-03 keeps the client in the 0.8 series; see
+   `CHANGES.md`).
+4. **Step.** **Done when:** flankr-companion's tests show a loopback-only
+   link refused with `PairLocalOnly` and no connection made, a mixed link
+   paired at its non-loopback address only, and a link to an address with
+   no listener ending in `PairUnreachable` with no `PairingWords`; the
+   app's scripted run of a loopback-only link with `--remote-loopback`
+   shows the local-only text and no device code.
