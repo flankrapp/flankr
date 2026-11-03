@@ -156,3 +156,30 @@ follow, or with no VPN on a local port or an explicit address.
 The owner approved the plan as it stands at `6e69460` (2026-11-02: "yes,
 approve and build it"). It is built now; the first implementing commit sets
 `In implementation`.
+
+## Amendment — 2026-11-02 23:53 EST: no QR code for an offer only this machine can reach; the hostname with no VPN
+
+On the owner's instruction (2026-11-02): "it doesn't make much sense to
+serve the QR code for localhost, it should report that the only connect is
+local or use the machine hostname if no vpn". This replaces decision 4's
+"the offer carries the loopback address with a warning, as today" and
+decision 5's last item, and adds to decision 5:
+
+1. **Loopback only, no offer.** When every address a pairing offer would
+   carry is a loopback one (127.0.0.0/8, ::1), `flankr pair` shows no QR
+   code and no pairing URL. It prints `flankr is only reachable from this
+   machine (127.0.0.1:7347): a phone can't connect to it.` and one line on
+   what would make it reachable (`Tailscale is not running; start it, or run
+   flankr with --vpn none --bind 0.0.0.0:7347 to use this network`, or, with
+   Tailscale running but its forward failing, that error and the command to
+   run by hand), and exits 1. The device-code path is offered only once a
+   reachable address exists.
+2. **The hostname with no VPN.** With `--vpn none` and a non-loopback
+   binding (`0.0.0.0`, `::` or a specific address), the offer carries the
+   machine's network name first: on macOS its Bonjour name
+   (`<LocalHostName>.local`, from `scutil --get LocalHostName`), elsewhere
+   `hostname`; then the bound address, or for `0.0.0.0`/`::` the
+   interface addresses, as fallbacks. The phone tries them in order.
+3. **The daemon's log** says the same at start when the link is reachable
+   only from the machine itself, so `flankr serve`'s log shows it before any
+   `pair`.
