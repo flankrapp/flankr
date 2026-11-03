@@ -1099,3 +1099,21 @@ behaviour a caller can observe). Takes libflankr_proto 0.5.10
   flankr-companion's minor versions 0.4.0 through 0.8.0 are not
   semver-compatible with 0.3. flankr-audio 0.2.0 took the earlier ones
   without its own bump; this one catches up. No other API change.
+
+## flankr-daemon 0.1.0 — 2026-11-02 (the commit tagged `flankr-daemon-v0.1.0`)
+
+Plan 20261102_01 (the daemon in the background), step 1. The crate's
+first release:
+
+- **Added:** `Detached` (`program`, `args`, `working_dir`, `env`, `log`,
+  `label`), `Started` (`Launchd { label }`, `Direct { pid }`),
+  `start(&Detached) -> io::Result<Started>` and
+  `leave_job() -> io::Result<()>`. On macOS, with a GUI domain and not
+  over SSH, `start` submits the program as a one-shot job in
+  `gui/<uid>` (its label `<label>.<unix ms>`, the environment exactly
+  `env` plus `FLANKR_DAEMON_LEAVE_JOB=1`); otherwise, or when the job
+  cannot be submitted or a value cannot be written to the property list,
+  it spawns the program in a new session with stdin from `/dev/null` and
+  stdout and stderr appended to `log`. `leave_job` does nothing without
+  the marker; with it, the program forks into a new session and the
+  job's process exits.

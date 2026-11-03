@@ -1,7 +1,7 @@
 ---
 title: The daemon in the background by default, with a server subcommand
 date: 2026-11-02
-status: Draft
+status: In implementation
 covers:
   - "`flankr serve` (and bare `flankr`) starting the daemon in the
     background and returning; `flankr server` as the server process itself,
@@ -216,3 +216,10 @@ The status stays `Draft` until the owner approves it.
 The owner approved the plan as it stands at `fa8ec0b` (2026-11-02:
 "Approve the background daemon plan and build it?" "yes"). It is built
 now; the first implementing commit sets `In implementation`.
+
+## Amendment — 2026-11-02 22:12 EST: implementation started
+
+Step 1 is implemented: `crates/flankr-daemon` 0.1.0, which this commit
+adds to the workspace. The status is `In implementation`, and this
+document is now immutable. It changes only on the owner's explicit
+instruction (AGENTS.md, Rule 1.5).
