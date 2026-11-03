@@ -346,3 +346,8 @@ These changes came before the app had version numbers.
 
 **Fixed**
 - The + in the terminal's keys works: it opens a menu with Paste text, which types the clipboard's text into the terminal.
+
+## 0.7.16 — 2026-11-03
+
+**Fixed**
+- A session continued after a long conversation keeps updating in the list view.
