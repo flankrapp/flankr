@@ -589,3 +589,20 @@ buttons but they don't really work on cards with buttons".
 
 **In hand.** Given to the same subagent: the link below the button row on
 cards with buttons, and why *More*/*Less* does not work on those cards.
+
+## 2026-11-03 14:58 EST — Owner: a passing test reported as Something broke
+
+Device: Galaxy S23 Ultra (app 0.7.11, daemon 0.7.6).
+
+**Report.** "reported a passing test as something broke".
+
+**Cause.** The daemon's failing-tests rule (`fails_tests` in
+`src/sessions/sections.rs`) counts a number followed by `failed` as
+failed tests (pytest's and jest's `2 failed`). This session's test runs
+printed their totals as `passed 622 failed 0`, so the pair `622 failed`
+read as 622 failures, and the tool result became a *Something broke* card.
+The `failed 0` that follows, the real count, was never read.
+
+**In hand.** Handed to a subagent: a count is read as belonging to the word
+it follows when one follows it (`failed 0`), and a number already taken by
+an earlier label (`passed 622`) is not a count of failures.
