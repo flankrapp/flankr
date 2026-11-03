@@ -122,3 +122,20 @@ This plan adds that grouping, with a setting to keep the flat list.
 1. Should groups collapse on a tap, or should headers only label them?
 2. Should the default be *Grouped by workspace* or *Not grouped*?
 3. With only one workspace, should its header still show?
+
+## Amendment — 2026-11-03 13:05 EST: the open questions answered; no header for a workspace of one
+
+On the owner's instruction, 2026-11-03: "default grouped. collapsible,
+probably hide workspace if one member". This answers section 6 and
+replaces decision 3.6:
+
+1. **The default is Grouped by workspace** (open question 2), as decision
+   2 says.
+2. **Groups collapse on a tap** (open question 1), as decision 3.4 says.
+3. **A workspace with one row gets no header** (open question 3,
+   replacing decision 3.6): its one session or shell pane is listed on its
+   own, with its full name ("Claude in libmorph, tab -mb", not shortened
+   as decision 3.3 would), in the place the workspace's header would have
+   had in herdr's order. A workspace that gains a second row gets its
+   header, collapsed or not as it was kept; one that drops to one row
+   loses it.
