@@ -1863,3 +1863,33 @@ built on the `choice-cancel` branch:
   EDT.
 
 With this, every kind in the 15:20 EDT entry's item 3 is built.
+
+## Amendment — 2026-11-03 14:09 EST: a 500 ms hold on a question card's record opens the reply typed (living section L3)
+
+On the owner's explicit instruction (Rule 1.5), 2026-11-03, in
+`docs/OWNER_REPORTS.md` (13:05, 13:06 and 14:07 EST): "hold on that record
+should have opened text input", then, asked which record, "the record on
+the approval card", then, offered a hold or a tap, "Yes, make a 500 ms hold
+on the approval card's record button open the reply typed". The "approval
+card" is a question card with the daemon's answers (approve and the rest)
+or a plan's approve, discuss and implement; a confirmation's Approval card
+has only Approve and Deny, and no record. This adds to the 2026-10-23
+16:02 EDT amendment's "a Question card's record button takes a message in
+reply to that card", which was a dictated message:
+
+1. **Tap:** unchanged, the voice reply in the card, listening (it needs the
+   microphone, as before).
+2. **Hold, 500 ms:** the same reply typed: the card pinned at the bottom
+   with the message under its title and text, as the tap gives it, but in
+   keyboard mode, the text area focused with the soft keyboard up and the
+   microphone not armed. It fires at 500 ms from touch-down, unmoved, before
+   the release, which is then no tap; the shared `HOLD` and `SLOP` of
+   `controls/hold.rs` (the bottom bar plan's 2026-11-03 12:13 EST
+   amendment), with no progress bar. It needs no microphone. The keyboard
+   is asked for once more if it is not up 400 ms later (the unified prompt
+   card plan's 2026-11-03 13:28 EST amendment, item 4).
+3. **A press that starts on the record** is the record's to the end: a
+   drag that begins on it no longer scrolls the flow; it ends the press
+   with neither action, as on the bottom bar's buttons.
+4. **The app's version** is 0.7.9, a patch, on the owner's instruction to
+   keep the same version series. flankr-companion does not change.
