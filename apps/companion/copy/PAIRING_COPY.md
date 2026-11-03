@@ -63,9 +63,11 @@ when pairing is otherwise completed"): once a scanned code is accepted the
 camera stops and the area shows a check, `pairing_read` and
 `pairing_connecting` until the words come. The words show in a modal
 titled `pairing_confirm_title`, with Details and Cancel. Once paired, the
-window shows a check, `pairing_paired` (or `pairing_already`, with
-`pairing_addresses_updated` when they changed), `pairing_reached` dim
-under it, and Details and `pairing_done`; it stays until Done.
+modal becomes the remote's details modal, with `pairing_paired` (or
+`pairing_already`) as a flash at its top for 3 s (plan 20261028_02, the
+2026-11-03 12:40 EST amendment); with no modal to keep until the
+remote's row comes, the window shows a check, `pairing_paired` and
+`pairing_done`.
 
 # [Copy] pairing_read
 
@@ -92,18 +94,6 @@ under it, and Details and `pairing_done`; it stays until Done.
 - [abc] name: the remote's name
 - text: |
     Already paired with {{ [abc] name }}
-
-# [Copy] pairing_addresses_updated
-
-- text: |
-    Its addresses were updated.
-
-# [Copy] pairing_reached
-
-- [abc] address: the daemon's host:port
-- [abc] fingerprint: the remote's short fingerprint, `3f9a 12c4`
-- text: |
-    {{ [abc] address }} · fingerprint {{ [abc] fingerprint }}
 
 # [Copy] pairing_done
 

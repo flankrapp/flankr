@@ -480,8 +480,9 @@ pub struct App {
     /// Settings was opened for a remote's details alone (a card's press, a
     /// finished pairing's Details): it closes again with them.
     details_from_drawer: bool,
-    /// The remote whose details open once Settings is laid out.
-    pending_details: Option<RemoteId>,
+    /// The remote whose details open once Settings is laid out, and the
+    /// flash they open with after a pairing.
+    pending_details: Option<(RemoteId, Option<String>)>,
     /// What the remotes in the background last gave (plan 20261028_03, the
     /// 18:51 EDT amendment), by remote.
     background: HashMap<RemoteId, BackgroundRemote>,
@@ -937,18 +938,18 @@ impl App {
                 self.note = None;
                 self.screen.invalidate();
             }
-            // The modal closes and the window says so until Done (the
-            // owner, 2026-10-28: "currently it just closes and looks like
-            // it failed").
+            // The waiting modal becomes the remote's details modal, with a
+            // "Paired with <name>" flash, once its row is known: here for
+            // one already listed, else on the next `Remotes` (plan
+            // 20261028_02, the 2026-11-03 12:40 EST amendment).
             Event::Paired { name } => {
                 log::info!("pairing: paired as {name}");
                 let stop = self.scanner.reset();
                 self.call_camera(stop);
-                // The window's success state says so; Settings' row shows
-                // after Done, with no note (the 17:48 EDT amendment).
                 self.pairing.paired(&self.remotes);
                 self.note = None;
                 self.screen.invalidate();
+                self.pairing_ready();
             }
             // Nothing to retry with the same link, and no device code: the
             // window says why and what to change (plan 20261028_01, the
@@ -1247,6 +1248,8 @@ impl App {
                 if std::mem::take(&mut self.startup_pending) {
                     self.open_last_session();
                 }
+                // A pairing finished before its row came: its details now.
+                self.pairing_ready();
             }
             Event::RemoteRemoved { id, name, daemon } => {
                 log::info!(
@@ -1259,14 +1262,16 @@ impl App {
                 }
             }
             // A pairing named a remote already listed and its addresses
-            // were checked: the window says so until Done.
+            // were checked: its details at once, with "Already paired
+            // with <name>".
             Event::RemoteUpdated { id, name } => {
                 log::info!("pairing: already paired with {name}");
                 let stop = self.scanner.reset();
                 self.call_camera(stop);
-                self.pairing.remote_updated(id, &name, &self.remotes);
+                self.pairing.remote_updated(id, &name);
                 self.note = None;
                 self.screen.invalidate();
+                self.pairing_ready();
             }
             Event::Unpaired { daemon } => {
                 self.drawer.close_now();
@@ -2327,7 +2332,7 @@ impl App {
             }
             DrawerHit::Details(id) => {
                 log::info!("drawer: a remote's details, from its card");
-                self.open_remote_details(id);
+                self.open_remote_details(id, None);
             }
             // The agent view opens at once, in place of any other, so the
             // overview is never drawn between them (3.8 item 34).
@@ -2347,19 +2352,40 @@ impl App {
 
     /// A remote's details modal, the one screen for them: from a 500 ms
     /// press on its card in the drawer (plan 20261028_03, the 2026-11-03
-    /// 12:13 EST amendment) and from a finished pairing's Details (plan
-    /// 20261028_02, the same time's amendment, item 1). Over Settings when
-    /// it is open (the add mode's), where it closes back to Settings;
-    /// otherwise Settings opens for it and closes with it, back to the
-    /// screen under.
-    fn open_remote_details(&mut self, id: RemoteId) {
+    /// 12:13 EST amendment) and as a pairing completes, with `flash` at its
+    /// top (plan 20261028_02, the 2026-11-03 12:40 EST amendment). Over
+    /// Settings when it is open (the add mode's), where it closes back to
+    /// Settings; otherwise Settings opens for it and closes with it, back
+    /// to the screen under (the overview, on the first run).
+    fn open_remote_details(&mut self, id: RemoteId, flash: Option<String>) {
         self.drawer.close_now();
         if self.settings_screen.is_none() {
             self.open_settings();
             self.details_from_drawer = true;
         }
         // Opened once Settings is laid out (`lay_out`).
-        self.pending_details = Some(id);
+        self.pending_details = Some((id, flash));
+    }
+
+    /// A finished pairing whose remote's row is known: the pairing window
+    /// ends and the remote's details modal opens in its place, with the
+    /// "Paired with <name>" flash; its Close goes where Done went (plan
+    /// 20261028_02, the 2026-11-03 12:40 EST amendment).
+    fn pairing_ready(&mut self) {
+        let Some((id, flash)) = self.pairing.ready() else {
+            return;
+        };
+        let adding = self.end_pairing();
+        #[cfg(test)]
+        probe::record(format!(
+            "pairing details, {}",
+            if adding { "settings" } else { "overview" }
+        ));
+        log::info!(
+            "pairing: done, the remote's details over {}",
+            if adding { "Settings" } else { "the overview" }
+        );
+        self.open_remote_details(id, Some(flash));
     }
 
     /// Settings opened for a remote's details close with them: back to the
@@ -2626,10 +2652,11 @@ impl App {
         }
     }
 
-    /// **Done** on a finished pairing, or the system Back there: back to
-    /// Settings in the add mode, on to the overview on first run.
+    /// **Done** on a finished pairing whose row has not come, or Cancel or
+    /// the system Back there: back to Settings in the add mode, on to the
+    /// overview on first run.
     fn finish_pairing(&mut self) {
-        let adding = self.pairing.done();
+        let adding = self.end_pairing();
         #[cfg(test)]
         probe::record(format!(
             "pairing done, {}",
@@ -2643,6 +2670,12 @@ impl App {
                 "the overview"
             }
         );
+    }
+
+    /// The finished pairing ends and the pairing window closes. Whether it
+    /// was the add mode.
+    fn end_pairing(&mut self) -> bool {
+        let adding = self.pairing.done();
         self.field.clear();
         self.field_focused = false;
         self.note = None;
@@ -2651,6 +2684,7 @@ impl App {
         if let Some(screen) = &mut self.settings_screen {
             screen.invalidate();
         }
+        adding
     }
 
     /// A remote's X, confirmed: the client asks its daemon to forget this
@@ -3726,19 +3760,15 @@ impl App {
         match self.screen.hit(x, y) {
             Some(Hit::Field) => self.field_focused = true,
             Some(Hit::Pair) => self.pair(),
+            // The pairing has completed and its row has not come: nothing
+            // to cancel, so the window ends as Close would (plan
+            // 20261028_02, the 2026-11-03 12:40 EST amendment, item 3).
+            Some(Hit::Cancel | Hit::Back) if self.pairing.finished.is_some() => {
+                self.finish_pairing()
+            }
             Some(Hit::Cancel | Hit::Back) => self.cancel_pairing(),
-            // A finished pairing's Details: it ends as Done does, and the
-            // remote's details modal opens, as from its card in the drawer
-            // (plan 20261028_02, the 2026-11-03 12:13 EST amendment, item
-            // 1). The waiting modal's opens or closes its own.
             Some(Hit::Details) => {
-                match self.pairing.finished.as_ref().and_then(|f| f.details_of()) {
-                    Some(id) => {
-                        self.finish_pairing();
-                        self.open_remote_details(id);
-                    }
-                    None => self.pairing.toggle_details(),
-                }
+                self.pairing.toggle_details();
                 self.screen.invalidate();
             }
             Some(Hit::Fingerprint) => {
@@ -4043,8 +4073,12 @@ impl App {
 
         if let Some(screen) = &mut self.settings_screen {
             screen.set_layout(layout);
-            if let Some(id) = self.pending_details.take() {
-                screen.show_details(id);
+            if let Some((id, flash)) = self.pending_details.take() {
+                #[cfg(test)]
+                if let Some(f) = &flash {
+                    probe::record(format!("details flash {f}"));
+                }
+                screen.show_details(id, flash);
             }
         }
         // Without the microphone, nothing listens: the sound line says so.
@@ -4124,27 +4158,23 @@ impl App {
         let note = note.map(|(t, c)| (remotes::md_escape(t), c));
         let note = note.as_ref().map(|(t, c)| (t.as_str(), *c));
         let now = Instant::now();
-        let (code, camera) = if let Some(f) = &self.pairing.finished {
-            // A finished pairing (the owner, 2026-10-28): a check, what was
-            // paired, and Details and Done, until Done; Details, the
-            // remote's details modal, once its row is known (plan
-            // 20261028_02, the 2026-11-03 12:13 EST amendment, item 1).
+        let (code, camera) = if self.pairing.waiting() {
+            // The six words, in the modal over the window; kept as they
+            // are after `Paired` until the remote's row comes and its
+            // details modal takes their place (plan 20261028_02, the
+            // 2026-11-03 12:40 EST amendment, item 3).
+            let modal = ui::modal_layout(&layout);
+            (self.pairing.lines(&modal, note, now), None)
+        } else if let Some(f) = &self.pairing.finished {
+            // Paired with no waiting modal to keep, the row not yet come:
+            // a check, the title and Done alone, until it does.
             let camera = CameraView {
                 glyph: Glyph::Check,
                 prompt: Some(f.title()),
-                detail: Some(f.summary()).filter(|s| !s.is_empty()),
-                row: if f.details_of().is_some() {
-                    Row::Done
-                } else {
-                    Row::DoneOnly
-                },
+                row: Row::DoneOnly,
                 ..CameraView::default()
             };
             (Vec::new(), Some(camera))
-        } else if self.pairing.waiting() {
-            // The six words, in the modal over the window.
-            let modal = ui::modal_layout(&layout);
-            (self.pairing.lines(&modal, note, now), None)
         } else if self.camera_window() && self.scanner.read && self.scanner.handed_over {
             // A scanned code was accepted: a check, "Code read" and
             // "Connecting to <host>…" until the words come, and Cancel.
@@ -5371,6 +5401,8 @@ pub(crate) mod probe {
         pub details: bool,
         /// The remote whose details modal Settings shows.
         pub details_of: Option<flankr_companion::RemoteId>,
+        /// The flash over it after a pairing, and its strength.
+        pub flash: Option<(String, f32)>,
         /// A message to a session is being typed or dictated.
         pub message: bool,
         /// The overview's agents, by pane.
@@ -5545,6 +5577,7 @@ pub(crate) mod probe {
             adding: app.pairing.adding,
             details: app.settings_screen.as_ref().is_some_and(|s| s.asking()),
             details_of: app.settings_screen.as_ref().and_then(|s| s.details_of()),
+            flash: app.settings_screen.as_ref().and_then(|s| s.flash()),
             message: app.dictation.as_ref().is_some_and(|d| !d.general_agent),
             agents: app.agents.iter().map(|a| a.pane_id.clone()).collect(),
             waiting: d.content().waiting().iter().copied().collect(),

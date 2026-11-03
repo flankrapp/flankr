@@ -2,14 +2,22 @@
 //! and 17:57 EDT amendments): a tap on a Remotes row, anywhere but its X,
 //! opens it, and so do a 500 ms press on the remote's card in the drawer
 //! (plan 20261028_03, step 8 and the 2026-11-03 12:13 EST amendment) and
-//! a finished pairing's Details (plan 20261028_02, the 2026-11-03 12:13
-//! EST amendment, item 1), both through `App::open_remote_details`. In
+//! a pairing as it completes, in the six words' modal's place (plan
+//! 20261028_02, the 2026-11-03 12:40 EST amendment), both through
+//! `App::open_remote_details`. In
 //! the settings style, as the confirm modals: libcontrols' `ModalDialog`,
 //! centred on an opaque card, opened and closed at once.
 //!
 //! Its Fingerprint row ([`Disclosure`]) and what it expands to
 //! ([`fingerprint_section`]) are also the pairing modal's, in its Details
 //! (the same amendment, item 2), so the two expand the same way.
+//!
+//! Opened as a pairing completes, it has a flash at its top first: "Paired
+//! with <name>" in the accent colour, at full strength for [`FLASH_SHOWN`]
+//! and fading over [`FLASH_FADE`] (plan 20261028_02, the 2026-11-03 12:40
+//! EST amendment, item 2). The screen draws it over the line kept for it
+//! ([`DetailsModal::flash`]) and lays the modal out again without it once
+//! it has faded.
 //!
 //! From the top:
 //!
@@ -70,6 +78,27 @@ const ICON_W: f32 = 44.0;
 const ICON_PT: f32 = 16.0;
 /// The hex fingerprint's groups of four on one line.
 const HEX_GROUPS_PER_LINE: usize = 4;
+/// The flash after pairing: shown at full strength this long, in
+/// seconds, then faded out linearly over [`FLASH_FADE`].
+pub const FLASH_SHOWN: f32 = 3.0;
+pub const FLASH_FADE: f32 = 0.3;
+/// The flash's size, in points.
+pub const FLASH_PT: f32 = TEXT_PT;
+
+/// The flash's strength `age` seconds after the modal opened: 1 for
+/// [`FLASH_SHOWN`], then down to 0 over [`FLASH_FADE`].
+pub fn flash_alpha(age: f32) -> f32 {
+    if age <= FLASH_SHOWN {
+        1.0
+    } else {
+        (1.0 - (age - FLASH_SHOWN) / FLASH_FADE).clamp(0.0, 1.0)
+    }
+}
+
+/// Whether the flash has faded out `age` seconds after the modal opened.
+pub fn flash_over(age: f32) -> bool {
+    age >= FLASH_SHOWN + FLASH_FADE
+}
 
 /// What the modal shows of a remote, besides its row.
 #[derive(Clone, Debug)]
@@ -280,16 +309,20 @@ pub struct DetailsModal {
     pub fingerprint: Rect,
     /// The first Markdown view (the title), for links.
     pub text: NodeId,
+    /// The line kept at the top for the flash after pairing, if any.
+    pub flash: Option<Rect>,
 }
 
 impl DetailsModal {
-    /// `info`'s details over `viewport`, at scale `s`, as `state` has them.
+    /// `info`'s details over `viewport`, at scale `s`, as `state` has them;
+    /// with a line at the top for the flash after pairing when `flash`.
     pub fn new(
         viewport: Rect,
         info: &RemoteInfo,
         state: &DetailsState,
         s: f32,
         faces: Option<Arc<Faces>>,
+        flash: bool,
     ) -> Self {
         let pad = 2.0 * PAD * s;
         let w = (viewport.w - 2.0 * PAD * s).min(560.0 * s);
@@ -328,7 +361,11 @@ impl DetailsModal {
         let small = 4.0 * s;
         let gap = GAP * s;
         let field_h = FIELD_H * s;
+        let flash_h = flash.then(|| line_h(FLASH_PT * s));
         let mut h = pad + title.height() + small + state_line.height();
+        if let Some(fh) = flash_h {
+            h += fh + small;
+        }
         h += gap + nickname_label_md.height() + small + field_h;
         h += gap + host_label.height() + small + host.height();
         h += gap + paired.height();
@@ -349,6 +386,11 @@ impl DetailsModal {
         let top = viewport.center()[1] - h * 0.5;
         let content = dialog.content_mut();
         let mut y = top + pad;
+        let flash = flash_h.map(|fh| {
+            let r = Rect::new(x, y, inner_w, fh);
+            y += fh + small;
+            r
+        });
         let mut place = |mut v: MarkdownView, y: &mut f32, after: f32| {
             v.move_to(x, *y);
             *y += v.height() + after;
@@ -401,6 +443,7 @@ impl DetailsModal {
             field,
             fingerprint,
             text,
+            flash,
         }
     }
 }
@@ -418,6 +461,17 @@ mod tests {
         assert_eq!(lines.len(), 4);
         assert_eq!(lines[0], "0123 4567 89ab cdef");
         assert!(lines.iter().all(|l| l.split(' ').count() == 4));
+    }
+
+    #[test]
+    fn the_flash_shows_3_s_then_fades_over_300_ms() {
+        assert_eq!(flash_alpha(0.0), 1.0);
+        assert_eq!(flash_alpha(2.99), 1.0);
+        assert_eq!(flash_alpha(3.0), 1.0);
+        assert!((flash_alpha(3.15) - 0.5).abs() < 1e-4);
+        assert!(flash_alpha(3.3) < 1e-4);
+        assert_eq!(flash_alpha(3.5), 0.0);
+        assert!(!flash_over(3.29) && flash_over(3.31));
     }
 
     #[test]

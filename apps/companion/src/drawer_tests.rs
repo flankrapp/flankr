@@ -419,6 +419,9 @@ fn a_500_ms_press_on_any_card_opens_its_details_and_a_press_released_early_is_a_
         // The remote's details modal: the one a finished pairing's Details
         // opens (`pairing_scan_tests`).
         assert_eq!(p.drawer.details_of, Some(RemoteId([i as u8 + 1; 8])));
+        // With no flash: that is a completed pairing's alone.
+        assert_eq!(p.drawer.flash, None);
+        assert!(!p.log.iter().any(|l| l.starts_with("details flash")));
         assert_eq!(inputs_with(&p, "SwitchRemote"), 0, "a hold is no tap");
         // Back closes the details, and the Settings they opened over.
         let p = run(&format!("{script}key back\nframes 4\n"), || {}).unwrap();
@@ -433,6 +436,100 @@ fn a_500_ms_press_on_any_card_opens_its_details_and_a_press_released_early_is_a_
     let p = run(&script, || {}).unwrap();
     assert!(!p.drawer.settings);
     assert_eq!(inputs_with(&p, "SwitchRemote"), 1);
+}
+
+/// A pairing from the drawer's **+** whose remote's row comes a while
+/// after `Paired`: the six words' modal stays as it is until the row
+/// comes, then the new remote's details modal opens in its place with the
+/// "Paired with" flash; closed, back to the screen under, as from a card's
+/// press (plan 20261028_02, the 2026-11-03 12:40 EST amendment, items 3
+/// and 4).
+#[test]
+fn a_pairing_whose_row_comes_late_keeps_its_modal_until_then() {
+    let Some(at) = places() else { return };
+    let menu = at.drawer.menu.unwrap();
+    let opened = run(
+        &format!("frames {SETTLE}\n{}frames {SLIDE}\n", tap(menu)),
+        || {},
+    )
+    .unwrap();
+    let plus = opened.drawer.cards[2];
+    // The + at about update 18; the words at 24, Paired at 28, and the
+    // rows with the new remote, m2, at 40.
+    let base = format!(
+        "frames {SETTLE}\n{}frames {SLIDE}\n{}frames 4\n",
+        tap(menu),
+        tap(plus)
+    );
+    let events = || {
+        probe::inject(
+            24,
+            Event::PairingWords {
+                server: "m2".into(),
+                address: "m2.tail.ts.net:7347".into(),
+                words: Some("alpha bravo charlie delta echo foxtrot".into()),
+                fingerprint: "zoo zone youth wrist wrong yellow".into(),
+                fingerprint_hex: "ab".repeat(32),
+                expires_in_secs: Some(120),
+                fallback: None,
+            },
+        );
+        probe::inject(28, Event::Paired { name: "s23".into() });
+        probe::inject(
+            40,
+            Event::Remotes(vec![
+                remote(1, "m4", true),
+                remote(2, "mini", false),
+                remote(3, "m2", false),
+            ]),
+        );
+    };
+    let gap = run(&format!("{base}frames 14\n"), events).unwrap();
+    assert!(
+        gap.drawer.adding,
+        "the pairing window still: {:?}",
+        gap.drawer
+    );
+    assert!(!gap.drawer.settings && !gap.drawer.details);
+    assert!(
+        gap.texts.iter().any(|t| t.contains("alpha bravo")),
+        "the six words' modal as it was: {:?}",
+        gap.texts
+    );
+    assert!(!gap.log.iter().any(|l| l.starts_with("pairing details")));
+    // The row comes: its details, with the flash.
+    let script = format!("{base}frames 24\n");
+    let p = run(&script, events).unwrap();
+    assert!(p.drawer.settings && p.drawer.details, "{:?}", p.drawer);
+    assert!(!p.drawer.adding);
+    assert_eq!(p.drawer.details_of, Some(RemoteId([3; 8])));
+    let (flash, _) = p.drawer.flash.clone().expect("the flash");
+    assert_eq!(flash, "Paired with m2");
+    assert!(
+        p.log.iter().any(|l| l == "pairing details, settings"),
+        "the add mode: {:?}",
+        p.log
+    );
+    // Closed: Settings, opened for it, closes with it; the overview.
+    let closed = run(&format!("{script}key back\nframes 4\n"), events).unwrap();
+    assert!(!closed.drawer.settings && !closed.drawer.details);
+    assert_eq!(closed.frames.last().unwrap().0, Shown::Overview);
+    // Cancel in the gap: the pairing has completed, so nothing is
+    // cancelled; the window ends as Close would.
+    let cancel = gap.hits.iter().find(|(h, _)| *h == crate::ui::Hit::Cancel);
+    let (_, cancel) = *cancel.expect("the modal's Cancel");
+    let c = run(
+        &format!("{base}frames 14\n{}frames 4\n", tap(cancel)),
+        events,
+    )
+    .unwrap();
+    assert_eq!(inputs_with(&c, "CancelPairing"), 0, "{:?}", c.inputs);
+    assert!(
+        c.log.iter().any(|l| l == "pairing done, settings"),
+        "{:?}",
+        c.log
+    );
+    assert!(!c.drawer.adding && !c.drawer.settings);
 }
 
 #[test]

@@ -88,7 +88,7 @@ use super::info::{self, INFO_PART, InfoModal};
 use super::link_row::{ACTION_PART, LinkRow};
 use super::option_row::OptionRow;
 use super::plugin_row::PluginRow;
-use super::remote_details::{DetailsModal, DetailsState};
+use super::remote_details::{self as details, DetailsModal, DetailsState};
 use super::remote_row::{REMOVE_PART, RemoteRow};
 use super::startup_row::StartupRow;
 use super::toggle_row::ToggleRow;
@@ -568,7 +568,19 @@ pub struct SettingsScreen {
     /// The nickname's X emptied its draft: the soft keyboard is started
     /// again with it ([`SettingsScreen::take_ime_restart`]).
     ime_restart: bool,
+    /// The flash at the top of the details modal opened as a pairing
+    /// completed (plan 20261028_02, the 2026-11-03 12:40 EST amendment).
+    flash: Option<Flash>,
     dirty: bool,
+}
+
+/// The details modal's flash after pairing: its text, its age in seconds,
+/// and the line kept for it in the modal as last built.
+#[derive(Clone, Debug)]
+struct Flash {
+    text: String,
+    age: f32,
+    rect: Option<Rect>,
 }
 
 impl SettingsScreen {
@@ -616,6 +628,7 @@ impl SettingsScreen {
             touch: None,
             on_back: false,
             ime_restart: false,
+            flash: None,
             dirty: true,
         }
     }
@@ -1941,21 +1954,47 @@ impl SettingsScreen {
     /// The remote whose details are open, for the tests' probe.
     #[cfg(test)]
     pub fn details_of(&self) -> Option<RemoteId> {
+        self.details_of_open()
+    }
+
+    /// The flash over the details modal, and its strength, for the tests'
+    /// probe.
+    #[cfg(test)]
+    pub fn flash(&self) -> Option<(String, f32)> {
+        let f = self.flash.as_ref()?;
+        Some((f.text.clone(), details::flash_alpha(f.age)))
+    }
+
+    /// Opens `id`'s details over the screen, as a tap on its row does: from
+    /// a 500 ms press on its card in the drawer (plan 20261028_03, step 8),
+    /// or as a pairing completes, with `flash` ("Paired with m4") at its
+    /// top (plan 20261028_02, the 2026-11-03 12:40 EST amendment).
+    pub fn show_details(&mut self, id: RemoteId, flash: Option<String>) {
+        self.open_details(id);
+        if let Some(text) = flash
+            && self.details_of_open() == Some(id)
+        {
+            self.flash = Some(Flash {
+                text,
+                age: 0.0,
+                rect: None,
+            });
+            self.open(Asking::Details(id));
+        }
+    }
+
+    /// The remote whose details are open.
+    fn details_of_open(&self) -> Option<RemoteId> {
         match self.asking {
             Some((Asking::Details(id), ..)) => Some(id),
             _ => None,
         }
     }
 
-    /// Opens `id`'s details over the screen, as a tap on its row does: from
-    /// a 500 ms press on its card in the drawer (plan 20261028_03, step 8),
-    /// or a finished pairing's Details.
-    pub fn show_details(&mut self, id: RemoteId) {
-        self.open_details(id);
-    }
-
-    /// Opens `id`'s details, the nickname field showing its nickname.
+    /// Opens `id`'s details, the nickname field showing its nickname, with
+    /// no flash.
     fn open_details(&mut self, id: RemoteId) {
+        self.flash = None;
         let Some(info) = self.remotes.iter().find(|r| r.id == id) else {
             return;
         };
@@ -1987,6 +2026,11 @@ impl SettingsScreen {
         let vendor = self.vendor.as_deref();
         let confirm = |c: Confirm| (c.dialog, c.cancel, c.action, c.text);
         let mut targets = Vec::new();
+        let mut flash_rect = None;
+        // The flash is the details modal's alone: another modal ends it.
+        if !matches!(what, Asking::Details(_)) {
+            self.flash = None;
+        }
         let built = match what {
             Asking::RemoveRemote(id) => self.removal_question(id).map(|q| {
                 let c = Confirm::new(
@@ -2018,10 +2062,12 @@ impl SettingsScreen {
             Asking::Details(id) => {
                 let info = self.remotes.iter().find(|r| r.id == id);
                 let state = self.details.as_ref().filter(|(d, _)| *d == id);
+                let flash = self.flash.is_some();
                 info.zip(state).map(|(info, (_, state))| {
-                    let m = DetailsModal::new(viewport, info, state, s, faces);
+                    let m = DetailsModal::new(viewport, info, state, s, faces, flash);
                     targets.push((Target::Field, m.field));
                     targets.push((Target::Fingerprint, m.fingerprint));
+                    flash_rect = m.flash;
                     (m.dialog, m.close, m.remove, m.text)
                 })
             }
@@ -2046,7 +2092,11 @@ impl SettingsScreen {
             ))),
         };
         self.close_modal();
+        if let Some(f) = &mut self.flash {
+            f.rect = flash_rect;
+        }
         let Some((dialog, cancel, action, text)) = built else {
+            self.flash = None;
             return;
         };
         let id = what.id();
@@ -2212,6 +2262,7 @@ impl SettingsScreen {
         let chosen = by == DismissReason::Control(action);
         match what {
             Asking::Details(id) => {
+                self.flash = None;
                 if let Some((_, d)) = &mut self.details {
                     d.editing = false;
                 }
@@ -2248,6 +2299,19 @@ impl SettingsScreen {
                 }
             }
             self.dirty = true;
+        }
+        // The flash after pairing fades after its time, and the modal is
+        // laid out again without its line once it has.
+        if let Some(f) = &mut self.flash {
+            f.age += dt;
+            if details::flash_over(f.age) {
+                self.flash = None;
+                if let Some(id) = self.details_of_open() {
+                    self.open(Asking::Details(id));
+                }
+            } else if f.age > details::FLASH_SHOWN {
+                self.dirty = true;
+            }
         }
         let moved = self.router.advance(dt) | self.modals.advance(dt);
         if moved {
@@ -2411,6 +2475,16 @@ impl SettingsScreen {
             theme().fg,
         );
         self.router.render(list, ctx);
+        // The flash, over the line kept for it at the top of the details
+        // modal.
+        if let Some(f) = &self.flash
+            && let Some(r) = f.rect
+            && self.details_of_open().is_some()
+        {
+            let mut c = theme().accent;
+            c[3] *= details::flash_alpha(f.age);
+            ctx.draw_text(list, &f.text, [r.x, r.y], details::FLASH_PT * s, c);
+        }
         self.dirty = false;
         true
     }
@@ -3440,6 +3514,55 @@ mod tests {
         assert!(s.back());
         assert!(!s.asking());
         assert_eq!(s.take_hit(), None);
+    }
+
+    #[test]
+    fn details_opened_as_a_pairing_completes_flash_3_s_then_fade() {
+        let mut s = with_remotes(vec![remote(1, true, true), remote(2, false, false)]);
+        let id = RemoteId([2; 8]);
+        s.show_details(id, Some("Paired with m2".into()));
+        assert_eq!(s.open_modal(), Some(Asking::Details(id)));
+        assert_eq!(s.flash(), Some(("Paired with m2".to_string(), 1.0)));
+        // The line kept for it at the top, above the remote's name.
+        let rect = s.flash.as_ref().and_then(|f| f.rect).expect("its line");
+        let field = s.target_point(Target::Field);
+        assert!(rect.y < field[1]);
+        let (close, _) = s.modal_points();
+        // Full strength for 3 s.
+        s.tick(Duration::from_millis(2900));
+        assert_eq!(s.flash().map(|f| f.1), Some(1.0));
+        // Then fading over 300 ms.
+        s.tick(Duration::from_millis(250));
+        let a = s.flash().expect("fading").1;
+        assert!(a > 0.0 && a < 1.0, "{a}");
+        // Faded: gone, and the modal laid out again without its line,
+        // still open; its buttons move up by that line.
+        s.tick(Duration::from_millis(200));
+        assert_eq!(s.flash(), None);
+        assert_eq!(s.open_modal(), Some(Asking::Details(id)));
+        let (after, _) = s.modal_points();
+        assert!(after[1] < close[1], "{after:?} {close:?}");
+        // Opened again, as from its row: no flash.
+        assert!(s.back());
+        let [x, y] = s.row_point(1);
+        tap(&mut s, x, y);
+        assert_eq!(s.open_modal(), Some(Asking::Details(id)));
+        assert_eq!(s.flash(), None);
+        // Closing ends a flash still showing, and so does Remove's modal.
+        assert!(s.back());
+        s.show_details(id, Some("Paired with m2".into()));
+        assert!(s.flash().is_some());
+        assert!(s.back());
+        assert_eq!(s.flash(), None);
+        s.show_details(id, Some("Paired with m2".into()));
+        let (_, remove) = s.modal_points();
+        tap(&mut s, remove[0], remove[1]);
+        assert_eq!(s.open_modal(), Some(Asking::RemoveRemote(id)));
+        assert_eq!(s.flash(), None);
+        // A remote not listed: nothing opens, and no flash waits.
+        assert!(s.back());
+        s.show_details(RemoteId([9; 8]), Some("Paired with m9".into()));
+        assert!(!s.asking() && s.flash().is_none());
     }
 
     #[test]

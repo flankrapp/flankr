@@ -394,11 +394,9 @@ pub enum Row {
     Scan,
     /// Cancel alone: a scanned code is being paired.
     Cancel,
-    /// Details and **Done**: the pairing is done, and its remote's row is
-    /// known, so Details opens its details modal.
-    Done,
-    /// **Done** alone: the pairing is done, its remote's row not yet
-    /// known.
+    /// **Done** alone: the pairing is done with no waiting modal to keep,
+    /// its remote's row not yet known (once it is, the remote's details
+    /// modal takes the window's place).
     DoneOnly,
 }
 
@@ -814,15 +812,10 @@ impl Screen {
                 }
                 Row::Scan => {}
                 Row::Cancel => row.push((Hit::Cancel, self.cancel)),
-                Row::Done => {
-                    row.push((Hit::Details, self.details));
-                    row.push((Hit::Done, self.done));
-                }
                 Row::DoneOnly => row.push((Hit::Done, self.done)),
             }
         }
-        // A finished pairing's Details opens the details modal: never
-        // "Hide details".
+        // The area's row has no Details any more: never "Hide details".
         set_details_label(&mut self.router, self.details, false);
         let n = row.len().max(1) as f32;
         let each = (layout.w - 2.0 * pad - 12.0 * s * (n - 1.0)) / n;
@@ -1449,31 +1442,26 @@ mod tests {
     }
 
     #[test]
-    fn a_finished_pairing_shows_a_check_details_and_done() {
+    fn a_finished_pairing_without_its_row_shows_a_check_and_done() {
         let mut screen = Screen::new();
-        let view = |row: Row| View {
+        let view = View {
             adding: true,
             camera: Some(CameraView {
                 glyph: Glyph::Check,
                 prompt: Some("Paired with m4".into()),
-                detail: Some("m4.ts.net:7347 · fingerprint 3f9a 12c4".into()),
-                row,
+                row: Row::DoneOnly,
                 ..CameraView::default()
             }),
             ..View::default()
         };
-        // Before its row is known: Done alone.
-        screen.set(PHONE, view(Row::DoneOnly));
+        // Before its row is known, with no waiting modal: Done alone.
+        screen.set(PHONE, view);
         let hits: Vec<Hit> = screen.hits.iter().map(|&(h, _)| h).collect();
-        assert_eq!(hits, [Hit::Back, Hit::Done]);
-        screen.set(PHONE, view(Row::Done));
-        let hits: Vec<Hit> = screen.hits.iter().map(|&(h, _)| h).collect();
-        assert_eq!(hits, [Hit::Back, Hit::Details, Hit::Done], "no Area");
+        assert_eq!(hits, [Hit::Back, Hit::Done], "no Area");
         let texts = screen.shown_texts();
-        for t in ["Paired with m4", "Done", "Details"] {
+        for t in ["Paired with m4", "Done"] {
             assert!(texts.contains(&t.to_string()), "{t} in {texts:?}");
         }
-        assert!(texts.iter().any(|t| t.contains("fingerprint 3f9a 12c4")));
         assert!(screen.camera_area().is_none(), "no viewfinder");
         let c = screen.camera.unwrap();
         assert!(!c.marks && matches!(c.glyph, Some((Glyph::Check, _))));

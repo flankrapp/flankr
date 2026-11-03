@@ -130,8 +130,6 @@ enum Answer {
 /// request's words to the test, then answers it as `answer` says.
 struct Daemon {
     url: String,
-    /// `127.0.0.1:<port>`.
-    addr: String,
     held: mpsc::Receiver<String>,
 }
 
@@ -148,7 +146,7 @@ impl Daemon {
         let addr = listener.local_addr().unwrap().to_string();
         let url = PairingPayload {
             server_key: key.public,
-            addresses: vec![addr.clone()],
+            addresses: vec![addr],
             offer: Some(offer),
         }
         .url()
@@ -167,7 +165,7 @@ impl Daemon {
                 }
             });
         });
-        Daemon { url, addr, held }
+        Daemon { url, held }
     }
 }
 
@@ -318,59 +316,55 @@ fn a_scanned_code_shows_read_and_connecting_until_the_daemon_answers() {
     drop(silent);
 }
 
-/// The owner types yes: the modal closes, and the window says it is
-/// paired, with the address and the fingerprint, until Done, which goes on
-/// to the overview.
+/// The owner types yes: the six words' modal becomes the new remote's
+/// details modal, the one a press on its card opens, with a "Paired with"
+/// flash at its top that ends after its time; Close goes on to the
+/// overview, where Done went on the first run (plan 20261028_02, the
+/// 2026-11-03 12:40 EST amendment).
 #[test]
-fn a_confirmed_pairing_shows_paired_until_done() {
+fn a_confirmed_pairing_opens_the_remotes_details_with_a_flash() {
     let Some(first) = opened() else { return };
     let daemon = Daemon::answering(Answer::Add);
-    let p = run(&scan(&first, &daemon, 60), &["--camera"]).unwrap();
+    let script = scan(&first, &daemon, 30);
+    let p = run(&script, &["--camera"]).unwrap();
     daemon
         .held
         .recv_timeout(Duration::from_secs(5))
         .expect("the daemon had a pairing request");
-    assert!(p.shows("Paired with 127.0.0.1"), "{:?}", p.texts);
-    let reached = format!("{} \u{b7} fingerprint ", daemon.addr);
-    assert!(p.shows(&reached), "{:?}", p.texts);
-    assert!(!p.shows("Confirm on your Mac"));
-    let hits: Vec<Hit> = p.hits.iter().map(|&(h, _)| h).collect();
-    assert_eq!(hits, [Hit::Details, Hit::Done], "no Tap to scan");
-    // Still there many frames later: it waits for Done.
-    let again = run(&scan(&first, &daemon, 90), &["--camera"]).unwrap();
-    assert!(again.shows("Paired with 127.0.0.1"), "{:?}", again.texts);
-    // Details: the finished pairing ends as Done does, and the remote's
-    // details modal opens over Settings, as a press on its card in the
-    // drawer opens it (`drawer_tests`): the same screen, by the same call.
-    let script = format!(
-        "{}{}frames 4\n",
-        scan(&first, &daemon, 60),
-        tap(p.at(Hit::Details))
-    );
-    let d = run(&script, &["--camera"]).unwrap();
     assert!(
-        d.log.iter().any(|l| l == "pairing done, overview"),
+        p.log.iter().any(|l| l == "pairing details, overview"),
         "{:?}",
-        d.log
+        p.log
     );
-    assert!(d.drawer.settings && d.drawer.details, "{:?}", d.drawer);
-    assert!(d.drawer.details_of.is_some(), "the remote's details");
-    assert!(!d.shows("Hide details"), "no inline Details any more");
-    // Closed, Settings closes with it, as from the card: the overview.
+    assert!(
+        p.log
+            .iter()
+            .any(|l| l == "details flash Paired with 127.0.0.1"),
+        "{:?}",
+        p.log
+    );
+    assert!(!p.log.iter().any(|l| l.starts_with("pairing done")));
+    // No "Paired with" screen: Settings shows the remote's details.
+    assert!(p.drawer.settings && p.drawer.details, "{:?}", p.drawer);
+    assert!(p.drawer.details_of.is_some(), "the remote's details");
+    assert!(!p.drawer.adding);
+    assert!(
+        !p.history
+            .iter()
+            .flatten()
+            .any(|t| t.contains("Paired with")),
+        "never on the pairing window: {:?}",
+        p.history
+    );
+    // The flash ends after its time (3.3 s; 60 frames at 15 fps are 4 s),
+    // the modal still open.
+    let later = run(&format!("{script}frames 60\n"), &["--camera"]).unwrap();
+    assert!(later.drawer.details && later.drawer.flash.is_none());
+    assert_eq!(later.drawer.details_of, p.drawer.details_of);
+    // Closed (Back, as Close), Settings closes with it: the overview.
     let closed = run(&format!("{script}key back\nframes 4\n"), &["--camera"]).unwrap();
     assert!(!closed.drawer.settings && !closed.drawer.details);
-    // Done: on to the overview.
-    let script = format!(
-        "{}{}frames 2\n",
-        scan(&first, &daemon, 60),
-        tap(p.at(Hit::Done))
-    );
-    let done = run(&script, &["--camera"]).unwrap();
-    assert!(
-        done.log.iter().any(|l| l == "pairing done, overview"),
-        "{:?}",
-        done.log
-    );
+    assert_eq!(closed.frames.last().unwrap().0, super::Shown::Overview);
 }
 
 /// The owner types no: the modal closes and the window keeps the reason,

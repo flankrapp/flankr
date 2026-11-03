@@ -269,3 +269,12 @@ These changes came before the app had version numbers.
 **Removed**
 - The progress bars that filled along a held button or card.
 - Holding the speaker for one second to stop reading. Use **Stop** in its menu instead.
+
+## 0.7.6 — 2026-11-03
+
+**Changed**
+- When pairing completes, the pairing box turns straight into the new remote's details: nickname, hostname, when it was paired, the fingerprint, Close and Remove. A "Paired with <name>" message shows at the top for three seconds, then fades. It shows only then, not when you open a remote's details later.
+- Close on those details goes where Done went: back to Settings if you paired from there, otherwise to the main screen.
+
+**Removed**
+- The separate "Paired with <name>" screen with its Details and Done buttons, and its "Its addresses were updated." line.

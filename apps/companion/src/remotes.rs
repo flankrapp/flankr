@@ -22,10 +22,10 @@
 //!   EST amendment, item 2), the time the link has left, and in the
 //!   device-code fallback the code to paste into `flankr pair`.
 //! - A finished pairing (`Paired`, or `RemoteUpdated` for one already
-//!   listed) stays on the window until **Done** (the owner, 2026-10-28:
-//!   "currently it just closes and looks like it failed"); its Details,
-//!   once its row is known, is the remote's details modal (the same
-//!   amendment, item 1), which the app opens.
+//!   listed) becomes the remote's details modal in place, with a "Paired
+//!   with <name>" flash at its top ([`Pairing::ready`]; plan 20261028_02,
+//!   the 2026-11-03 12:40 EST amendment). Until the remote's row is known
+//!   the waiting modal stays as it is.
 //! - The lines are Markdown (drawn with `flankr-markdown`), so the copy can
 //!   set `flankr pair` in bold; values put into them go through
 //!   [`md_escape`].
@@ -154,28 +154,26 @@ impl Waiting {
     }
 }
 
-/// A pairing that ended well, shown until **Done**.
+/// A pairing that ended well, until the app opens its remote's details
+/// modal ([`Pairing::ready`]): at once when its row is known, else when
+/// the next `Remotes` brings it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Finished {
     /// The daemon's name.
     pub server: String,
-    /// The `host:port` the phone reached (or the remote's first).
-    pub address: Option<String>,
-    /// The remote's short fingerprint, `3f9a 12c4`, from its row.
-    pub label: Option<String>,
     /// It was already paired (`RemoteUpdated`).
     pub already: bool,
-    /// Its addresses changed: its row's first address is not the old one.
-    pub updated: bool,
     /// The remote, once known (`RemoteUpdated` names it; `Paired`'s is
     /// found by name in the next `Remotes`).
     pub id: Option<RemoteId>,
-    /// Its row's first address before the update.
-    old_host: Option<String>,
+    /// The remotes listed when `Paired` came: a new row of the same name
+    /// is taken before one of these.
+    known: Vec<RemoteId>,
 }
 
 impl Finished {
-    /// "Paired with m4", or "Already paired with m4".
+    /// "Paired with m4", or "Already paired with m4": the details modal's
+    /// flash, and the window's title while the row is not known.
     pub fn title(&self) -> String {
         let key = if self.already {
             copy::PAIRING_ALREADY
@@ -183,38 +181,6 @@ impl Finished {
             copy::PAIRING_PAIRED
         };
         key.fill(None, &[("name", &self.server)]).trim().to_string()
-    }
-
-    /// The dim lines under the title, Markdown: `host:port` and the short
-    /// fingerprint, then whether the addresses were updated.
-    pub fn summary(&self) -> String {
-        let mut out = match (&self.address, &self.label) {
-            (Some(address), Some(label)) => copy::PAIRING_REACHED
-                .fill(
-                    None,
-                    &[
-                        ("address", &md_escape(address)),
-                        ("fingerprint", &md_escape(label)),
-                    ],
-                )
-                .trim()
-                .to_string(),
-            (Some(address), None) => md_escape(address),
-            _ => String::new(),
-        };
-        if self.updated {
-            if !out.is_empty() {
-                out.push_str("\n\n");
-            }
-            out.push_str(copy::PAIRING_ADDRESSES_UPDATED.text.trim());
-        }
-        out
-    }
-
-    /// The remote whose details its Details opens, once its row is known:
-    /// until then the window shows Done alone.
-    pub fn details_of(&self) -> Option<RemoteId> {
-        self.id
     }
 }
 
@@ -227,7 +193,7 @@ pub struct Pairing {
     pub link: Option<LinkRead>,
     /// What a waiting pairing shows.
     pub waiting: Option<Waiting>,
-    /// A pairing that ended well, until **Done**.
+    /// A pairing that ended well, until its remote's details open.
     pub finished: Option<Finished>,
     /// The waiting modal's Details are open.
     pub details: bool,
@@ -311,64 +277,58 @@ impl Pairing {
         Input::CancelPairing
     }
 
-    /// The daemon added the key: the modal closes and the window shows the
-    /// finished pairing until **Done**. The daemon's name, if known.
+    /// The daemon added the key. The waiting modal stays as it is until
+    /// the remote's row is known ([`Pairing::ready`]); the daemon's name,
+    /// if known.
     pub fn paired(&mut self, rows: &[RemoteInfo]) -> Option<String> {
-        let waiting = self.waiting.take();
         let link = self.link.take();
-        let server = waiting
+        let server = self
+            .waiting
             .as_ref()
             .map(|w| w.server.clone())
             .or_else(|| link.as_ref().map(|l| l.server.clone()));
-        let mut finished = Finished {
+        self.finished = Some(Finished {
             server: server.clone().unwrap_or_default(),
-            address: waiting
-                .as_ref()
-                .map(|w| w.address.clone())
-                .or_else(|| link.as_ref().map(|l| l.address.clone())),
-            label: None,
             already: false,
-            updated: false,
             id: None,
-            old_host: None,
-        };
-        fill_from_rows(&mut finished, rows);
-        self.details = false;
-        self.fingerprint_open = false;
-        self.finished = Some(finished);
+            known: rows.iter().map(|r| r.id).collect(),
+        });
         server
     }
 
     /// A pairing named a remote already listed, and its addresses were
-    /// checked: the window shows it until **Done**. `rows` are the rows
-    /// before the update.
-    pub fn remote_updated(&mut self, id: RemoteId, name: &str, rows: &[RemoteInfo]) {
+    /// checked: its row is known at once.
+    pub fn remote_updated(&mut self, id: RemoteId, name: &str) {
         self.link = None;
         self.waiting = None;
         self.details = false;
         self.fingerprint_open = false;
-        let row = rows.iter().find(|r| r.id == id);
         self.finished = Some(Finished {
             server: name.to_string(),
-            address: row.map(|r| r.host.clone()),
-            label: row.map(|r| r.fingerprint.clone()),
             already: true,
-            updated: false,
             id: Some(id),
-            old_host: row.map(|r| r.host.clone()),
+            known: Vec::new(),
         });
     }
 
-    /// The remotes changed: a finished pairing takes its row's short
-    /// fingerprint, and an updated one whether its address changed.
+    /// The remotes changed: a finished pairing finds its row.
     pub fn remotes_changed(&mut self, rows: &[RemoteInfo]) {
         if let Some(f) = &mut self.finished {
             fill_from_rows(f, rows);
         }
     }
 
-    /// **Done**: the finished pairing goes. Whether it was the add mode
-    /// (back to Settings) rather than the first run (on to the overview).
+    /// A finished pairing whose remote's row is known: the remote, and the
+    /// flash its details modal opens with ("Paired with m4"). The app then
+    /// ends the pairing ([`Pairing::done`]) and opens the modal.
+    pub fn ready(&self) -> Option<(RemoteId, String)> {
+        let f = self.finished.as_ref()?;
+        Some((f.id?, f.title()))
+    }
+
+    /// The finished pairing goes (its details modal opening, or Done or
+    /// Back before its row is known). Whether it was the add mode (back to
+    /// Settings) rather than the first run (on to the overview).
     pub fn done(&mut self) -> bool {
         let adding = self.adding;
         *self = Pairing::default();
@@ -428,26 +388,17 @@ impl Pairing {
     }
 }
 
-/// `f`'s row, by id or else by name: its short fingerprint, its id, and
-/// for an update whether its first address changed.
+/// `f`'s row, by name, once: a new one before one listed when `Paired`
+/// came.
 fn fill_from_rows(f: &mut Finished, rows: &[RemoteInfo]) {
-    let row = match f.id {
-        Some(id) => rows.iter().find(|r| r.id == id),
-        None => rows.iter().find(|r| r.name == f.server),
-    };
-    let Some(row) = row else {
+    if f.id.is_some() {
         return;
-    };
-    f.id = Some(row.id);
-    f.label = Some(row.fingerprint.clone());
-    if f.already {
-        if f.old_host.as_deref().is_some_and(|old| old != row.host) {
-            f.updated = true;
-        }
-        f.address = Some(row.host.clone());
-    } else if f.address.is_none() {
-        f.address = Some(row.host.clone());
     }
+    let named = || rows.iter().filter(|r| r.name == f.server);
+    f.id = named()
+        .find(|r| !f.known.contains(&r.id))
+        .or_else(|| named().next())
+        .map(|r| r.id);
 }
 
 /// `text` (Markdown, one paragraph) at the notes' size, its first line
@@ -884,37 +835,37 @@ mod tests {
     }
 
     #[test]
-    fn paired_stays_until_done_with_the_address_and_fingerprint() {
+    fn paired_keeps_the_waiting_modal_until_the_remotes_row_comes() {
         let now = Instant::now();
         let mut p = Pairing::default();
         p.show(held(now));
         p.toggle_details();
-        // Paired: the modal closes, and the finished pairing shows.
-        assert_eq!(p.paired(&[]), Some("m4".to_string()));
-        assert!(!p.waiting() && !p.details);
-        let f = p.finished.clone().expect("the finished pairing");
-        assert_eq!(f.title(), "Paired with m4");
-        assert_eq!(f.summary(), "m4\\.ts\\.net\\:7347", "no row yet");
-        // Its row comes: the short fingerprint.
-        let mut row = remote(4, true);
+        // Paired before its row: the waiting modal stays as it is, Details
+        // open, and nothing is ready for the details modal yet.
+        let old = remote(4, true);
+        assert_eq!(p.paired(std::slice::from_ref(&old)), Some("m4".to_string()));
+        assert!(p.waiting() && p.details, "the modal as it was");
+        assert!(p.finished.is_some());
+        assert_eq!(p.ready(), None, "no row yet");
+        // Rows without it: still waiting.
+        p.remotes_changed(&[remote(1, false)]);
+        assert_eq!(p.ready(), None);
+        // Its row comes, beside an older remote of the same name: the new
+        // one is taken.
+        let mut row = remote(5, false);
         row.name = "m4".into();
-        p.remotes_changed(&[remote(1, false), row.clone()]);
-        let f = p.finished.clone().unwrap();
-        assert_eq!(f.id, Some(row.id));
-        assert_eq!(
-            f.summary(),
-            "m4\\.ts\\.net\\:7347 · fingerprint 4444 0000",
-            "the address reached, then the label"
-        );
-        assert!(!f.updated);
-        // Done: on to the overview, it was not the add mode.
+        p.remotes_changed(&[old.clone(), row.clone()]);
+        assert_eq!(p.ready(), Some((row.id, "Paired with m4".to_string())));
+        // Ended for its details modal: on to the overview, it was not the
+        // add mode.
         assert!(!p.done());
         assert_eq!(p, Pairing::default());
-        // In the add mode, Done returns to Settings.
+        // In the add mode, back to Settings.
         p.open_add();
         p.show(held(now));
-        p.paired(&[row]);
-        assert!(p.adding, "kept until Done");
+        p.paired(&[]);
+        p.remotes_changed(&[row]);
+        assert!(p.ready().is_some() && p.adding);
         assert!(p.done());
         assert!(!p.adding && p.finished.is_none());
         // A failure: the modal closes, and nothing is finished.
@@ -924,26 +875,16 @@ mod tests {
     }
 
     #[test]
-    fn already_paired_says_so_and_whether_the_addresses_changed() {
+    fn already_paired_is_ready_at_once_and_says_so() {
         let mut p = Pairing::default();
         p.open_add();
+        p.show(held(Instant::now()));
         let old = remote(4, true);
-        p.remote_updated(old.id, "m4", std::slice::from_ref(&old));
-        let f = p.finished.clone().unwrap();
-        assert_eq!(f.title(), "Already paired with m4");
-        assert_eq!(f.summary(), "m4\\.ts\\.net\\:7347 · fingerprint 4444 0000");
-        // The same rows again: nothing changed.
-        p.remotes_changed(std::slice::from_ref(&old));
-        assert!(!p.finished.as_ref().unwrap().updated);
-        // New addresses.
-        let mut moved = old.clone();
-        moved.host = "10.0.0.4:7347".into();
-        p.remotes_changed(&[moved]);
-        let f = p.finished.clone().unwrap();
-        assert!(f.updated);
+        p.remote_updated(old.id, "m4");
+        assert!(!p.waiting(), "the modal goes");
         assert_eq!(
-            f.summary(),
-            "10\\.0\\.0\\.4\\:7347 · fingerprint 4444 0000\n\nIts addresses were updated."
+            p.ready(),
+            Some((old.id, "Already paired with m4".to_string()))
         );
     }
 
