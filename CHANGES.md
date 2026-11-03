@@ -4508,3 +4508,28 @@ tests compile libvoicexn from nothing in the root workspace, and the disk
 had under 1 GB free); its code is unchanged, and its `morph` feature is
 built with the app for Android. The APK is not built here; the Kotlin is
 compiled (libmobile's example project) but not run.
+
+## 2026-11-03 17:48 EST — A tap on Claude Code's input line raises the keyboard again; daemon 0.7.10, app 0.7.18
+
+Plan: the terminal taps and shell panes plan (20261103_01), decisions 3
+and 4, by its 2026-11-03 17:47 EST amendment, from the owner's report of
+17:34 EST in `docs/OWNER_REPORTS.md` ("The keyboard should still be
+shown when the input line is tapped"). Fixes, so patches in the 0.7
+series: daemon 0.7.10 and app 0.7.18 (FLANKR RULE 2 item 4).
+libflankr_term and flankr-companion do not change.
+
+How it was found: the visible screens of three live Claude Code panes,
+read only, put through the recogniser. Two (the flankr session among
+them) have the session's name in the rule above the prompt
+(`───── Handlr audio vs libgenai split ─`) and gave no input rows; the
+third, with a plain rule, gave its `❯` row. Claude Code's frames carry no
+visible cursor, so the app had no row either. The rows reach the app on
+both routes (the poll route was the owner's, and the attached route goes
+through the same `with_input_rows`), and the tap's row mapping and the
+cards under the terminal (Gemini's card, the catch-up, a Finished or an
+approval card) were checked by a test: none covers the terminal.
+
+The keyboard that went down 200 ms after it rose is not explained by the
+code alone: the app now asks for it once more when it falls, or Android
+reports it dismissed, within 600 ms of its start, and logs why the
+keyboard goes down in the terminal, with a line for each terminal tap.
