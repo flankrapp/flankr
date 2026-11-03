@@ -351,3 +351,10 @@ These changes came before the app had version numbers.
 
 **Fixed**
 - A session continued after a long conversation keeps updating in the list view.
+
+## 0.7.17 — 2026-11-03
+
+**Fixed**
+- The keyboard's Enter key now sends Enter in the terminal.
+- The keyboard's Done key saves a remote's nickname.
+- The keyboard's Enter key starts a new line in a prompt.
