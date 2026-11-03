@@ -1,11 +1,13 @@
-//! `flankr serve` (the default) runs the daemon; `flankr ctl` sends it one
-//! request (docs/design/20261022_01_ORCHESTRATION_DAEMON_PLAN.md,
-//! decision 1).
+//! `flankr serve` (the default) starts the daemon, `flankr server`, in the
+//! background and returns; `flankr ctl` sends it one request
+//! (docs/design/20261022_01_ORCHESTRATION_DAEMON_PLAN.md, decision 1;
+//! docs/design/20261102_01_BACKGROUND_DAEMON_PLAN.md).
 //!
 //! ```text
-//! flankr [serve] [--config <file>] [--transport <name> | --remote <user@host> |
-//!                 --socket <herdr.sock> | --mock] [--listen <flankr.sock>] [--show-tokens]
-//!                [--prompts <ADDITIONAL_PROMPTS.md>] [--suggestions <SUGGESTIONS.md>]
+//! flankr [serve [--foreground | --stop] | server]
+//!        [--config <file>] [--transport <name> | --remote <user@host> |
+//!         --socket <herdr.sock> | --mock] [--listen <flankr.sock>] [--show-tokens]
+//!        [--prompts <ADDITIONAL_PROMPTS.md>] [--suggestions <SUGGESTIONS.md>]
 //! flankr ctl [--listen <flankr.sock>] [--client <name>] [--follow] [--handle <text>]
 //!            <method> [<params as JSON>]
 //! flankr pair [--listen <flankr.sock>] [--name <name>] [--protocols companion,harness]
@@ -67,6 +69,11 @@ struct AppArgs {
     /// `prompt`'s use and agent (plan 20261027_04, decision 8).
     use_name: Option<String>,
     agent: Option<String>,
+    /// `serve --foreground`: run the server here, as `server` does
+    /// (plan 20261102_01, decision 1).
+    foreground: bool,
+    /// `serve --stop`: stop the background server.
+    stop: bool,
 }
 
 fn parse_args(args: impl Iterator<Item = String>) -> AppArgs {
@@ -99,6 +106,8 @@ fn parse_args(args: impl Iterator<Item = String>) -> AppArgs {
         to: None,
         use_name: None,
         agent: None,
+        foreground: false,
+        stop: false,
     };
 
     while let Some(arg) = args.next() {
@@ -138,6 +147,8 @@ fn parse_args(args: impl Iterator<Item = String>) -> AppArgs {
             "--to" => parsed.to = args.next(),
             "--use" => parsed.use_name = args.next(),
             "--agent" => parsed.agent = args.next(),
+            "--foreground" => parsed.foreground = true,
+            "--stop" => parsed.stop = true,
             _ if !arg.starts_with("--") => parsed.positional.push(arg),
             _ => {
                 eprintln!("Unknown argument: {}", arg);
@@ -271,6 +282,17 @@ async fn serve(args: AppArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     let socket = daemon_socket(&args, &config);
     let listener = flankr::server::bind(&socket).await?;
+    // The pid file, once the socket is bound (plan 20261102_01, decision 4).
+    let pid_file = match daemon_files(&socket) {
+        Some(files) => match flankr::daemon::PidFile::create(&files.pid) {
+            Ok(pid_file) => Some(pid_file),
+            Err(e) => {
+                log::warn!("Cannot write {}: {e}", files.pid.display());
+                None
+            }
+        },
+        None => None,
+    };
     let link_listeners = match &link {
         Some(link) => link.bind().await?,
         None => Vec::new(),
@@ -310,8 +332,65 @@ async fn serve(args: AppArgs) -> Result<(), Box<dyn std::error::Error>> {
     };
     let daemon = flankr::server::Daemon::with_turns(client, &config, link, turns);
     flankr::server::link::spawn(std::sync::Arc::clone(&daemon), link_listeners);
-    flankr::server::run(daemon, listener, options).await;
-    Ok(())
+    let signal = tokio::select! {
+        () = flankr::server::run(daemon, listener, options) => None,
+        signal = flankr::daemon::termination() => Some(signal),
+    };
+    // A clean exit removes the pid file; exit at once rather than wait for
+    // the runtime's blocking tasks.
+    if let Some(signal) = signal {
+        log::info!("flankr server stopping on {signal}");
+    }
+    drop(pid_file);
+    std::process::exit(0)
+}
+
+/// The log and pid files for the listen socket `socket`, under
+/// `~/.local/state/flankr` (plan 20261102_01, decision 4).
+fn daemon_files(socket: &Path) -> Option<flankr::daemon::DaemonFiles> {
+    let home = std::env::var_os("HOME")?;
+    Some(flankr::daemon::DaemonFiles::for_socket(
+        &flankr::daemon::state_dir(Path::new(&home)),
+        socket,
+        &flankr::server::default_socket_path(),
+    ))
+}
+
+/// `flankr serve`: the server in the background, or `--stop`
+/// (plan 20261102_01, decision 1). `rest` is the command line after the
+/// command word, passed on to `flankr server`.
+async fn serve_background(
+    args: AppArgs,
+    rest: Vec<String>,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    let config = flankr::config::AppConfig::load_or_default(args.config.as_deref().map(Path::new));
+    let socket = flankr::daemon::absolute(&daemon_socket(&args, &config));
+    let files = daemon_files(&socket).ok_or("HOME is not set")?;
+    if args.stop {
+        return Ok(flankr::daemon::stop(&socket, &files).await);
+    }
+    let working_dir = std::env::current_dir()?;
+    let key_env = std::env::var_os(flankr::llm::gemini::KEY_ENV).is_some_and(|v| !v.is_empty());
+    if key_env && !working_dir.join(flankr::llm::gemini::KEY_FILE).exists() {
+        eprintln!(
+            "flankr: {} in this shell is not passed to the background daemon; it reads {} or .env in {} (or run `flankr serve --foreground`)",
+            flankr::llm::gemini::KEY_ENV,
+            flankr::llm::gemini::KEY_FILE,
+            working_dir.display()
+        );
+    }
+    let background = flankr::daemon::Background {
+        socket,
+        files,
+        program: std::env::current_exe()?,
+        args: std::iter::once("server".to_string())
+            .chain(rest)
+            .map(Into::into)
+            .collect(),
+        working_dir,
+        env: flankr::daemon::passed_env(std::env::vars_os()),
+    };
+    Ok(flankr::daemon::serve_background(&background).await)
 }
 
 async fn pair(args: AppArgs) -> Result<i32, Box<dyn std::error::Error>> {
@@ -432,9 +511,13 @@ async fn prompt(args: AppArgs) -> Result<i32, Box<dyn std::error::Error>> {
 const PROMPT_USAGE: &str = "usage: flankr prompt [--use general_agent] [--agent <name>] [--prompts <ADDITIONAL_PROMPTS.md>]";
 
 const USAGE: &str = "\
-flankr [serve] [--config <file>] [--transport <name> | --remote <user@host> |
-                --socket <herdr.sock> | --mock] [--listen <flankr.sock>] [--show-tokens]
-               [--prompts <ADDITIONAL_PROMPTS.md>] [--suggestions <SUGGESTIONS.md>]
+flankr [serve [--foreground | --stop] | server]
+       [--config <file>] [--transport <name> | --remote <user@host> |
+        --socket <herdr.sock> | --mock] [--listen <flankr.sock>] [--show-tokens]
+       [--prompts <ADDITIONAL_PROMPTS.md>] [--suggestions <SUGGESTIONS.md>]
+  serve (the default) starts `flankr server` in the background and returns;
+  log and pid in ~/.local/state/flankr/. --foreground runs it here, as
+  `server` does; --stop stops it.
 flankr ctl [--listen <flankr.sock>] [--client <name>] [--follow] [--handle <text>]
            <method> [<params as JSON>]
 flankr pair [--listen <flankr.sock>] [--name <name>] [--protocols companion,harness]
@@ -446,9 +529,20 @@ flankr prompt [--use general_agent] [--agent <name>] [--prompts <ADDITIONAL_PROM
                --socket <herdr.sock> | --mock]
 herdr's socket: --socket, else HERDR_SOCKET_PATH, else config.toml, else ~/.config/herdr/herdr.sock";
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut argv: Vec<String> = std::env::args().skip(1).collect();
+    let command = match argv.first().map(String::as_str) {
+        Some("serve") | Some("server") | Some("ctl") | Some("pair") | Some("session")
+        | Some("prompt") => argv.remove(0),
+        _ => "serve".to_string(),
+    };
+    if command == "server" {
+        // First thing, before any thread: out of the launchd job that
+        // started it, if one did (plan 20261102_01, decision 2).
+        if let Err(e) = flankr_daemon::leave_job() {
+            eprintln!("flankr server: could not leave the launchd job: {e}");
+        }
+    }
     if argv
         .iter()
         .any(|a| a == "--help" || a == "-h" || a == "help")
@@ -456,16 +550,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("{USAGE}");
         return Ok(());
     }
-    dotenvy::dotenv().ok();
+    let args = parse_args(argv.clone().into_iter());
+    let background = command == "serve" && !args.foreground;
+    // The background server loads `.env` itself, from the same folder;
+    // `serve` reads only this shell's environment (decision 3).
+    if !background {
+        dotenvy::dotenv().ok();
+    }
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(run(command, args, argv, background))
+}
 
-    let command = match argv.first().map(String::as_str) {
-        Some("serve") | Some("ctl") | Some("pair") | Some("session") | Some("prompt") => {
-            argv.remove(0)
-        }
-        _ => "serve".to_string(),
-    };
-    let args = parse_args(argv.into_iter());
+async fn run(
+    command: String,
+    args: AppArgs,
+    argv: Vec<String>,
+    background: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     if command == "ctl" {
         std::process::exit(ctl(args).await?);
     }
@@ -480,6 +584,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if !args.positional.is_empty() {
         return Err(format!("unexpected arguments: {:?}", args.positional).into());
+    }
+    if args.foreground && args.stop {
+        return Err("--foreground and --stop do not go together".into());
+    }
+    if command == "server" && (args.foreground || args.stop) {
+        return Err(
+            "`flankr server` runs in the foreground; use `flankr serve --stop` to stop it".into(),
+        );
+    }
+    if background {
+        std::process::exit(serve_background(args, argv).await?);
     }
     serve(args).await
 }

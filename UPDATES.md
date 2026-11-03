@@ -180,3 +180,14 @@ These changes came before the program had version numbers.
 **Changed**
 - When Gemini asks to send something to a coding agent (`ask_agent` or `send_agent_command`), the approval question and the card in the agent's session quote the exact text, such as `Approve sending "What did we ship today?" to Claude?`. A message you dictate still asks "Approve sending your message to Claude?".
 - Each line Gemini says to the phone, and each approval question its turn asks, is written to the log (`Turn 3 said (seq 0): …`, `Turn 3 asked confirmation 4: …`), redacted, so what was heard can be checked.
+
+## 0.6.0 — 2026-11-02
+
+**Changed**
+- `flankr serve`, and `flankr` on its own, now start the daemon in the background and return once it answers, printing `flankr is running on <socket>; log: <file>`. Quitting the terminal (or the terminal app on macOS) no longer stops it. If one is already running on that socket, it says `flankr is already running on <socket> (pid <n>)` and starts nothing. If it does not come up within 5 seconds, the end of its log is shown. For the old behaviour, the daemon in this terminal, use `flankr serve --foreground`.
+- The background daemon gets only `HOME`, `PATH`, `USER`, `LANG`, `TMPDIR`, `RUST_LOG`, `HERDR_SOCKET_PATH` and any `XDG_*` from your shell, never `GEMINI_API_KEY`. It finds the key in `.private/gemini_api_key` or `.env` in the folder you started it from; when the key is only in your shell, `serve` says so in one line.
+
+**Added**
+- `flankr server` runs the daemon in the foreground, as `flankr serve` used to; `flankr serve --foreground` does the same.
+- `flankr serve --stop` stops the daemon on that socket (it waits up to 5 seconds, then kills it), and removes a pid file left by one that is gone.
+- The daemon's log and pid file are in `~/.local/state/flankr/`: `daemon.log` and `daemon.pid` for the default socket, `daemon-<8 hex>.log` and `.pid` for one given with `--listen` or `[server] socket`. The log is appended to.

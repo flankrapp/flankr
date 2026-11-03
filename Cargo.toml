@@ -1,6 +1,6 @@
 [package]
 name = "flankr"
-version = "0.5.1"
+version = "0.6.0"
 edition = "2024"
 
 [dependencies]
@@ -61,6 +61,8 @@ toml_edit = "0.22"
 # (openat with O_NOFOLLOW, mkdirat, fstat, linkat), already in Cargo.lock.
 libflankr_blob = { path = "crates/libflankr_blob" }
 rustix = { version = "1", features = ["fs"] }
+# `flankr serve` starts `flankr server` detached (plan 20261102_01).
+flankr-daemon = { path = "crates/flankr-daemon" }
 
 [dev-dependencies]
 # Paused time for the confirmation broker's timers.
