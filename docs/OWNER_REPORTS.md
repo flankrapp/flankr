@@ -606,3 +606,31 @@ The `failed 0` that follows, the real count, was never read.
 **In hand.** Handed to a subagent: a count is read as belonging to the word
 it follows when one follows it (`failed 0`), and a number already taken by
 an earlier label (`passed 622`) is not a count of failures.
+
+## 2026-11-03 15:27 EST — Owner: Enter in the terminal, the click, and a blinking cursor
+
+Device: Galaxy S23 Ultra (app 0.7.13, daemon 0.7.7).
+
+**Report.** "tested la with one enter in repowiki shell, did not execute as
+enter is replaced with check on kbd. terminal mouse click doesn't appear to
+be worked by but option row is hidden so I can't confirm. grouping works.
+is there input for the terminal cursor in json or state? it should have a
+local blinking underline cursor".
+
+**Seen** (the phone's log). In the repowiki shell (`a shell, terminal
+only`), `ls` reached the pane (`notice: Typing into Shell in repowiki,
+tab 2's terminal`); the keyboard's action key showed a check (an IME
+"done" action) and pressing it only closed the soft keyboard (`soft
+keyboard down` at 15:22:45) and sent no Enter.
+
+1. **Enter**: the soft keyboard's action key must send Enter into the
+   terminal, with the keyboard staying up.
+2. **The click**: not confirmed either way; the option rows the owner meant
+   to tap were not visible.
+3. **The cursor**: the frames carry it (position, the program's shape,
+   visible); the owner wants it drawn locally as a blinking underline.
+
+Grouping is recorded as working (CHANGES.md, the workspace groups plan
+implemented).
+
+**In hand.** Items 1 to 3 handed to a subagent.
