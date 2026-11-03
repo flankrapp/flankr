@@ -4067,3 +4067,32 @@ daemon adds Tailscale's forward to its link itself, replacing the link
 plan's rule that flankr never changes Tailscale's configuration; `--vpn
 none` with `--bind` or `[link] listen` for a local port or an explicit
 address; the pairing offer carries the address a phone can reach.
+
+## 2026-11-03 00:05 EST — the link VPN plan, steps 1 and 2: small departures
+
+Plan: `docs/design/20261102_03_LINK_VPN_PLAN.md` (with its 23:53 EST
+amendment). Small departures needed to build it:
+
+1. Decision 1: the `Vpn` trait also has `forward_command(port)`, the
+   command `forward` runs, so the log and `flankr pair` can print it for
+   running by hand.
+2. Decisions 4 and 6: "loopback" for the forward's target is read as
+   `127.0.0.1` exactly, since the forward goes to `127.0.0.1:<port>`; a
+   link bound only on `[::1]` or `127.0.0.2` gets no forward, logged
+   as `[link] tailscale: no address on 127.0.0.1 among …; no forward is
+   made`.
+3. Decision 4: the not-running line names every bound address
+   (`the link is on <addresses> only`), which is `127.0.0.1:7347` by
+   default as the plan writes it. When Tailscale was not forwarding at
+   start, `link.pair_begin` runs the set-up again, so a Tailscale started
+   after the daemon is forwarded and offered; the not-running line is still
+   logged once.
+4. Decision 5: interface addresses come from `getifaddrs` through the
+   existing `libc` dependency (no new crate); interfaces that are down,
+   loopback and IPv6 link-local addresses are left out; `0.0.0.0` offers
+   IPv4 addresses, `::` both.
+5. The 23:53 EST amendment, item 1: the daemon refuses `link.pair_begin`
+   with the two lines, and `flankr pair` prints them as they are and exits
+   1. `LinkSettings` has `loopback_offers`, false in the daemon, which
+   the link's tests over `127.0.0.1` set to keep pairing there.
+6. With `--vpn none` the start log has `[link] vpn: none`.
