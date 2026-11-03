@@ -152,6 +152,8 @@ mod tests {
             subagents_running: None,
             summary: None,
             children: Vec::new(),
+            workspace_label: None,
+            workspace_number: None,
         }
     }
 
