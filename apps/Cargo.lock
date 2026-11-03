@@ -549,7 +549,7 @@ dependencies = [
 
 [[package]]
 name = "companion"
-version = "0.7.7"
+version = "0.7.8"
 dependencies = [
  "android_logger",
  "base64 0.22.1",
@@ -1133,7 +1133,7 @@ dependencies = [
 
 [[package]]
 name = "flankr-companion"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "base64 0.22.1",
  "flankr-speech",
@@ -1667,7 +1667,7 @@ dependencies = [
 
 [[package]]
 name = "libflankr_proto"
-version = "0.5.10"
+version = "0.5.11"
 dependencies = [
  "bip39",
  "blake2",
@@ -1680,7 +1680,7 @@ dependencies = [
 
 [[package]]
 name = "libflankr_term"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde",
 ]

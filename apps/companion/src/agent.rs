@@ -5652,13 +5652,20 @@ impl AgentScreen {
         self.keys_row
     }
 
-    /// Whether the keys row shows: the terminal does, and is armed, the
-    /// soft keyboard up or not (plan 20261028_06, decision 9; it replaces
-    /// L3's "while the keyboard is raised into the terminal"). With the
-    /// keyboard up it sits just above it; down, at the screen's bottom
-    /// inset, under the bar, which it lifts.
+    /// Whether the keys row shows: the terminal does, and takes typing,
+    /// armed or not, the soft keyboard up or not (plan 20261103_01,
+    /// decision 1, in place of plan 20261028_06 decision 9's "while the
+    /// terminal is armed"); its first key arms. With the keyboard up it
+    /// sits just above it; down, at the screen's bottom inset, under the
+    /// bar, which it lifts.
     pub fn keys_row_shown(&self) -> bool {
-        self.terminal_armed()
+        self.terminal_typable()
+    }
+
+    /// Keys may be typed into the terminal, arming it first if it is not
+    /// armed: it shows, is open, and takes typing.
+    pub fn terminal_typable(&self) -> bool {
+        self.term_shown && self.term_state.typable()
     }
 
     /// CTRL and ALT as latched for the next key.
@@ -5703,14 +5710,14 @@ impl AgentScreen {
 
     /// The terminal as the client has it now.
     pub fn set_terminal_state(&mut self, stamp: TermStamp, state: TermState) {
-        let armed = self.terminal_armed();
+        let shown = self.keys_row_shown();
         self.term_stamp = Some(stamp);
         self.term_state = state;
         self.dirty = true;
-        // The keys row comes and goes with the arm (plan 20261028_06,
-        // decision 9), and the latch with the row.
-        if armed != self.terminal_armed() {
-            if !self.terminal_armed() {
+        // The keys row comes and goes with typing (plan 20261103_01,
+        // decision 1), and the latch with the row.
+        if shown != self.keys_row_shown() {
+            if !self.keys_row_shown() {
                 self.term_latch = Latch::default();
             }
             self.settle();
@@ -5821,24 +5828,37 @@ impl AgentScreen {
         if out.moved {
             self.dirty = true;
         }
-        // A tap arms and raises the keyboard; a vertical drag arms and
-        // scrolls the pane (the L3 amendment of 2026-10-27 21:58 EDT); in
-        // mouse mode a tap or a drag across arms and clicks or drags.
-        if (out.tap || out.drag || out.click) && !armed {
+        // What a tap lands on decides what it does (plan 20261103_01,
+        // decisions 4 and 5): the input bar arms and raises the keyboard; a
+        // choice option is picked by the daemon; anything else, nothing. A
+        // click (mouse mode) is sent as before, and raises the keyboard
+        // only on the input bar. A vertical drag arms and scrolls the pane
+        // (the L3 amendment of 2026-10-27 21:58 EDT); in mouse mode a drag
+        // across arms and drags.
+        let row = out.cell.map(|(_, row)| row);
+        let on_bar = row.is_some_and(|r| self.term_state.on_input_bar(r));
+        let choice = out.tap && !on_bar && self.live_choices().is_some();
+        if (on_bar && out.tap || out.drag || out.click) && !armed {
             log::info!(
                 "terminal: {}, arming input",
-                if out.tap || out.click {
-                    "tapped"
+                if out.tap {
+                    "the input bar tapped"
+                } else if out.click {
+                    "clicked"
                 } else {
                     "dragged"
                 }
             );
             self.term_asks.push(TermAsk::Arm);
         }
-        // A click raises the keyboard too, so a mouse program can be typed
-        // into after tapping it (the owner, 2026-10-28).
-        if out.tap || out.click {
+        if (out.tap || out.click) && on_bar {
             self.term_asks.push(TermAsk::Keyboard);
+        }
+        if choice && let Some(row) = row {
+            log::info!("terminal: row {row} tapped while a choice question is open");
+            self.term_asks.push(TermAsk::ChoiceTap(row));
+        } else if out.tap && !on_bar {
+            log::debug!("terminal: a tap off the input bar; nothing to do");
         }
         self.term_lines = self.term_lines.saturating_add(out.lines);
         self.term_mouse.extend(out.mouse);
@@ -7632,6 +7652,7 @@ mod tests {
             scroll_max: None,
             cursor: false,
             source: flankr_companion::TerminalSource::Poll,
+            input: true,
         });
         a.set_terminal_state((2, true, true, Some(60)), state);
         assert!(a.terminal_armed());
@@ -7730,6 +7751,7 @@ mod tests {
             scroll_max: None,
             cursor: false,
             source: flankr_companion::TerminalSource::Poll,
+            input: true,
         });
         st
     }
@@ -7772,8 +7794,36 @@ mod tests {
         assert!(a.terminal_shown() && a.terminal_armed());
     }
 
+    /// `st` with the daemon's input bar on rows `span` of its screen (plan
+    /// 20261103_01, decision 3).
+    fn with_input_rows(mut st: TermState, span: Option<libflankr_term::RowSpan>) -> TermState {
+        let rows: String = (0..30).map(|i| format!("row {i}\n")).collect();
+        let mut grid = libflankr_term::parse_ansi(&rows);
+        grid.input_rows = span;
+        let mut sc = flankr_companion::Screen::default();
+        assert!(sc.apply(&libflankr_term::Frame::full(1, 1, &grid)));
+        st.screen = Some(sc);
+        st
+    }
+
+    /// The pane row under `(x, y)` of `a`'s terminal.
+    fn row_at(a: &AgentScreen, x: f32, y: f32) -> u16 {
+        a.terminal_view()
+            .cell_at(
+                x,
+                y,
+                a.terminal_state().screen.as_ref(),
+                a.terminal_rect(),
+                a.scale(),
+            )
+            .expect("on the frame")
+            .1
+    }
+
     #[test]
-    fn a_tap_on_the_terminal_arms_and_raises_the_keyboard_only_when_allowed() {
+    fn a_tap_raises_the_keyboard_only_on_the_input_bar() {
+        // Plan 20261103_01, decisions 4 and 5, in place of "a tap arms and
+        // raises the keyboard".
         let mut a = screen(conversation(3), vec![], None);
         a.set_terminal_state((1, true, false, None), open_state(false, false));
         a.toggle_terminal();
@@ -7787,36 +7837,84 @@ mod tests {
         // Not allowed by the daemon: nothing is asked.
         assert_eq!(tap(&mut a, 1, Duration::ZERO), None);
         assert!(a.take_terminal_asks().is_empty());
-        // Allowed: an arm and the keyboard, at once.
-        a.set_terminal_state((2, true, true, None), open_state(true, false));
+        let row = row_at(&a, x, y);
+        let bar = |first, last| Some(libflankr_term::RowSpan { first, last });
+        // Allowed, the tap on the input bar: an arm and the keyboard, at
+        // once.
+        let st = with_input_rows(open_state(true, false), bar(row, row + 1));
+        a.set_terminal_state((2, true, true, None), st);
         assert_eq!(tap(&mut a, 2, Duration::from_secs(1)), None);
-        assert_eq!(a.take_terminal_asks(), [TermAsk::Arm, TermAsk::Keyboard]);
-        // Armed: only the keyboard (again, if it was dismissed).
-        a.set_terminal_state((3, true, true, Some(60)), open_state(true, true));
-        assert!(a.terminal_armed());
+        assert_eq!(
+            no_resize(a.take_terminal_asks()),
+            [TermAsk::Arm, TermAsk::Keyboard]
+        );
+        // Off the input bar: nothing, no arm and no keyboard.
+        let st = with_input_rows(open_state(true, false), bar(row + 1, row + 2));
+        a.set_terminal_state((3, true, true, None), st);
         tap(&mut a, 3, Duration::from_secs(2));
+        assert!(no_resize(a.take_terminal_asks()).is_empty());
+        // No bar found, and no cursor: nothing either.
+        a.set_terminal_state((4, true, true, None), open_state(true, false));
+        tap(&mut a, 4, Duration::from_secs(3));
+        assert!(no_resize(a.take_terminal_asks()).is_empty());
+        // Armed, on the bar: only the keyboard (again, if it was dismissed).
+        let st = with_input_rows(open_state(true, true), bar(row, row));
+        a.set_terminal_state((5, true, true, Some(60)), st);
+        assert!(a.terminal_armed());
+        tap(&mut a, 5, Duration::from_secs(4));
         assert_eq!(no_resize(a.take_terminal_asks()), [TermAsk::Keyboard]);
         // A finger resting is not a hold any more: nothing after 2 s.
-        a.touch(4, TouchPhase::Started, x, y, Duration::from_secs(3));
+        a.touch(6, TouchPhase::Started, x, y, Duration::from_secs(5));
         for _ in 0..100 {
             a.tick(Duration::from_millis(20));
         }
         assert!(a.take_terminal_asks().is_empty());
         // A tap on a control over the terminal is the control's, not the
         // terminal's.
-        a.touch(4, TouchPhase::Cancelled, x, y, Duration::from_secs(5));
+        a.touch(6, TouchPhase::Cancelled, x, y, Duration::from_secs(7));
         let toggle = toggle_of(&a).rect;
-        tap(&mut a, 5, Duration::from_secs(6));
+        tap(&mut a, 7, Duration::from_secs(8));
         let hit = {
             let (x, y) = (toggle.x + toggle.w * 0.5, toggle.y + toggle.h * 0.5);
-            a.touch(6, TouchPhase::Started, x, y, Duration::from_secs(7));
-            a.touch(6, TouchPhase::Ended, x, y, Duration::from_secs(7) + MS)
+            a.touch(8, TouchPhase::Started, x, y, Duration::from_secs(9));
+            a.touch(8, TouchPhase::Ended, x, y, Duration::from_secs(9) + MS)
         };
         assert_eq!(hit, Some(AgentHit::TerminalToggle));
         assert_eq!(
             a.take_terminal_asks(),
             [TermAsk::Keyboard],
-            "the tap at 6 s only"
+            "the tap at 8 s only"
+        );
+    }
+
+    #[test]
+    fn a_tap_off_the_bar_with_a_choice_question_open_asks_the_daemon() {
+        // Plan 20261103_01, decision 5.2.
+        let mut a = choice_screen(choice_set(None));
+        a.set_terminal_state((1, true, true, None), open_state(true, false));
+        a.toggle_terminal();
+        a.take_terminal_asks();
+        let r = a.terminal_rect();
+        let (x, y) = (r.x + r.w * 0.5, r.y + 40.0 * a.scale());
+        let row = row_at(&a, x, y);
+        a.touch(1, TouchPhase::Started, x, y, Duration::ZERO);
+        assert_eq!(a.touch(1, TouchPhase::Ended, x, y, MS), None);
+        // No arm here: the client arms before it sends the tap.
+        assert_eq!(no_resize(a.take_terminal_asks()), [TermAsk::ChoiceTap(row)]);
+        // On the input bar the keyboard wins.
+        let st = with_input_rows(
+            open_state(true, false),
+            Some(libflankr_term::RowSpan {
+                first: row,
+                last: row,
+            }),
+        );
+        a.set_terminal_state((2, true, true, None), st);
+        a.touch(2, TouchPhase::Started, x, y, Duration::from_secs(1));
+        a.touch(2, TouchPhase::Ended, x, y, Duration::from_secs(1) + MS);
+        assert_eq!(
+            no_resize(a.take_terminal_asks()),
+            [TermAsk::Arm, TermAsk::Keyboard]
         );
     }
 
@@ -8189,6 +8287,7 @@ mod tests {
             scroll_max: None,
             cursor: false,
             source: flankr_companion::TerminalSource::Poll,
+            input: true,
         });
         let mut unarmed = state.clone();
         a.set_terminal_state((3, true, true, Some(0)), state);
@@ -8273,9 +8372,13 @@ mod tests {
             assert!(b.rect.y + b.rect.h <= down.y, "{:?} above the row", b.hit);
         }
         a.take_terminal_asks();
-        // No longer armed: the row goes, and the terminal grows by it.
-        let before = a.terminal_rect();
+        // Unarmed, the row stays (plan 20261103_01, decision 1).
         a.set_terminal_state((2, true, true, None), open_state(true, false));
+        assert!(a.keys_row_shown());
+        assert!(a.frame().keys_row.is_some());
+        // Typing off: the row goes, and the terminal grows by it.
+        let before = a.terminal_rect();
+        a.set_terminal_state((3, true, false, None), open_state(false, false));
         assert!(!a.keys_row_shown());
         assert!(a.frame().keys_row.is_none());
         let after = a.terminal_rect();
@@ -8283,7 +8386,7 @@ mod tests {
         assert!((after.h - before.h - KEYS_H * s).abs() < 0.01);
         assert_eq!(resizes(&a.take_terminal_asks()).len(), 1);
         // Not over the transcript.
-        a.set_terminal_state((3, true, true, Some(0)), attached_state(true, false));
+        a.set_terminal_state((4, true, true, Some(0)), attached_state(true, false));
         assert!(a.keys_row_shown());
         a.toggle_terminal();
         assert!(!a.keys_row_shown());
@@ -8318,8 +8421,13 @@ mod tests {
         }
         // No arm, no keyboard, no click: the terminal never saw them.
         assert!(a.take_terminal_asks().is_empty());
-        // Unarmed there is no row to tap (plan 20261028_06, decision 9).
+        // Unarmed the row shows (plan 20261103_01, decision 1, in place of
+        // plan 20261028_06 decision 9); without typing there is none.
         a.set_terminal_state((2, true, true, None), attached_state(false, false));
+        assert!(a.frame().keys_row.is_some());
+        let mut off = attached_state(false, false);
+        off.input_allowed = false;
+        a.set_terminal_state((3, true, false, None), off);
         assert!(a.frame().keys_row.is_none());
     }
 
@@ -8384,8 +8492,11 @@ mod tests {
         a.press_term_key(TermKey::Ctrl);
         a.set_keys_row(false);
         assert!(!a.latch().is_empty());
-        // The row goes with the arm, and the latch with it.
+        // Unarmed, the row and the latch stay (plan 20261103_01, decision
+        // 1); the row goes when typing does, and the latch with it.
         a.set_terminal_state((2, true, true, None), open_state(true, false));
+        assert!(!a.latch().is_empty());
+        a.set_terminal_state((3, true, false, None), open_state(false, false));
         assert!(a.latch().is_empty());
     }
 

@@ -289,3 +289,14 @@ These changes came before the app had version numbers.
 - A typed message is sent only by its send button. Before, if the microphone was still listening from a spoken start, something it heard could be added to the text and the message sent after the silence.
 - Tapping a card's record button while a typed message is open carries that message on by voice with its text, instead of starting an empty one.
 - When the keyboard does not come up after opening a text card, the app asks for it once more, so you no longer have to tap the text first.
+
+## 0.7.8 — 2026-11-03
+
+**Added**
+- In the terminal view, tapping one of Claude Code's question options, its name or the line under it, picks that option, as pressing its number would. The keyboard does not come up.
+- Shell panes (a plain zsh or bash tab, htop, a build) and agents the Mac's settings don't list now open in the terminal view, and you can type into them. They are listed in the drawer below the agent sessions.
+
+**Changed**
+- The keyboard comes up only when you tap the agent's input line (Claude Code's prompt box, Codex's or agy's prompt, a shell's prompt line). A tap elsewhere in the terminal no longer brings it up, so the screen no longer shifts under your finger.
+- The row of Esc, Tab, arrow, CTRL and ALT keys is always there in the terminal view while you can type into it, not only after a tap. The first key you press, type or paste starts typing.
+- With a program that takes the mouse, a tap still clicks where you tap; the keyboard comes up only if the tap is on the input line.

@@ -3265,7 +3265,10 @@ impl App {
             .filter(|s| s.open)
             .and_then(|s| s.armed_for)
             .map(|_| 0);
-        let stamp = (t.changes(), t.supported(), t.input_allowed(), armed);
+        // Typing, once open, also by the pane's own gates (plan 20261103_01,
+        // decision 1).
+        let input = t.input_allowed() && status.as_ref().is_none_or(|s| !s.open || s.input);
+        let stamp = (t.changes(), t.supported(), input, armed);
         if agent.terminal_stamp() != Some(stamp) {
             let state = TermState {
                 supported: stamp.1,
@@ -3288,6 +3291,8 @@ impl App {
                 TermAsk::Scroll(lines) => companion.terminal_scroll(pane, lines),
                 TermAsk::Resize { cols, rows } => companion.terminal_resize(pane, cols, rows),
                 TermAsk::Mouse(m) => companion.terminal_mouse(pane, m.kind, m.col, m.row, 0),
+                // Plan 20261103_01, decision 5.2: the client arms first.
+                TermAsk::ChoiceTap(row) => companion.terminal_choice_tap(pane, row),
                 // Raised once armed, below: before, keys would have nowhere
                 // to go, and the keyboard would leave at once.
                 TermAsk::Keyboard => self.term_keyboard_at = Some(Instant::now()),
@@ -3304,8 +3309,8 @@ impl App {
                 self.term_keyboard_at = None;
             }
         }
-        if !agent.terminal_armed() && self.term_ime.take().is_some() {
-            log::info!("terminal: no longer armed; the keyboard leaves it");
+        if !agent.terminal_typable() && self.term_ime.take().is_some() {
+            log::info!("terminal: no longer takes typing; the keyboard leaves it");
         }
     }
 
@@ -3320,7 +3325,11 @@ impl App {
         if up {
             log::info!("terminal: keyboard toggle: hide");
             self.keyboard.dismiss();
-        } else if self.agent.as_ref().is_some_and(AgentScreen::terminal_armed) {
+        } else if self
+            .agent
+            .as_ref()
+            .is_some_and(AgentScreen::terminal_typable)
+        {
             log::info!("terminal: keyboard toggle: show");
             self.term_ime.get_or_insert_with(String::new);
             self.keyboard.focus(FocusedPrompt::Terminal);
@@ -3932,7 +3941,10 @@ impl App {
         // closes the view.
         if key != Key::Back
             && self.dictation.is_none()
-            && self.agent.as_ref().is_some_and(AgentScreen::terminal_armed)
+            && self
+                .agent
+                .as_ref()
+                .is_some_and(AgentScreen::terminal_typable)
             && let Some(token) = terminal_keys::key_token(key)
         {
             self.keyboard.typed_physically();

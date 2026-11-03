@@ -205,9 +205,15 @@ impl DrawerContent {
         }
     }
 
-    /// A list of the remote in use's agents, received at `now`.
+    /// A list of the remote in use's agents, received at `now`: its agent
+    /// sessions in the list's order, then its shell panes in theirs (plan
+    /// 20261103_01, decision 7).
     pub fn set_agents(&mut self, agents: Vec<AgentInfo>, now: Duration) {
-        self.agents = agents;
+        let (sessions, shells): (Vec<AgentInfo>, Vec<AgentInfo>) = agents
+            .into_iter()
+            .partition(|a| !flankr_companion::cross::is_terminal_only(a));
+        self.agents = sessions;
+        self.agents.extend(shells);
         self.listed = true;
         self.received_at = now;
         self.dirty = true;
@@ -631,6 +637,43 @@ mod tests {
         assert_eq!(
             c.row_hit(c.rows[1].0),
             Some(DrawerHit::Session("p1".into()))
+        );
+    }
+
+    #[test]
+    fn shell_panes_sit_below_the_agent_sessions_and_open_as_sessions() {
+        // Plan 20261103_01, decision 7 and the 12:34 EST amendment, item 5.
+        crate::theme::testing::use_theme("dark_gray");
+        let mut c = DrawerContent::default();
+        c.set_remotes(remotes(1));
+        c.set_frame([326.0, 800.0], [0.0, 0.0], 1.0);
+        let shell = |pane: &str| {
+            let mut a = agent(pane, None, None);
+            a.agent = "shell".into();
+            a.cwd = Some(format!("/Users/me/src/{pane}-dir"));
+            a
+        };
+        c.set_agents(
+            vec![
+                shell("s1"),
+                agent("p2", Some(2), None),
+                shell("s2"),
+                agent("p1", Some(1), None),
+            ],
+            Duration::ZERO,
+        );
+        let mut router = Router::new();
+        c.build(&mut router, Duration::ZERO);
+        assert_eq!(c.row_panes(), ["p2", "p1", "s1", "s2"]);
+        // A shell's row: its folder after its tab, and no spinner.
+        let row = router.get::<SessionRow>(c.rows[2].0).unwrap();
+        assert_eq!(row.summary, "s1-dir");
+        assert!(c.spinners(&router).is_empty());
+        // A tap on it opens it, as a session: the app shows it terminal
+        // only.
+        assert_eq!(
+            c.row_hit(c.rows[2].0),
+            Some(DrawerHit::Session("s1".into()))
         );
     }
 

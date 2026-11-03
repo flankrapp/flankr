@@ -62,6 +62,16 @@
 //!   arms first and is held until the arm lands, then sent; it is dropped
 //!   if the arm never comes. Without mouse reports a tap arms and raises the
 //!   keyboard, as before.
+//!
+//! Plan 20261103_01 (terminal taps and shell panes), decisions 1, 2, 4 and
+//! 5, in place of "a tap arms it and raises the soft keyboard" above: a tap
+//! raises the keyboard (arming first) only on the agent's input bar, the
+//! rows the daemon sends with each frame, or without them the visible
+//! cursor's row; a tap on a row of an open choice question asks the daemon
+//! to pick the option there (`terminal.choice_tap`); any other tap does
+//! nothing, and in mouse mode clicks as before, without the keyboard
+//! unless it is on the input bar. The keys row shows whenever the terminal
+//! takes typing, armed or not, and its first key arms.
 
 use std::time::Duration;
 
@@ -104,7 +114,9 @@ const FIT_SLACK: f32 = 1e-3;
 pub struct TermState {
     /// The daemon offers the terminal mode on this connection.
     pub supported: bool,
-    /// The daemon lets keys be sent (its `[terminal] input`).
+    /// The daemon lets keys be sent (its `[terminal] input`), and, once
+    /// the terminal is open, its pane takes typing (the open's `input`,
+    /// plan 20261103_01 decision 1).
     pub input_allowed: bool,
     /// The daemon serves `terminal.mouse` (`Terminals::mouse_allowed`).
     pub mouse_allowed: bool,
@@ -140,6 +152,24 @@ impl TermState {
             .is_some_and(|s| s.open && s.source == TerminalSource::Attached)
     }
 
+    /// The terminal is open and takes typing, armed or not: the keys row
+    /// shows (plan 20261103_01, decision 1), and its first key arms.
+    pub fn typable(&self) -> bool {
+        self.input_allowed && self.status.as_ref().is_some_and(|s| s.open)
+    }
+
+    /// Whether pane row `row` is on the agent's input bar, as the daemon
+    /// found it in the frame shown, or, without one, the cursor's row
+    /// while it is visible (plan 20261103_01, decisions 3 and 4).
+    pub fn on_input_bar(&self, row: u16) -> bool {
+        match self.screen.as_ref().and_then(Screen::input_rows) {
+            Some(span) => span.contains(row),
+            None => self
+                .cursor()
+                .is_some_and(|c| c.visible && !c.stale && c.row == row),
+        }
+    }
+
     /// Touches are the program's mouse: input and the mouse are allowed,
     /// and the program asked for mouse reports.
     pub fn mouse_mode(&self) -> bool {
@@ -157,9 +187,11 @@ pub enum TermAsk {
     },
     /// `terminal_close`.
     Close,
-    /// `terminal_arm_input`: a tap or a vertical drag on the terminal.
+    /// `terminal_arm_input`: a tap on the input bar, a click, or a
+    /// vertical drag on the terminal.
     Arm,
-    /// Raise the soft keyboard into the terminal once it is armed: a tap.
+    /// Raise the soft keyboard into the terminal once it is armed: a tap
+    /// on the input bar.
     Keyboard,
     /// `terminal_scroll`: lines from vertical drags, positive back into the
     /// scrollback.
@@ -168,6 +200,9 @@ pub enum TermAsk {
     Resize { cols: u16, rows: u16 },
     /// `terminal_mouse`: a click or drag at a pane-local cell.
     Mouse(MouseAt),
+    /// `terminal_choice_tap`: a tap on pane row `row` while a choice
+    /// question is open (plan 20261103_01, decision 5.2).
+    ChoiceTap(u16),
 }
 
 /// A mouse event at a pane-local cell.
@@ -394,7 +429,10 @@ pub fn run_colours(run: &Run, dark: bool) -> ([f32; 4], Option<[f32; 4]>) {
 pub struct Touched {
     /// The view moved (a pan or a zoom): draw again.
     pub moved: bool,
-    /// A tap, with input allowed: arm, and raise the soft keyboard.
+    /// A tap, with input allowed: on the input bar it arms and raises the
+    /// soft keyboard, on a choice option it picks it, elsewhere it does
+    /// nothing (plan 20261103_01, decisions 4 and 5); [`cell`](Self::cell)
+    /// is where.
     pub tap: bool,
     /// A vertical drag, or in mouse mode a drag across, began with input
     /// allowed: arm (no keyboard).
@@ -402,6 +440,10 @@ pub struct Touched {
     /// In mouse mode, a tap: arm (no keyboard); [`mouse`](Self::mouse)
     /// has its click.
     pub click: bool,
+    /// A tap's or a click's pane-local cell, `(col, row)`, when it is on
+    /// the frame: what it lands on decides what it does (plan 20261103_01,
+    /// decisions 4 and 5).
+    pub cell: Option<(u16, u16)>,
     /// Lines to scroll the pane by, positive back into the scrollback.
     pub lines: i32,
     /// Mouse events, in order, in mouse mode.
@@ -797,11 +839,15 @@ impl TermView {
                         // A left click at the tapped cell.
                         if let Some(cell) = self.cell_at(x, y, screen, rect, s) {
                             out.click = true;
+                            out.cell = Some(cell);
                             out.mouse.push(MouseAt::left(down, cell));
                             out.mouse.push(MouseAt::left(up, cell));
                         }
                     } else {
                         out.tap = input;
+                        if input {
+                            out.cell = self.cell_at(x, y, screen, rect, s);
+                        }
                     }
                     return out;
                 }
@@ -1118,6 +1164,7 @@ mod tests {
             scroll_max: None,
             cursor: false,
             source: TerminalSource::Poll,
+            input: true,
         }
     }
 
