@@ -358,3 +358,9 @@ These changes came before the app had version numbers.
 - The keyboard's Enter key now sends Enter in the terminal.
 - The keyboard's Done key saves a remote's nickname.
 - The keyboard's Enter key starts a new line in a prompt.
+
+## 0.7.18 — 2026-11-03
+
+**Fixed**
+- A tap on a Claude Code session's input line in terminal view raises the keyboard again, also in a session with a name. The whole box around the prompt takes the tap, so it is easier to hit.
+- The keyboard no longer goes down again just after it came up in the terminal; it is asked for once more.

@@ -64,6 +64,12 @@ impl Typing {
 /// show; asked again, the field already has the focus.
 pub const RAISE_WAIT: Duration = Duration::from_millis(400);
 
+/// How long after it was started a soft keyboard that rose and went down
+/// again, or that Android reports dismissed, is taken as a show Android
+/// lost (the owner's report of 2026-11-03 17:34 EST: raised, and down
+/// 200 ms later) and asked for once more: sooner than anyone puts it away.
+pub const FALL_WAIT: Duration = Duration::from_millis(600);
+
 /// What the app is to do with the soft keyboard.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Ime {
@@ -91,6 +97,13 @@ pub struct KeyboardRoute {
     /// whether it has been asked for again since.
     raising: Option<Duration>,
     asked_again: bool,
+    /// When the soft keyboard last started, while it is watched for
+    /// falling at once ([`FALL_WAIT`]).
+    started_at: Option<Duration>,
+    /// It was seen up since it started.
+    seen_up: bool,
+    /// A fall at once was asked again since the last focus: not again.
+    fell: bool,
 }
 
 impl KeyboardRoute {
@@ -120,6 +133,7 @@ impl KeyboardRoute {
         self.focused = Some(prompt);
         self.dismissed = false;
         self.reshow = true;
+        self.fell = false;
     }
 
     /// The soft keyboard was started at `now` (any monotonic clock): it is
@@ -127,17 +141,65 @@ impl KeyboardRoute {
     pub fn started(&mut self, now: Duration) {
         self.raising = Some(now);
         self.asked_again = false;
+        self.started_at = Some(now);
+        self.seen_up = false;
+    }
+
+    /// Whether `now` is within [`FALL_WAIT`] of the last start, and the
+    /// keyboard has not been asked for again since.
+    fn just_started(&self, now: Duration) -> bool {
+        !self.fell
+            && self
+                .started_at
+                .is_some_and(|at| now.saturating_sub(at) < FALL_WAIT)
+    }
+
+    /// Android reports the soft keyboard dismissed at `now`. Within
+    /// [`FALL_WAIT`] of its start, while still wanted, it is a show
+    /// Android lost, not the user's: it stays wanted, and `true` asks for
+    /// it once more at the next [`sync`](Self::sync). Otherwise it is
+    /// [`dismiss`](Self::dismiss)ed.
+    pub fn system_dismissed(&mut self, now: Duration) -> bool {
+        let wanted = self.focused.is_some() && !self.dismissed && !self.physical;
+        if wanted && self.just_started(now) {
+            self.fell = true;
+            self.reshow = true;
+            self.raising = None;
+            self.started_at = None;
+            return true;
+        }
+        self.dismiss();
+        false
     }
 
     /// Each frame after [`sync`](Self::sync): whether the soft keyboard is
     /// to be started once more, because it was started [`RAISE_WAIT`] ago,
     /// is still wanted, and has not risen (`raised`: the keyboard's inset
-    /// is above zero). Asked again once per start.
+    /// is above zero). Asked again once per start; and once per focus when
+    /// it rose and went down again within [`FALL_WAIT`] of its start.
     pub fn ask_again(&mut self, raised: bool, now: Duration) -> bool {
+        let wanted = self.focused.is_some() && !self.dismissed && !self.physical;
+        // Up, and down again within FALL_WAIT of its start: a show Android
+        // lost, asked for once more (once per focus).
+        if self.started_at.is_some() {
+            if raised {
+                self.seen_up = true;
+            } else if self.seen_up && wanted && self.just_started(now) {
+                self.fell = true;
+                self.raising = None;
+                self.started_at = None;
+                return true;
+            }
+            if self
+                .started_at
+                .is_some_and(|at| now.saturating_sub(at) >= FALL_WAIT)
+            {
+                self.started_at = None;
+            }
+        }
         let Some(at) = self.raising else {
             return false;
         };
-        let wanted = self.focused.is_some() && !self.dismissed && !self.physical;
         if raised || !wanted || self.asked_again {
             self.raising = None;
             return false;
@@ -164,14 +226,17 @@ impl KeyboardRoute {
         self.dismissed = true;
         self.reshow = false;
         self.raising = None;
+        self.started_at = None;
     }
 
     /// The prompt was sent or cancelled.
     pub fn close(&mut self) {
+        self.fell = false;
         self.focused = None;
         self.dismissed = false;
         self.reshow = false;
         self.raising = None;
+        self.started_at = None;
     }
 
     /// The screen shown changed: the focus follows to its card, which
@@ -267,8 +332,8 @@ mod tests {
         k.started(ms(0));
         assert!(!k.ask_again(true, ms(100)));
         assert!(
-            !k.ask_again(false, ms(500)),
-            "it rose; a later drop is a dismissal"
+            !k.ask_again(false, ms(900)),
+            "it rose; a drop after FALL_WAIT is a dismissal"
         );
         // Dismissed or closed meanwhile, or a physical keyboard: never.
         let mut k = KeyboardRoute::new(false);
@@ -280,6 +345,47 @@ mod tests {
         k.sync(typing, false, OVERVIEW);
         k.started(ms(0));
         assert!(!k.ask_again(false, ms(500)));
+    }
+
+    #[test]
+    fn a_keyboard_that_falls_at_once_is_asked_for_once_more() {
+        // The owner's report of 2026-11-03 17:34 EST: raised, and down
+        // 200 ms later.
+        let typing = Some((Typing::Terminal, ""));
+        let mut k = KeyboardRoute::new(false);
+        k.sync(typing, false, OVERVIEW);
+        k.started(ms(1000));
+        assert!(!k.ask_again(true, ms(1100)), "up");
+        assert!(k.ask_again(false, ms(1300)), "down at once: again");
+        assert!(!k.ask_again(true, ms(1400)));
+        assert!(!k.ask_again(false, ms(1500)), "only once per start");
+        // Down later than FALL_WAIT: the user's, left down.
+        let mut k = KeyboardRoute::new(false);
+        k.sync(typing, false, OVERVIEW);
+        k.started(ms(0));
+        assert!(!k.ask_again(true, ms(100)));
+        assert!(!k.ask_again(true, ms(700)));
+        assert!(!k.ask_again(false, ms(800)));
+        // Android's dismissal at once is a lost show; later, the user's.
+        let mut k = KeyboardRoute::new(false);
+        k.sync(typing, false, OVERVIEW);
+        k.started(ms(0));
+        assert!(k.system_dismissed(ms(200)));
+        assert!(!k.dismissed());
+        assert!(!k.system_dismissed(ms(300)), "once");
+        assert!(k.dismissed());
+        let mut k = KeyboardRoute::new(false);
+        k.sync(typing, false, OVERVIEW);
+        k.started(ms(0));
+        assert!(!k.system_dismissed(ms(900)));
+        assert!(k.dismissed());
+        // Put away by the toggle at once: left down.
+        let mut k = KeyboardRoute::new(false);
+        k.sync(typing, false, OVERVIEW);
+        k.started(ms(0));
+        assert!(!k.ask_again(true, ms(100)));
+        k.dismiss();
+        assert!(!k.ask_again(false, ms(200)));
     }
 
     const OVERVIEW: PromptScreen = PromptScreen::Overview;

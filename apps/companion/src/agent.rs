@@ -6022,11 +6022,11 @@ impl AgentScreen {
         if (out.tap || out.click) && on_bar {
             self.term_asks.push(TermAsk::Keyboard);
         }
+        if out.tap || out.click {
+            log::info!("{}", self.tap_outcome(row, on_bar, out.click, choice));
+        }
         if choice && let Some(row) = row {
-            log::info!("terminal: row {row} tapped while a choice question is open");
             self.term_asks.push(TermAsk::ChoiceTap(row));
-        } else if out.tap && !on_bar {
-            log::debug!("terminal: a tap off the input bar; nothing to do");
         }
         self.term_lines = self.term_lines.saturating_add(out.lines);
         self.term_mouse.extend(out.mouse);
@@ -6036,6 +6036,31 @@ impl AgentScreen {
             self.term_mouse.drain(..excess);
         }
         None
+    }
+
+    /// The log line for a terminal tap at pane row `row` (the owner's
+    /// report of 2026-11-03 17:34 EST): what it did, and with nothing, the
+    /// input rows the frame had.
+    fn tap_outcome(&self, row: Option<u16>, on_bar: bool, click: bool, choice: bool) -> String {
+        let rows = (self.term_state.screen.as_ref()).and_then(flankr_companion::Screen::input_rows);
+        let what = if on_bar && rows.is_some() {
+            "input bar → keyboard".to_string()
+        } else if on_bar {
+            "cursor row → keyboard".to_string()
+        } else if click {
+            "click".to_string()
+        } else if choice && row.is_some() {
+            "choice tap".to_string()
+        } else {
+            match rows {
+                Some(r) => format!("nothing (input rows: {}–{})", r.first, r.last),
+                None => "nothing (input rows: none)".to_string(),
+            }
+        };
+        match row {
+            Some(r) => format!("terminal: tap at row {r}: {what}"),
+            None => format!("terminal: tap off the frame: {what}"),
+        }
     }
 
     /// Carries a fling, or the jump scroll, on by `dt`, and the
@@ -8066,6 +8091,120 @@ mod tests {
             a.take_terminal_asks(),
             [TermAsk::Keyboard],
             "the tap at 8 s only"
+        );
+    }
+
+    #[test]
+    fn the_input_line_takes_its_tap_with_cards_over_the_terminal() {
+        // The owner's report of 2026-11-03 17:34 EST ("input cards are
+        // interfering"): with Gemini's card, the catch-up or a pinned card
+        // under the terminal, a tap on the input bar's row still raises the
+        // keyboard; none of them covers it.
+        use flankr_companion::Speaker;
+        let n = 3;
+        let screens: Vec<(&str, AgentScreen)> = vec![
+            ("nothing", screen(conversation(n), vec![], None)),
+            ("gemini", {
+                let mut a = screen(conversation(n), vec![], None);
+                a.push_turn(Speaker::User, "what is claude doing");
+                a.push_turn(Speaker::Gemini, "Running the tests.");
+                a
+            }),
+            ("catch-up", {
+                let mut a = screen(conversation(n), vec![], None);
+                a.set_catch_up(Some("While you spoke, Claude finished.".into()));
+                a
+            }),
+            (
+                "finished",
+                screen(
+                    conversation(n),
+                    vec![card(CardKind::Finished, n, true)],
+                    Some(0),
+                ),
+            ),
+            (
+                "approval",
+                screen(
+                    conversation(n),
+                    vec![card(CardKind::Approval, n, true)],
+                    Some(0),
+                ),
+            ),
+        ];
+        for (name, mut a) in screens {
+            // A 60-row frame, its input bar three rows near the bottom.
+            let mut st = open_state(true, false);
+            let text: String = (0..60)
+                .map(|i| format!("row {i} {}\n", "x".repeat(34)))
+                .collect();
+            let mut grid = libflankr_term::parse_ansi(&text);
+            grid.input_rows = Some(libflankr_term::RowSpan {
+                first: 49,
+                last: 51,
+            });
+            let mut sc = flankr_companion::Screen::default();
+            assert!(sc.apply(&libflankr_term::Frame::full(1, 1, &grid)));
+            st.screen = Some(sc);
+            a.set_terminal_state((1, true, true, None), st);
+            a.toggle_terminal();
+            let mut list = DrawList::new();
+            a.draw(&mut list, &DrawContext::default(), None);
+            a.take_terminal_asks();
+            let r = a.terminal_rect();
+            let x = r.x + r.w * 0.5;
+            let y = (r.y as i32..(r.y + r.h) as i32)
+                .map(|y| y as f32)
+                .find(|&y| row_at(&a, x, y) == 50)
+                .unwrap_or_else(|| panic!("{name}: row 50 on the screen"));
+            a.touch(1, TouchPhase::Started, x, y, Duration::ZERO);
+            assert_eq!(a.touch(1, TouchPhase::Ended, x, y, MS), None, "{name}");
+            assert_eq!(
+                no_resize(a.take_terminal_asks()),
+                [TermAsk::Arm, TermAsk::Keyboard],
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn each_terminal_tap_is_logged_with_what_it_did() {
+        // The owner's report of 2026-11-03 17:34 EST.
+        let mut a = screen(conversation(3), vec![], None);
+        a.set_terminal_state((1, true, true, None), open_state(true, false));
+        a.toggle_terminal();
+        assert_eq!(
+            a.tap_outcome(Some(4), false, false, false),
+            "terminal: tap at row 4: nothing (input rows: none)"
+        );
+        let bar = Some(libflankr_term::RowSpan {
+            first: 26,
+            last: 28,
+        });
+        a.set_terminal_state(
+            (2, true, true, None),
+            with_input_rows(open_state(true, false), bar),
+        );
+        assert_eq!(
+            a.tap_outcome(Some(27), true, false, false),
+            "terminal: tap at row 27: input bar → keyboard"
+        );
+        assert_eq!(
+            a.tap_outcome(Some(4), false, false, false),
+            "terminal: tap at row 4: nothing (input rows: 26–28)"
+        );
+        assert_eq!(
+            a.tap_outcome(Some(4), false, false, true),
+            "terminal: tap at row 4: choice tap"
+        );
+        assert_eq!(
+            a.tap_outcome(Some(4), false, true, false),
+            "terminal: tap at row 4: click"
+        );
+        a.set_terminal_state((3, true, true, None), open_state(true, false));
+        assert_eq!(
+            a.tap_outcome(Some(29), true, false, false),
+            "terminal: tap at row 29: cursor row → keyboard"
         );
     }
 

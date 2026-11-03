@@ -2271,13 +2271,14 @@ impl App {
             Ime::Stop => ctx.stop_text_input(),
             Ime::Keep => {}
         }
-        // Started and not up after a while: asked for once more (the
-        // owner's report of 2026-11-03 13:05 EST).
+        // Started and not up after a while, or up and down again at once:
+        // asked for once more (the owner's reports of 2026-11-03 13:05 and
+        // 17:34 EST).
         let raised = ctx.keyboard_inset() > 0.0;
         if self.keyboard.ask_again(raised, self.started.elapsed())
             && let Some((_, text)) = typing
         {
-            log::info!("keyboard: not up; asked for again");
+            log::info!("keyboard: not up, or down at once; asked for again");
             ctx.start_text_input(text, &text_options(typing.map(|(t, _)| t)));
         }
     }
@@ -4186,16 +4187,24 @@ impl App {
         }
     }
 
-    /// Whether the soft keyboard is up and types into the terminal: the
-    /// terminal takes the keys, the route focuses it, the soft keyboard was
-    /// not dismissed and no physical keyboard types, and libmorph reports
-    /// its `inset`.
-    fn terminal_keyboard_up(&self, inset: f32) -> bool {
-        self.term_ime.is_some()
-            && self.keyboard.focused() == Some(FocusedPrompt::Terminal)
-            && !self.keyboard.dismissed()
-            && !self.keyboard.physical()
-            && inset > 0.0
+    /// Why the soft keyboard is not up typing into the terminal, for the
+    /// log when it goes down; `None` while it is: the terminal takes the
+    /// keys, the route focuses it, the soft keyboard was not dismissed and
+    /// no physical keyboard types, and libmorph reports its `inset`.
+    fn terminal_keyboard_down(&self, inset: f32) -> Option<&'static str> {
+        if self.term_ime.is_none() {
+            Some("the terminal takes no typing")
+        } else if self.keyboard.focused() != Some(FocusedPrompt::Terminal) {
+            Some("another field has the focus")
+        } else if self.keyboard.dismissed() {
+            Some("dismissed")
+        } else if self.keyboard.physical() {
+            Some("a physical key was typed")
+        } else if inset <= 0.0 {
+            Some("Android reports no keyboard inset")
+        } else {
+            None
+        }
     }
 
     /// Gives the screen what it shows now; it changes only what differs.
@@ -4283,9 +4292,12 @@ impl App {
         // The soft keyboard raised into the terminal: the keys row shows
         // just above it (plan 20261022_03, the L3 amendment of 2026-10-28
         // 10:42 EDT).
-        let keys_row = self.terminal_keyboard_up(ctx.keyboard_inset());
+        let down = self.terminal_keyboard_down(ctx.keyboard_inset());
         if let Some(agent) = &mut self.agent {
-            agent.set_keys_row(keys_row);
+            if let Some(why) = down.filter(|_| agent.terminal_keyboard_up()) {
+                log::info!("terminal: soft keyboard going down: {why}");
+            }
+            agent.set_keys_row(down.is_none());
             agent.set_input_tools(tools);
             agent.set_volume(volume);
             agent.set_layout(layout);
@@ -5154,7 +5166,12 @@ impl MorphApp for App {
                 let keys = self.modify_typed(&keys);
                 self.send_terminal_keys(&keys);
             } else if *event == libmorph::TextInputEvent::Dismissed {
-                self.keyboard.dismiss();
+                // At once after it was raised, a show Android lost: it is
+                // asked for again (the owner's report of 2026-11-03 17:34
+                // EST).
+                if self.keyboard.system_dismissed(self.started.elapsed()) {
+                    log::info!("terminal: soft keyboard dismissed at once; asked for again");
+                }
             }
             return;
         }
