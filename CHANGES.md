@@ -4223,3 +4223,25 @@ Two readings, within the amendments:
 2. The remote's row after `Paired` is found by the daemon's name in the
    next `Remotes`, a row not listed before `Paired` taken before one
    that was, so an older remote of the same name is not the one opened.
+
+## 2026-11-03 13:31 EST — A keyboard on the voice cards; an input card stays when a card arrives; the app stays in its 0.7 series
+
+Plans: the bottom bar plan (20261028_06), by its 2026-11-03 13:27 EST
+amendment, and the unified prompt card plan (20261027_03), by its 13:28
+EST amendment, from the owner's reports of 13:05 and 13:06 EST in
+`docs/OWNER_REPORTS.md`. A new control and behaviour a user would notice
+changing, which FLANKR RULE 1 would make a minor bump (0.8.0); on the
+owner's instruction "keep the same version series", as for 0.7.3 to
+0.7.6, the app is 0.7.7 instead. flankr-companion is 0.8.2, kept in its
+0.8 series the same way.
+
+Two readings, within the amendments:
+
+1. The voice card's keyboard reuses `AgentHit::PromptIme(kind)`, the
+   typed row's toggle hit: on a card taking voice it goes on typed, on a
+   typed card it hides or shows the soft keyboard as before. The expanded
+   overlay of a card taking voice has no keyboard glyph yet; the pinned
+   card has it.
+2. The report's first item, the record on the approval card opening text
+   input, is not in these amendments: whether a tap or a 500 ms hold on a
+   card's record should open the typed reply is put to the owner first.
