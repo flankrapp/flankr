@@ -439,3 +439,18 @@ already paired (paired <date>). Replace it with this device? [y/N]* in the
 same run, with the phone still waiting. `y` replaces the entry, keeping
 its `agents` and `approve` settings; anything else keeps it. `--replace`
 still skips the question.
+
+## 2026-11-03 12:06 EST — Owner: one details screen for a remote; a 1 s hold on its card
+
+Device: Galaxy S23 Ultra (app 0.7.4).
+
+**Report.** "the details screen shown on connection should be the same one
+as shown when holding the remote card/chip, and the holding the remote/card
+chip should only be 1s with no progress bar".
+
+**Seen.** Holding a remote's card in the drawer opens its details after
+2 s, with a bar filling along the card's bottom; the details shown on
+connecting are a different screen.
+
+**In hand.** Handed to a subagent: an amendment to the covering plan, one
+details screen for both, and a 1 s hold with no progress bar.
