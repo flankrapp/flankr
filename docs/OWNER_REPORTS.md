@@ -426,3 +426,16 @@ Re-pairing needs a second `flankr pair --replace` run and a second scan.
 **In hand.** Handed to a subagent: an amendment to the link and companion
 plan (its `--replace` of the 2026-10-22 18:20 EDT amendment), with
 `flankr pair` asking whether to replace the existing entry in the same run.
+
+## 2026-11-03 11:46 EST — Owner: re-pairing a name should ask, done
+
+This follows the entry "re-pairing a name should ask, not need `--replace`
+and a second run".
+
+**Done** (daemon 0.7.3, the link and companion plan's 2026-11-03 11:40 EST
+amendment). After a `yes` to the six words, when the name is already
+paired and `--replace` was not given, `flankr pair` asks *'<name>' is
+already paired (paired <date>). Replace it with this device? [y/N]* in the
+same run, with the phone still waiting. `y` replaces the entry, keeping
+its `agents` and `approve` settings; anything else keeps it. `--replace`
+still skips the question.
