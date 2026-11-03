@@ -190,6 +190,11 @@ struct Args {
     /// build never falls back to the host's own directory.
     #[cfg(test)]
     data: Option<PathBuf>,
+    /// `--remote-loopback` (tests only): a pairing link's loopback
+    /// addresses are the phone itself, as on Android, though the run is on
+    /// the host (plan 20261028_01, the 2026-11-03 00:07 EST amendment).
+    #[cfg(test)]
+    remote_loopback: bool,
 }
 
 /// Whether the client's `event` is handed to the audio. Muted, no
@@ -259,6 +264,8 @@ impl Args {
                 "--camera" => out.camera = true,
                 #[cfg(test)]
                 "--data" => out.data = value().map(PathBuf::from),
+                #[cfg(test)]
+                "--remote-loopback" => out.remote_loopback = true,
                 "--dictation-silence" => {
                     out.dictation_silence = value().and_then(|v| {
                         let silence = parse_silence(&v);
@@ -942,6 +949,25 @@ impl App {
                 self.pairing.paired(&self.remotes);
                 self.note = None;
                 self.screen.invalidate();
+            }
+            // Nothing to retry with the same link, and no device code: the
+            // window says why and what to change (plan 20261028_01, the
+            // 2026-11-03 00:07 EST amendment).
+            Event::PairLocalOnly { server } => {
+                log::warn!("pairing: {server}'s link has only loopback addresses");
+                let line = crate::settings::copy::PAIRING_LOCAL_ONLY.fill(None, &[]);
+                self.pair_refused(line);
+            }
+            Event::PairUnreachable { server, addresses } => {
+                log::warn!("pairing: no address of {server} could be reached");
+                let line = crate::settings::copy::PAIRING_UNREACHABLE.fill(
+                    None,
+                    &[
+                        ("server", &remotes::md_escape(&server)),
+                        ("addresses", &remotes::md_escape(&addresses.join(", "))),
+                    ],
+                );
+                self.pair_refused(line);
             }
             Event::PairFailed(why) => {
                 log::warn!("pairing: refused");
@@ -3620,6 +3646,22 @@ impl App {
 
     /// The pairing window shows its camera: there is one, the window is
     /// shown, and no pairing waits (its words are today's quiet screen).
+    /// A pairing that ended before it could start, with `line` (Markdown)
+    /// as the whole reason and what to do: as [`Event::PairFailed`], but
+    /// without "run flankr pair again".
+    fn pair_refused(&mut self, line: String) {
+        self.pairing.failed();
+        if self.camera_window() {
+            self.scanner.pair_refused(line);
+            self.note = None;
+        } else {
+            self.scanner.handed_over = false;
+            self.scanner.read = false;
+            self.note = Some((line, Role::Warn));
+        }
+        self.screen.invalidate();
+    }
+
     fn camera_window(&self) -> bool {
         self.camera
             && !self.scanner.no_camera
@@ -4538,6 +4580,14 @@ impl MorphApp for App {
                 // The preview cache, where libmobile's share provider will serve
                 // it (plan 20261028_05, step 7).
                 config.cache_dir = ctx.cache_dir().map(std::path::Path::to_path_buf);
+                // On the phone a pairing link's loopback addresses are the
+                // phone itself (plan 20261028_01, the 2026-11-03 00:07 EST
+                // amendment, item 1); a desktop may run beside its daemon.
+                config.loopback_pairing = !cfg!(target_os = "android");
+                #[cfg(test)]
+                if args.remote_loopback {
+                    config.loopback_pairing = false;
+                }
                 // Tests: the app's own (temporary) data directory.
                 #[cfg(test)]
                 {

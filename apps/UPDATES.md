@@ -249,3 +249,10 @@ These changes came before the app had version numbers.
 
 **Fixed**
 - Pairing another remote with **+** in the drawer, opened over a session, shows the pairing screen with its camera and the paste field, instead of a blank screen.
+
+## 0.7.4 — 2026-11-03
+
+**Fixed**
+- A pairing code whose only address is the computer itself (127.0.0.1 or localhost) no longer offers this phone's code to paste, which could never connect. The screen says the code only works on that computer, and to set up Tailscale there or run flankr with `--vpn none --bind 0.0.0.0:7347`, then pair again.
+- A pairing code that lists the computer itself beside other addresses skips the local one and uses the others.
+- When none of a pairing code's addresses can be reached, the screen says *Can't reach* the computer and to check that the phone is on the same Tailscale network or Wi-Fi, instead of offering this phone's code, which would need the same addresses.

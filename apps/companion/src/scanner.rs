@@ -144,6 +144,17 @@ enum Note {
     Unreadable(String),
 }
 
+/// Why the last pairing ended, for the placeholder's line.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Retry {
+    /// It failed: the reason, said with "run **flankr pair** again".
+    Failed(String),
+    /// It was refused before it began: the whole line, Markdown, saying
+    /// what to change (a loopback-only link, an unreachable daemon; plan
+    /// 20261028_01, the 2026-11-03 00:07 EST amendment).
+    Refused(String),
+}
+
 /// Two touches of a pinch.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Pinch {
@@ -172,7 +183,7 @@ pub struct Scanner<Id = ScanId> {
     pub paste: bool,
     /// A pairing failed: the placeholder reads *Tap to scan again* and the
     /// line says why.
-    pub retry: Option<String>,
+    pub retry: Option<Retry>,
     /// A code was handed over and the daemon has not answered: the area
     /// shows "pairing…" and no Tap to scan.
     pub handed_over: bool,
@@ -292,10 +303,18 @@ impl<Id: Copy + PartialEq> Scanner<Id> {
         self.handed_over = false;
         self.read = false;
         self.cancelled = false;
-        self.retry = Some(why.trim().trim_end_matches('.').to_string());
+        self.retry = Some(Retry::Failed(why.trim().trim_end_matches('.').to_string()));
         if !self.live() {
             self.state = State::Idle;
         }
+    }
+
+    /// The pairing of a scanned (or pasted) link was refused before it
+    /// began: the placeholder, with `line` as the whole reason and *Tap to
+    /// scan again*.
+    pub fn pair_refused(&mut self, line: String) {
+        self.pair_failed("");
+        self.retry = Some(Retry::Refused(line));
     }
 
     /// The app resumed: after a refusal, the placeholder is plain again
@@ -542,7 +561,8 @@ impl<Id: Copy + PartialEq> Scanner<Id> {
             } => (text(&copy::PAIRING_CAMERA_DENIED_SETTINGS), Role::Warn),
             State::Failed(error) => (why(&copy::PAIRING_CAMERA_FAILED, error), Role::Warn),
             State::Idle => match &self.retry {
-                Some(reason) => (why(&copy::PAIRING_RETRY, reason), Role::Warn),
+                Some(Retry::Failed(reason)) => (why(&copy::PAIRING_RETRY, reason), Role::Warn),
+                Some(Retry::Refused(line)) => (flow(line), Role::Warn),
                 None => unreachable!("an idle scanner with no retry shows no line"),
             },
         })

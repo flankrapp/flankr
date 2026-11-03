@@ -253,6 +253,29 @@ instead; `pairing_retry` is the line after a failed pairing.
 
 - text: Paste a link
 
+`pairing_local_only` and `pairing_unreachable` take the place of
+`pairing_retry` when a link cannot be paired at all from this phone, with
+no device code offered (plan 20261028_01, the 2026-11-03 00:07 EST
+amendment): every address in it is a loopback one, the computer itself;
+or no address took a connection.
+
+# [Copy] pairing_local_only
+
+- text: |
+    This pairing code only works on the computer that made it: flankr there
+    is reachable only from that computer. Set up Tailscale on it, or run
+    **flankr** there with **--vpn none --bind 0.0.0.0:7347**, then pair
+    again.
+
+# [Copy] pairing_unreachable
+
+- [abc] server: the daemon's name, from the pairing link
+- [abc] addresses: the link's addresses, `host:port`, joined by commas
+- text: |
+    Can't reach {{ [abc] server }} at {{ [abc] addresses }}. Check that this
+    phone is on the same Tailscale network or Wi-Fi as {{ [abc] server }},
+    then pair again.
+
 # [Copy] pairing_retry
 
 - [abc] why: why the pairing failed

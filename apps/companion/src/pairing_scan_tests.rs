@@ -680,3 +680,79 @@ fn pair_another_without_camera_permission_asks_on_every_opening() {
     );
     assert!(forever.shows("Open Settings") && forever.shows("Paste a link"));
 }
+
+/// A link whose every address is a loopback one, scanned where those are
+/// the phone itself (`--remote-loopback`, as on Android): nothing is
+/// connected to and no device code is offered; the window says the code
+/// works only on its own computer, and how to make it reachable (plan
+/// 20261028_01, the 2026-11-03 00:07 EST amendment, item 1).
+#[test]
+fn a_loopback_only_code_is_refused_without_the_device_code() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let url = PairingPayload {
+        server_key: link::generate_keypair().unwrap().public,
+        addresses: vec![format!("127.0.0.1:{port}"), format!("localhost:{port}")],
+        offer: Some(link::generate_offer().unwrap()),
+    }
+    .url()
+    .unwrap();
+    let script = format!("frames 2\ncamera-qr {url}\nframes 20\n");
+    let Some(p) = run(&script, &["--camera", "--remote-loopback"]) else {
+        return;
+    };
+    assert!(
+        p.shows("This pairing code only works on the computer that made it"),
+        "{:?}",
+        p.texts
+    );
+    assert!(p.shows("Tap to scan again"), "{:?}", p.texts);
+    for device_code in [
+        "couldn't be asked directly",
+        "Paste this code",
+        "flankrkey1",
+    ] {
+        assert!(!p.shows(device_code), "{device_code}: {:?}", p.texts);
+    }
+    assert!(!p.shows("Run **flankr pair** again") && !p.shows("Confirm on your Mac"));
+    assert!(
+        matches!(listener.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock),
+        "nothing connected to the loopback address"
+    );
+}
+
+/// A link to an address that takes no connection: no device code, since
+/// it would need the same address; the window says the daemon can't be
+/// reached (the same amendment, item 2).
+#[test]
+fn an_unreachable_code_says_so_without_the_device_code() {
+    let closed = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().to_string()
+    };
+    let url = PairingPayload {
+        server_key: link::generate_keypair().unwrap().public,
+        addresses: vec![closed.clone()],
+        offer: Some(link::generate_offer().unwrap()),
+    }
+    .url()
+    .unwrap();
+    let script = format!("frames 2\ncamera-qr {url}\nframes 20\n");
+    let Some(p) = run(&script, &["--camera"]) else {
+        return;
+    };
+    assert!(
+        p.shows(&format!("Can't reach 127.0.0.1 at {closed}")),
+        "{:?}",
+        p.texts
+    );
+    assert!(p.shows("Tap to scan again"), "{:?}", p.texts);
+    for device_code in [
+        "couldn't be asked directly",
+        "Paste this code",
+        "flankrkey1",
+    ] {
+        assert!(!p.shows(device_code), "{device_code}: {:?}", p.texts);
+    }
+}
