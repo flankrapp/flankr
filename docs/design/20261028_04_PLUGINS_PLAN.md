@@ -1127,3 +1127,20 @@ replaced.
    `Plugin::tools`, the registry checks, the general agent's tool routing
    and gating (one flankr commit), then the planning plugin 0.1.2 (its
    own commit with its tag). No protocol or companion change.
+
+## Amendment — 2026-11-03 12:13 EST: a plugin card's Unpin on a 500 ms press
+
+On the owner's explicit instruction (Rule 1.5), 2026-11-03, given through
+the lead: "you can remove the progress bar for that in the app, it's bad
+ux, the time should be adjusted instead of it's too long"; then "yes, tell
+it to make them all 500ms", answering the lead's proposal that every
+press-and-hold in the app fire at 500 ms with no progress bar.
+
+This replaces decision 3.7, item 1's "a long press (2 s, as the drawer's
+remote cards) offers **Unpin**": a press on a pinned plugin card held
+500 ms or longer before its release offers **Unpin**, as the drawer's
+remote cards now open their details at 500 ms (the session drawer plan's
+amendment of this time). The app's one hold time is used
+(`controls/hold.rs`, `HOLD` = 500 ms); a release before 500 ms is the
+card's tap, as before. The card draws no progress bar, as it drew none
+before. The rest of decision 3.7 stands.

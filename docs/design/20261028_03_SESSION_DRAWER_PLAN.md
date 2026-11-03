@@ -987,3 +987,42 @@ decision 30's *Connecting to &lt;nickname&gt;…* row, and the overview's
    by pane: a pane still listed is updated in place, keeping its card's or
    row's place; a new pane is added in the list's order; a pane no longer
    listed is removed. The list is never cleared to empty in between.
+
+## Amendment — 2026-11-03 12:13 EST: a 500 ms press on a remote card, with no progress bar; it opens the same details as a finished pairing
+
+On the owner's explicit instruction (Rule 1.5), 2026-11-03, in four
+sentences given through the lead: "the details screen shown on connection
+should be the same one as shown when holding the remote card/chip, and the
+holding the remote/card chip should only be 1s with no progress bar";
+"the key and fingerprint expands should work the same in both modals";
+"you can remove the progress bar for that in the app, it's bad ux, the
+time should be adjusted instead of it's too long"; and "yes, tell it to
+make them all 500ms", answering the lead's proposal that every
+press-and-hold in the app fire at 500 ms with no progress bar.
+
+This replaces the 2026-10-28 19:12 EDT amendment's "only a **2 s press** on
+any card opens that remote's details modal" and its "The press shows
+feedback while held", as far as that feedback was a bar filling along the
+card's bottom over the 2 s. It also replaces the 1 s of the owner's first
+sentence above, which the last sentence superseded before it was built.
+The rest of the 19:12 EDT amendment stands: a tap on a card switches to
+it, a tap on the active card does nothing, and a press that becomes a hold
+never switches.
+
+1. **500 ms.** A press on any remote card held 500 ms, unmoved (the 10 pt
+   slop stands), opens that remote's details at once, before the release;
+   the release is then no tap. A release before 500 ms is a tap. The
+   drawer's own 2 s `HOLD` goes; it uses the app's one hold time
+   (`controls/hold.rs`, `HOLD` = 500 ms, the bottom bar plan's amendment of
+   this time).
+2. **No progress bar.** Nothing fills along the card's bottom. While the
+   finger is held the card shows the press colour (`theme().band` in
+   place of `theme().card`), as it did, until the release, a move past the
+   slop or the hold; the card is drawn again only when that starts or ends,
+   not on every frame of the press.
+3. **One details screen.** The details the press opens are the settings
+   plan's remote details modal (its 2026-10-28 17:46, 17:56 and 17:57 EDT
+   entries). A finished pairing's **Details** opens the same modal, through
+   the same call, for the remote just paired (the pairing QR scan plan's
+   amendment of this time), so the screen shown after connecting and the
+   one this press opens are one screen, with one Fingerprint row.

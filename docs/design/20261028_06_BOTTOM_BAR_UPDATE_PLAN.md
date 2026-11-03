@@ -867,3 +867,70 @@ proposed. This adds to decision 8's row:
    as its first part, and the gate is armed (`Event::Arm`); with the
    microphone setting off, or with no typed prompt open, nothing changes.
    The crate takes the next free patch number at its commit.
+
+## Amendment — 2026-11-03 12:13 EST: every hold at 500 ms with no progress bar; the volume menu's Stop
+
+On the owner's explicit instruction (Rule 1.5), 2026-11-03, given through
+the lead: "you can remove the progress bar for that in the app, it's bad
+ux, the time should be adjusted instead of it's too long"; then "yes, tell
+it to make them all 500ms", answering the lead's proposal: every
+press-and-hold in the app fires at 500 ms with no progress bar, and the
+volume button's two timed steps go, its menu gaining a **Stop** item while
+something is being said.
+
+This replaces:
+
+- decision 7's "Timing and feedback, as the drawer's remote card":
+  `HOLD` = 2 s, the 3 pt bar inset 6 pt that fills over the 2 s in
+  `theme().fg`, and "A release before 2 s is a tap"; and in its
+  `controls/hold.rs` sketch, `HOLD` = 2 s and `Hold::progress`;
+- finding 5's "the hold feedback is the drawer's progress bar alone" (its
+  "with no press colour" stands);
+- decision 8's "a **2 s press** (decision 7's hold and feedback, the bar
+  in `theme().accent` along the target's bottom)" on the +;
+- step 4's "the progress bar drawn";
+- the 2026-10-29 00:26 EDT amendment's item 2 ("The menu opens on a 2 s
+  hold, with the same filling bar");
+- the 00:43 EDT amendment's item 1 (while speaking, the 1 s hold that
+  stops, its bar, and "holding on to 2 s still opens the menu, after the
+  stop at 1 s"), its item 2's "a 2 s hold opens the menu", and its item 4's
+  "the 1 s stop and mute both send it";
+- the 00:52 EDT amendment's item 3's "(a 2 s hold)" and "the
+  skip-and-stop of the 00:43 EDT amendment";
+- the 14:43 EDT amendment's item 2's "The progress bar fills over the
+  500 ms", its item 3 (volume and the +, the 2 s hold and volume's 1 s
+  stop), and its item 4 (`HOLD` = 2 s beside `CARD_HOLD` = 500 ms).
+
+The taps, the slop, what each hold opens, and everything else in those
+texts stand.
+
+1. **One hold, 500 ms.** The centre and right buttons (500 ms already),
+   the volume button and the input rows' + all fire at 500 ms from
+   touch-down, unmoved, at once and before the release; the release is
+   then no tap, and a release before 500 ms is the control's tap.
+   `controls/hold.rs` has one constant, `HOLD` = 500 ms (`CARD_HOLD` and
+   `STOP_HOLD` go, and `hold_for`), and `SLOP` = 10 pt; `Hold` has no
+   progress and no earlier step (`progress`, `with_early`, `has_early` and
+   `fire_early` go). The drawer's remote cards and the overview's plugin
+   cards use the same `HOLD` (the session drawer and plugins plans'
+   amendments of this time).
+2. **No progress bar.** Nothing is drawn along a held control's bottom, on
+   the overview or in the agent view; `controls::hold::bar` and the
+   screens' `set_hold` go. As finding 5 says, the buttons do not press in:
+   what the hold opens, at 500 ms, is its feedback.
+3. **The volume button.** A tap does what it does now: while something is
+   being said and the app is not muted, it skips the current reply
+   (`Input::Skip`); otherwise it mutes or unmutes. Whether it skips is
+   judged when the finger lifts. A 500 ms hold opens the volume menu,
+   muted or not, speaking or not.
+4. **The volume menu's Stop.** While something is being said and the app
+   is not muted (as for Skip, the app's `speaking`, from the client's
+   `Input::Speaking`), the menu has **Stop** at its top (`app/stop`),
+   then a separator, then the two Speak items; Skip stays last, after its
+   separator. Stop sends `Input::StopReading`: the current reply ends and
+   the queue is cleared, and mute stays off, so new replies are read as
+   they come, as the 1 s stop did. The menu follows speaking while open,
+   as it does now, so Stop goes when nothing is being said. Muting still
+   sends `Input::StopReading` as before.
+5. **The app's version** is 0.7.5, a patch, on the owner's instruction to
+   keep the same version series (FLANKR RULE 1 would make these a minor).

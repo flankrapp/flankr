@@ -760,3 +760,55 @@ rest stands.
 10. **Version.** A fix: app 0.7.1 → 0.7.2 with its `apps/UPDATES.md`
     entry, tag `flankr-app-v0.7.2` (FLANKR RULE 1). The client and the
     daemon do not change.
+
+## Amendment — 2026-11-03 12:13 EST: a finished pairing's Details is the remote's details modal; the waiting modal's fingerprint is the same Fingerprint row
+
+On the owner's explicit instruction (Rule 1.5), 2026-11-03, given through
+the lead: "the details screen shown on connection should be the same one
+as shown when holding the remote card/chip, and the holding the
+remote/card chip should only be 1s with no progress bar"; then "the key and
+fingerprint expands should work the same in both modals". (The hold's
+time and bar are the session drawer plan's amendment of this time.)
+
+This replaces, for the pairing window: the finished pairing's inline
+Details as built under this plan and recorded in `CHANGES.md`'s
+2026-10-28 addendum on the pairing feedback (its item 4, "Paired with
+<name>" with Details and Done, Details toggling *Hide details* and showing
+"<server> at <host:port>", the six fingerprint words and the 64-hex
+fingerprint above the row); and, in the waiting modal's Details (decision
+9's "Details keeps the fingerprint words, `host:port`, the time left and
+the device-code fallback", and that addendum's item 3), the fingerprint's
+labels and lines (*Daemon fingerprint* with the six words at 20 pt, and
+*BLAKE2s-256 fingerprint* with the hex), shown open whenever Details is.
+The rest stands: the waiting modal's six words, its Details and Cancel,
+and Details' `host:port`, time left and device-code fallback; and the
+finished pairing's check, title, summary line and Done.
+
+1. **A finished pairing's Details is the remote's details modal.** On
+   "Paired with <name>" (or "Already paired with <name>"), **Details**
+   opens the settings plan's remote details modal (nickname, status,
+   hostname, when paired, the Fingerprint row, Close and Remove) for the
+   remote just paired, through the same call the drawer's remote card
+   uses (the session drawer plan's amendment of this time): one screen,
+   one code path. Tapping it ends the finished pairing as **Done** does,
+   then opens the modal; closing the modal goes where Done goes: back to
+   Settings in the add mode, otherwise to the screen under it. The row's
+   Details shows once the remote's row is known (its id, from `Paired`'s
+   next `Remotes` or `RemoteUpdated`); until then the row has Done alone.
+   The inline Details lines and *Hide details* on a finished pairing go.
+2. **The waiting modal's fingerprint is the same Fingerprint row.** The
+   six words' modal keeps its Details button (it is not the remote's
+   details: the remote is not paired yet, has no nickname, and cannot be
+   removed). In its Details, under the "<server> at <host:port>" line, the
+   fingerprint is the details modal's Fingerprint row (the same
+   `Disclosure` control, its label *Fingerprint* and its chevron),
+   collapsed each time Details opens; a tap on it expands it to exactly
+   the details modal's expanded section (the same Markdown, built by the
+   same function: *Six words, as **flankr pair** prints them*, the six
+   fingerprint words, *BLAKE2s-256 of its key*, and the 64 hex digits in
+   four lines of four groups in the mono face, all at 15 pt), and a
+   second tap collapses it. The time left and the device-code fallback
+   follow it, as before. The copy `pairing_fingerprint` and
+   `pairing_fingerprint_full` go.
+3. **The app's version** is 0.7.5, a patch, on the owner's instruction to
+   keep the same version series.
