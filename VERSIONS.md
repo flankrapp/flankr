@@ -1143,3 +1143,24 @@ carries `Event`, takes it without a bump of its own.
   (`Event::PairingWords` with `fallback`); it gives
   `Event::PairUnreachable`. The fallback stays for a request an address
   took but no daemon answered, and for a version 2 link.
+
+## flankr-companion 0.8.2 — 2026-11-03 (the commit tagged `flankr-companion-v0.8.2`)
+
+Plan 20261028_06 (the bottom bar), its 2026-11-03 13:27 EST amendment, and
+plan 20261027_03 (the prompt card), its 13:28 EST amendment, for the
+owner's reports of 13:05 and 13:06 EST. Behaviour a caller can observe
+changes, which Rule 5.4 would make 0.9.0; kept in the 0.8 series on the
+owner's instruction to keep the same version series, as for 0.8.1.
+
+- **Added:** `Input::ContinueByKeyboard`: the voice prompt open (the
+  message or Gemini's), still collecting, goes on in keyboard mode with
+  what was said as its text and no silence countdown; nothing with no
+  voice prompt open.
+- **Changed (behaviour):** a turn's end no longer closes Gemini's prompt
+  (`Event::Dictation` off); the prompt open then stays with its text.
+- **Changed (behaviour):** a typed prompt is never submitted by the
+  dictation silence, and an utterance added to it does not arm the gate
+  again (no `Event::Arm`).
+- **Changed (behaviour):** `Input::StartDictation` while a typed message
+  is open and collecting goes on by voice with its text kept, as
+  `Input::ContinueByVoice` does, in place of starting an empty message.
