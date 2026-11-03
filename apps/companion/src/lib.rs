@@ -437,6 +437,15 @@ pub struct App {
     /// Android 12 toast), the paste reads it (decision 11.4).
     attach_wanted: Option<PromptKind>,
     paste_wanted: Option<PromptKind>,
+    /// The same for the terminal's + (plan 20261103_01, the 2026-11-03
+    /// 15:38 EST amendment, item 3): its menu to open, open, and a Paste
+    /// text into the terminal to do.
+    term_attach_wanted: bool,
+    term_attach_menu: bool,
+    term_paste_wanted: bool,
+    /// ⛶ hid flankr's UI over the terminal (the same amendment, item 2):
+    /// held across sessions, not saved across restarts.
+    ui_hidden: bool,
     /// The conversation with Gemini, as each screen's card is given it
     /// (plan 20261027_03, decision 1: each screen owns its own card).
     gemini_turns: Vec<(Speaker, String)>,
@@ -1571,7 +1580,7 @@ impl App {
     /// registered icons, then the ⋮, dim while its menu would be empty
     /// (the plan's 22:03 EDT amendment).
     fn title_bar(&self) -> Option<(Bar, PluginScreen)> {
-        if self.pairing.adding {
+        if self.pairing.adding || self.chrome_hidden() {
             return None;
         }
         let (kebab, screen) = if let Some(s) = &self.settings_screen {
@@ -1755,6 +1764,55 @@ impl App {
             let text = ctx.clipboard_text();
             self.paste_text(kind, text);
         }
+        if std::mem::take(&mut self.term_attach_wanted) {
+            let has_text = ctx.clipboard_has_text();
+            self.show_terminal_attach_menu(has_text);
+        }
+        if std::mem::take(&mut self.term_paste_wanted) {
+            match ctx.clipboard_text().filter(|t| !t.is_empty()) {
+                Some(text) => {
+                    log::info!("terminal paste: {} bytes", text.len());
+                    self.send(Input::TerminalPasteText(text));
+                }
+                None => log::info!("terminal paste: no clipboard text"),
+            }
+        }
+    }
+
+    /// The terminal's + menu, anchored to the +: Paste text, enabled while
+    /// the clipboard holds text (`has_text`); Attach image… with the
+    /// daemon's `images` once the app can pick one.
+    fn show_terminal_attach_menu(&mut self, has_text: bool) {
+        let Some(anchor) = self
+            .agent
+            .as_ref()
+            .and_then(|a| a.rect_of(AgentHit::TermKey(TermKey::Attach)))
+        else {
+            return;
+        };
+        self.popup = None;
+        self.volume_menu = false;
+        self.agent_menu = false;
+        self.attach_menu = None;
+        self.term_attach_menu = true;
+        let images = self.input_tools().images;
+        self.menu.open(anchor, menu::attach_items(images, has_text));
+    }
+
+    /// flankr's UI is hidden by ⛶ over the agent view's terminal.
+    fn chrome_hidden(&self) -> bool {
+        self.settings_screen.is_none()
+            && self.agent.as_ref().is_some_and(AgentScreen::chrome_hidden)
+    }
+
+    /// ⛶ tapped, or Back while hidden: the UI hidden or shown, for every
+    /// session from now on.
+    fn set_ui_hidden(&mut self, on: bool) {
+        self.ui_hidden = on;
+        if let Some(agent) = &mut self.agent {
+            agent.set_ui_hidden(on);
+        }
+        self.screen.invalidate();
     }
 
     /// `kind`'s + menu, anchored to its +, Paste text enabled while the
@@ -1899,6 +1957,7 @@ impl App {
             }
             Choice::Stop => self.stop_reading(),
             // Read on the touch's context, right after this.
+            Choice::PasteText if self.term_attach_menu => self.term_paste_wanted = true,
             Choice::PasteText => self.paste_wanted = self.attach_menu,
             // The media chooser (the binary files plan; libmorph's media
             // request): not built yet, and the item shows only with the
@@ -1978,6 +2037,7 @@ impl App {
         self.send(Input::OpenAgent(pane_id.clone()));
         let mut agent = AgentScreen::new();
         agent.name = name;
+        agent.set_ui_hidden(self.ui_hidden);
         agent.set_scrollbar(self.settings.scrollbar);
         agent.set_sound(self.settings.sound);
         agent.set_volume(self.volume());
@@ -3117,9 +3177,10 @@ impl App {
             // soft keyboard into the terminal; its + takes no taps until
             // the terminal paste is built (step 8).
             AgentHit::TermKey(TermKey::Ime) => self.toggle_terminal_keyboard(),
-            AgentHit::TermKey(TermKey::Attach) => {
-                log::info!("terminal +: not built yet");
-            }
+            // Its + opens its menu (the 2026-11-03 15:38 EST amendment,
+            // item 3); ⛶ hides or shows flankr's UI (item 2).
+            AgentHit::TermKey(TermKey::Attach) => self.term_attach_wanted = true,
+            AgentHit::TermKey(TermKey::Hide) => self.set_ui_hidden(!self.ui_hidden),
             AgentHit::TermKey(key) => {
                 if let Some(keys) = self.agent.as_mut().and_then(|a| a.press_term_key(key)) {
                     self.send_terminal_keys(&keys);
@@ -3701,7 +3762,7 @@ impl App {
         // prompt card's overlay is over it.
         let s = self.scale();
         let overlay = self.settings_screen.is_none() && self.prompts().overlay().is_shown();
-        if !overlay {
+        if !overlay && !self.chrome_hidden() {
             match self
                 .session_cards
                 .touch(touch.id, touch.phase, touch.x, touch.y, s)
@@ -4006,6 +4067,12 @@ impl App {
                 return KeyStatus::Unhandled;
             };
             self.send(Input::SetText(text));
+            return KeyStatus::Handled;
+        }
+        // Back shows flankr's UI that ⛶ hid, before anything else of the
+        // view's (the 2026-11-03 15:38 EST amendment, item 2).
+        if key == Key::Back && self.chrome_hidden() {
+            self.set_ui_hidden(false);
             return KeyStatus::Handled;
         }
         // The system Back returns from a subagent to its parent (the
@@ -4666,6 +4733,10 @@ impl MorphApp for App {
             attach_menu: None,
             attach_wanted: None,
             paste_wanted: None,
+            term_attach_wanted: false,
+            term_attach_menu: false,
+            term_paste_wanted: false,
+            ui_hidden: false,
             gemini_turns: Vec::new(),
             turn_busy: None,
             turn_running: false,
@@ -4882,6 +4953,7 @@ impl MorphApp for App {
         if !self.menu.is_open() {
             self.volume_menu = false;
             self.attach_menu = None;
+            self.term_attach_menu = false;
             self.agent_menu = false;
         } else if self.volume_menu {
             let items = self.volume_items();
@@ -4899,6 +4971,8 @@ impl MorphApp for App {
         if let Some(screen) = &mut self.settings_screen {
             screen.tick(dt);
         } else if let Some(agent) = &mut self.agent {
+            // The dot on ⛶ while something waits behind the hidden UI.
+            agent.set_waiting(self.session_cards.cards().len());
             agent.tick(dt);
         } else {
             self.overview.tick(dt);
@@ -5173,7 +5247,7 @@ impl MorphApp for App {
         // The card goes over what the screen drew, unless a prompt card's
         // overlay is over it (each screen draws its own, plan 20261027_03).
         let overlay = shown != Shown::Settings && self.prompts().overlay().is_shown();
-        if drew && shown != Shown::Pairing && !overlay {
+        if drew && shown != Shown::Pairing && !overlay && !self.chrome_hidden() {
             let s = ctx.scale_factor();
             self.session_cards.draw(&mut self.list, &draw, s);
         }

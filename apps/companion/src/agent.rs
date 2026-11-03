@@ -2787,6 +2787,13 @@ pub struct AgentScreen {
     /// The terminal shows in place of the transcript (plan 20261027_07,
     /// step 5); the transcript keeps its place under it.
     term_shown: bool,
+    /// ⛶ hid flankr's UI over the terminal (plan 20261103_01, the
+    /// 2026-11-03 15:38 EST amendment, item 2): as the app holds it.
+    ui_hidden: bool,
+    /// While hidden: what was waiting when it was hidden (the baseline),
+    /// and whether more has arrived since (the dot on ⛶).
+    hidden_seen: Option<usize>,
+    hidden_dot: bool,
     /// The session has only the terminal (a shell; plan 20261022_03, the
     /// L3 amendment of 2026-10-28 00:47 EDT): it shows at once, there is
     /// no terminal/list glyph, and nothing is sent to an agent.
@@ -3708,14 +3715,18 @@ impl AgentScreen {
         }
     }
 
-    /// The keys row's + and toggle (decision 9): on a phone, the + drawn
-    /// dim until the terminal paste is built (step 8), the toggle hiding
-    /// or showing the soft keyboard into the terminal.
+    /// The keys rows' +, ⛶ and toggle (decision 9): on a phone, the +
+    /// live, opening its menu (the 2026-11-03 15:38 EST amendment, item 3,
+    /// in place of "drawn dim until the terminal paste is built"); ⛶ as
+    /// the UI is; the toggle hiding or showing the soft keyboard into the
+    /// terminal.
     pub fn keys_tools(&self) -> keys_row::Tools {
         let mobile = self.tools.mobile;
         keys_row::Tools {
-            attach: mobile.then_some(false),
+            attach: mobile.then_some(true),
             ime: mobile.then_some((self.keys_row, !self.tools.physical)),
+            hidden: self.chrome_hidden(),
+            dot: self.hidden_dot,
         }
     }
 
@@ -4548,7 +4559,7 @@ impl AgentScreen {
                 color,
             }
         });
-        Frame {
+        let frame = Frame {
             header,
             viewport: Rect::new(0.0, view_top, l.w, (view_bottom - view_top).max(0.0)),
             full_viewport_h: (full_bottom - view_top).max(0.0),
@@ -4563,6 +4574,89 @@ impl AgentScreen {
             prompt_bottom,
             keys_row,
             keys,
+        };
+        if self.chrome_hidden() {
+            self.hide_chrome(frame)
+        } else {
+            frame
+        }
+    }
+
+    /// `frame` with flankr's UI hidden (plan 20261103_01, the 2026-11-03
+    /// 15:38 EST amendment, item 2): no header but the status bar's inset,
+    /// no bar, pinned card, suggestions or typed input; the terminal from
+    /// the top inset to the keys rows.
+    fn hide_chrome(&self, frame: Frame) -> Frame {
+        let l = &self.layout;
+        let s = self.scale();
+        let bottom = frame.keys_row.map_or(l.h - l.bottom, |r| r.y);
+        let view_h = (bottom - l.top - JUMP_H * s).max(0.0);
+        Frame {
+            header: Rect::new(0.0, 0.0, l.w, l.top),
+            viewport: Rect::new(0.0, l.top, l.w, view_h),
+            full_viewport_h: view_h,
+            pin: None,
+            buttons: Vec::new(),
+            menu: Rect::default(),
+            back: Rect::default(),
+            suggestions: Vec::new(),
+            typed: None,
+            jump: None,
+            cross_bottom: l.top,
+            prompt_bottom: bottom,
+            ..frame
+        }
+    }
+
+    /// flankr's UI is hidden now: ⛶ is on, and the terminal shows with
+    /// its keys rows (without them there is no ⛶ to show it again).
+    pub fn chrome_hidden(&self) -> bool {
+        self.ui_hidden && self.term_shown && self.keys_row_shown()
+    }
+
+    /// ⛶'s state, as the app holds it across sessions.
+    pub fn set_ui_hidden(&mut self, on: bool) {
+        if on == self.ui_hidden {
+            return;
+        }
+        log::info!(
+            "terminal: flankr's UI {}",
+            if on { "hidden" } else { "shown" }
+        );
+        self.ui_hidden = on;
+        self.hidden_seen = None;
+        self.hidden_dot = false;
+        self.settle();
+    }
+
+    pub fn ui_hidden(&self) -> bool {
+        self.ui_hidden
+    }
+
+    /// How many approvals and questions wait now, this session's and the
+    /// other sessions' cards (`others`): while the UI is hidden, more than
+    /// when it was hidden puts the dot on ⛶.
+    pub fn set_waiting(&mut self, others: usize) {
+        if !self.chrome_hidden() {
+            self.hidden_seen = None;
+            if self.hidden_dot {
+                self.hidden_dot = false;
+                self.dirty = true;
+            }
+            return;
+        }
+        let own = self
+            .pinned_card()
+            .is_some_and(|c| c.live && matches!(c.kind, CardKind::Question | CardKind::Approval));
+        let now = others + usize::from(own);
+        let seen = *self.hidden_seen.get_or_insert(now);
+        if now > seen && !self.hidden_dot {
+            log::info!("terminal: something waits behind the hidden UI");
+            self.hidden_dot = true;
+            self.dirty = true;
+        }
+        if now < seen {
+            self.hidden_seen = Some(now);
         }
     }
 
@@ -5129,8 +5223,10 @@ impl AgentScreen {
         for b in &self.frame.buttons {
             self.hits.push((b.hit, b.rect));
         }
-        self.hits.push((AgentHit::Menu, self.frame.menu));
-        self.hits.push((AgentHit::Back, self.frame.back));
+        if !self.chrome_hidden() {
+            self.hits.push((AgentHit::Menu, self.frame.menu));
+            self.hits.push((AgentHit::Back, self.frame.back));
+        }
         for g in &self.frame.suggestions {
             self.hits.push((g.hit, g.rect));
         }
@@ -5234,7 +5330,10 @@ impl AgentScreen {
         if self.ended_button().is_some_and(|r| r.contains([x, y])) {
             return Some(AgentHit::Overview);
         }
-        self.prompts.hit(x, y).or_else(|| {
+        let prompts = (!self.chrome_hidden())
+            .then(|| self.prompts.hit(x, y))
+            .flatten();
+        prompts.or_else(|| {
             self.hits
                 .iter()
                 .find(|(_, rect)| rect.contains([x, y]))
@@ -5353,9 +5452,9 @@ impl AgentScreen {
         // them; the bottom row stays live under the overlay.
         let on_row = self.frame.buttons.iter().any(|b| b.rect.contains([x, y]))
             || self.frame.keys_row.is_some_and(|r| r.contains([x, y]));
-        if !(phase == TouchPhase::Started && on_row)
-            && let Some(touched) = self.prompts.touch(id, phase, x, y, now)
-        {
+        // Hidden by ⛶, the cards take nothing.
+        let to_cards = !(self.chrome_hidden() || phase == TouchPhase::Started && on_row);
+        if to_cards && let Some(touched) = self.prompts.touch(id, phase, x, y, now) {
             self.dirty = true;
             return match touched {
                 PromptTouched::Held => None,
@@ -6191,6 +6290,14 @@ impl AgentScreen {
         // The header: the agent and its status, over a band in its
         // session's colour.
         fill(list, self.frame.header, theme().header, 0.0);
+        // Hidden by ⛶: the keys rows only.
+        if self.chrome_hidden() {
+            if let Some(row) = self.frame.keys_row {
+                let tools = self.keys_tools();
+                keys_row::draw(list, ctx, row, &self.frame.keys, self.term_latch, tools, s);
+            }
+            return;
+        }
         if let Some((band, colour)) = self.session_band() {
             fill(list, band, colour, 0.0);
         }
@@ -8548,22 +8655,95 @@ mod tests {
         assert!(resizes(&asks).iter().any(|&(_, r)| r == down), "{asks:?}");
     }
 
+    /// Plan 20261103_01, the 2026-11-03 15:38 EST amendment, item 2: ⛶
+    /// hides the header, the bar, the pinned card and the cards; the
+    /// terminal takes the height above the keys rows, the pane is resized
+    /// to it, and showing the UI again gives it all back.
+    #[test]
+    fn hide_gives_the_terminal_the_full_height_above_the_keys_rows() {
+        let (mut a, l) = keys_row_screen();
+        let s = l.scale;
+        let before = a.terminal_rect();
+        let header = a.frame().header;
+        assert!(!a.frame().buttons.is_empty() && header.h > l.top);
+        a.set_ui_hidden(true);
+        assert!(a.chrome_hidden());
+        let row = a.frame().keys_row.expect("the keys rows stay");
+        assert_eq!(row.h, KEYS_H * s);
+        let rect = a.terminal_rect();
+        assert_eq!(rect.y, l.top, "from the status bar's inset");
+        assert!((rect.y + rect.h - row.y).abs() < 0.01, "to the keys rows");
+        assert!(rect.h > before.h);
+        assert!(a.frame().buttons.is_empty() && a.frame().pin.is_none());
+        assert!(a.frame().suggestions.is_empty() && a.frame().typed.is_none());
+        assert_eq!(a.frame().header.h, l.top);
+        // No ⋮ or back to tap where the header was.
+        let at = [header.x + 10.0, header.y + header.h - 4.0];
+        assert!(
+            !a.hits
+                .iter()
+                .any(|(h, r)| matches!(h, AgentHit::Menu | AgentHit::Back) && r.contains(at))
+        );
+        // The pane takes the new fit, its last row above the keys rows.
+        let (_, rows) = a.terminal_fit().unwrap();
+        let lh = term_h(a.terminal_view().pt() * s);
+        assert!(rect.y + rows as f32 * lh <= row.y + 0.01);
+        let asks = a.take_terminal_asks();
+        assert!(resizes(&asks).iter().any(|&(_, r)| r == rows), "{asks:?}");
+        // ⛶ shows it highlighted.
+        assert!(a.keys_tools().hidden && !a.keys_tools().dot);
+        // Shown again: as before.
+        a.set_ui_hidden(false);
+        assert!(!a.chrome_hidden());
+        assert_eq!(a.terminal_rect(), before);
+        assert!(!a.frame().buttons.is_empty());
+        // Over the transcript, or without the keys rows, nothing is hidden
+        // (there would be no ⛶ to show it again).
+        a.set_ui_hidden(true);
+        a.toggle_terminal();
+        assert!(a.ui_hidden() && !a.chrome_hidden());
+        assert!(!a.frame().buttons.is_empty());
+    }
+
+    /// The same amendment, item 2: while hidden, an approval or a question
+    /// that arrives draws a dot on ⛶; showing the UI clears it.
+    #[test]
+    fn something_arriving_behind_the_hidden_ui_dots_hide() {
+        let (mut a, _) = keys_row_screen();
+        a.set_waiting(1);
+        assert!(!a.keys_tools().dot, "not hidden: no dot");
+        a.set_ui_hidden(true);
+        // What waited when it was hidden: no dot.
+        a.set_waiting(1);
+        assert!(!a.keys_tools().dot);
+        a.set_waiting(0);
+        assert!(!a.keys_tools().dot);
+        // One arrives.
+        a.dirty = false;
+        a.set_waiting(1);
+        assert!(a.keys_tools().dot && a.dirty);
+        // It stays until the UI shows.
+        a.set_waiting(0);
+        assert!(a.keys_tools().dot);
+        a.set_ui_hidden(false);
+        a.set_waiting(1);
+        assert!(!a.keys_tools().dot);
+    }
+
     #[test]
     fn the_keys_rows_taps_are_its_keys_not_the_terminals() {
         let (mut a, _) = keys_row_screen();
-        // A phone: the + inert (no terminal paste yet), the toggle live.
+        // A phone: the + live (its menu; the 2026-11-03 15:38 EST
+        // amendment, item 3, in place of "inert"), ⛶ and the toggle live.
         a.set_input_tools(crate::prompt::InputTools {
             mobile: true,
             ..Default::default()
         });
         a.take_terminal_asks();
         let keys = a.frame().keys.clone();
+        assert_eq!(keys.len(), TermKey::ALL.len());
         for (i, (key, r)) in keys.iter().enumerate() {
             let t = Duration::from_secs(i as u64);
-            if *key == TermKey::Attach {
-                assert_eq!(tap(&mut a, 10 + i as u64, *r, t), None, "the + is inert");
-                continue;
-            }
             assert_eq!(
                 tap(&mut a, 10 + i as u64, *r, t),
                 Some(AgentHit::TermKey(*key))

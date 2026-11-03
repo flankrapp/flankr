@@ -26,6 +26,21 @@
 //! (no `images` namespace, no clipboard call, no `terminal.paste`); the
 //! column stays, so the keys do not shift. On the desktop neither is drawn
 //! and their columns are empty (11.2, 11.3).
+//!
+//! Plan 20261103_01, the 2026-11-03 15:38 EST amendment, item 1, replaces
+//! the one row of nine columns: two rows of [`ROW_H`] (40 pt) each, of
+//! eight equal columns,
+//!
+//! ```text
+//!  +    ESC  TAB  ⏎ Enter      ↑         ⛶
+//!  CTRL ALT            ←   ↓   →         ⌨
+//! ```
+//!
+//! **⏎ Enter** spanning columns 4 and 5 and sending `enter` with the
+//! latched modifiers; **⛶** ([`TermKey::Hide`]) hiding or showing flankr's
+//! UI (item 2), with a dot while something arrived behind it; **⌨** the
+//! soft keyboard's toggle. Each key is a whole row high. The + is live
+//! on a phone (item 3): it opens its menu, Paste text into the terminal.
 
 use libcontrols::{DrawContext, Rect};
 use libmsdf::drawlist::DrawList;
@@ -34,28 +49,31 @@ use super::{fill, line_h};
 use crate::controls::square_button::{ime_glyph, plus_glyph};
 use crate::theme::theme;
 
-/// The row's height, in points.
-pub const KEYS_H: f32 = 44.0;
-/// The row's columns: the +, four keys, the d-pad's three and the
-/// keyboard toggle.
-const COLUMNS: usize = 9;
+/// One row's height, in points.
+pub const ROW_H: f32 = 40.0;
+/// Both rows' height, in points: what the keys take off the terminal.
+pub const KEYS_H: f32 = 2.0 * ROW_H;
+/// The rows' columns.
+const COLUMNS: usize = 8;
 /// Space around and between the keys, in points.
 const GAP: f32 = 4.0;
-/// Space between the d-pad's halves, in points.
-const HALF_GAP: f32 = 2.0;
 /// The labels' type size, in points.
 const LABEL_PT: f32 = 14.0;
 
-/// A key of the row.
+/// A key of the rows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TermKey {
     /// The + (no token; not sent).
     Attach,
     Esc,
     Tab,
+    /// ⏎ Enter.
+    Enter,
+    Up,
+    /// ⛶, flankr's UI hidden or shown (no token; not sent).
+    Hide,
     Ctrl,
     Alt,
-    Up,
     Left,
     Down,
     Right,
@@ -64,14 +82,16 @@ pub enum TermKey {
 }
 
 impl TermKey {
-    /// Every key, in the row's order (the d-pad's top half first).
-    pub const ALL: [TermKey; 10] = [
+    /// Every key, in the rows' order: the top row, then the bottom.
+    pub const ALL: [TermKey; 12] = [
         TermKey::Attach,
         TermKey::Esc,
         TermKey::Tab,
+        TermKey::Enter,
+        TermKey::Up,
+        TermKey::Hide,
         TermKey::Ctrl,
         TermKey::Alt,
-        TermKey::Up,
         TermKey::Left,
         TermKey::Down,
         TermKey::Right,
@@ -79,17 +99,20 @@ impl TermKey {
     ];
 
     /// The `terminal.input` token it sends, unmodified; `None` for the
-    /// modifiers, which latch, and the + and the toggle, which send
+    /// modifiers, which latch, and the +, ⛶ and the toggle, which send
     /// nothing.
     pub fn token(self) -> Option<&'static str> {
         Some(match self {
             TermKey::Esc => "escape",
             TermKey::Tab => "tab",
+            TermKey::Enter => "enter",
             TermKey::Up => "up",
             TermKey::Down => "down",
             TermKey::Left => "left",
             TermKey::Right => "right",
-            TermKey::Ctrl | TermKey::Alt | TermKey::Attach | TermKey::Ime => return None,
+            TermKey::Ctrl | TermKey::Alt | TermKey::Attach | TermKey::Hide | TermKey::Ime => {
+                return None;
+            }
         })
     }
 
@@ -100,6 +123,7 @@ impl TermKey {
             TermKey::Tab => "TAB",
             TermKey::Ctrl => "CTRL",
             TermKey::Alt => "ALT",
+            TermKey::Enter => "\u{23ce} Enter",
             _ => return None,
         })
     }
@@ -222,6 +246,10 @@ pub struct Tools {
     /// keyboard is up (hide) and whether it is live (no physical
     /// keyboard).
     pub ime: Option<(bool, bool)>,
+    /// ⛶: flankr's UI is hidden, and something arrived behind it (the
+    /// dot).
+    pub hidden: bool,
+    pub dot: bool,
 }
 
 impl Tools {
@@ -236,31 +264,32 @@ impl Tools {
     }
 }
 
-/// The keys' rects in `row`, at scale `s`, in [`TermKey::ALL`]'s order.
-/// Their tap areas are [`tap_area`]s; a tap elsewhere in the row (the
-/// d-pad's empty top corners) does nothing.
+/// The keys' rects in `row` (both rows, [`KEYS_H`] high), at scale `s`,
+/// in [`TermKey::ALL`]'s order. Their tap areas are [`tap_area`]s; a tap
+/// on an empty column does nothing.
 pub fn lay_out(row: Rect, s: f32) -> Vec<(TermKey, Rect)> {
     let gap = GAP * s;
     let cw = (row.w - gap * (COLUMNS as f32 + 1.0)) / COLUMNS as f32;
     let col_x = |i: usize| row.x + gap + i as f32 * (cw + gap);
+    let h = ((row.h - 3.0 * gap) / 2.0).max(0.0);
     let top = row.y + gap;
-    let h = (row.h - 2.0 * gap).max(0.0);
-    let half = ((h - HALF_GAP * s) / 2.0).max(0.0);
-    let low = top + half + HALF_GAP * s;
-    let whole = |i| Rect::new(col_x(i), top, cw, h);
-    let upper = |i| Rect::new(col_x(i), top, cw, half);
-    let lower = |i| Rect::new(col_x(i), low, cw, half);
+    let low = top + h + gap;
+    let at = |y: f32, i: usize, span: usize| {
+        Rect::new(col_x(i), y, cw * span as f32 + gap * (span as f32 - 1.0), h)
+    };
     vec![
-        (TermKey::Attach, whole(0)),
-        (TermKey::Esc, whole(1)),
-        (TermKey::Tab, whole(2)),
-        (TermKey::Ctrl, whole(3)),
-        (TermKey::Alt, whole(4)),
-        (TermKey::Up, upper(6)),
-        (TermKey::Left, lower(5)),
-        (TermKey::Down, lower(6)),
-        (TermKey::Right, lower(7)),
-        (TermKey::Ime, whole(8)),
+        (TermKey::Attach, at(top, 0, 1)),
+        (TermKey::Esc, at(top, 1, 1)),
+        (TermKey::Tab, at(top, 2, 1)),
+        (TermKey::Enter, at(top, 3, 2)),
+        (TermKey::Up, at(top, 5, 1)),
+        (TermKey::Hide, at(top, 7, 1)),
+        (TermKey::Ctrl, at(low, 0, 1)),
+        (TermKey::Alt, at(low, 1, 1)),
+        (TermKey::Left, at(low, 4, 1)),
+        (TermKey::Down, at(low, 5, 1)),
+        (TermKey::Right, at(low, 6, 1)),
+        (TermKey::Ime, at(low, 7, 1)),
     ]
 }
 
@@ -268,8 +297,7 @@ pub fn lay_out(row: Rect, s: f32) -> Vec<(TermKey, Rect)> {
 /// area.
 pub fn tap_area(rect: Rect, s: f32) -> Rect {
     let g = GAP * s * 0.5;
-    let v = HALF_GAP * s * 0.5;
-    Rect::new(rect.x - g, rect.y - v, rect.w + 2.0 * g, rect.h + 2.0 * v)
+    Rect::new(rect.x - g, rect.y - g, rect.w + 2.0 * g, rect.h + 2.0 * g)
 }
 
 /// The row in `row`: its band, the keys, CTRL and ALT highlighted while
@@ -298,6 +326,21 @@ pub fn draw(
                 }
                 continue;
             }
+            TermKey::Hide => {
+                let (bg, fg) = if tools.hidden {
+                    (theme().accent, theme().bg)
+                } else {
+                    (theme().card, theme().fg)
+                };
+                fill(list, r, bg, 6.0 * s);
+                corners_glyph(list, r, s, fg);
+                if tools.dot {
+                    let d = 8.0 * s;
+                    let dot = Rect::new(r.x + r.w - d - 3.0 * s, r.y + 3.0 * s, d, d);
+                    fill(list, dot, theme().red, d * 0.5);
+                }
+                continue;
+            }
             TermKey::Ime => {
                 if let Some((up, live)) = tools.ime {
                     let start = list.instances.len();
@@ -319,13 +362,31 @@ pub fn draw(
         };
         fill(list, r, bg, 6.0 * s);
         if let Some(label) = key.label() {
-            // Roboto's capitals are about 0.62 em wide.
-            let w = label.chars().count() as f32 * px * 0.62;
+            // Roboto's capitals are about 0.62 em wide, its lower case
+            // about 0.5.
+            let w: f32 = label
+                .chars()
+                .map(|c| if c.is_lowercase() { 0.5 } else { 0.62 })
+                .sum::<f32>()
+                * px;
             let pos = [r.x + (r.w - w) * 0.5, r.y + (r.h - line_h(px)) * 0.5];
             ctx.draw_text(list, label, pos, px, fg);
         } else if let Some(d) = key.arrow() {
             arrow(list, r, d, s, fg);
         }
+    }
+}
+
+/// ⛶, four corners of a square centred in `r`, as strokes.
+fn corners_glyph(list: &mut DrawList, r: Rect, s: f32, color: [f32; 4]) {
+    let c = [r.x + r.w * 0.5, r.y + r.h * 0.5];
+    let half = (r.h.min(r.w) * 0.28).max(3.0 * s);
+    let arm = half * 0.55;
+    let t = 1.8 * s;
+    for (sx, sy) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+        let corner = [c[0] + sx * half, c[1] + sy * half];
+        list.push_line(corner, [corner[0] - sx * arm, corner[1]], t, color);
+        list.push_line(corner, [corner[0], corner[1] - sy * arm], t, color);
     }
 }
 
@@ -362,15 +423,23 @@ mod tests {
                 None,
                 Some("escape"),
                 Some("tab"),
-                None,
-                None,
+                Some("enter"),
                 Some("up"),
+                None,
+                None,
+                None,
                 Some("left"),
                 Some("down"),
                 Some("right"),
                 None
             ]
         );
+        // Enter with the latch, as the others.
+        let ctrl = Latch {
+            ctrl: true,
+            alt: false,
+        };
+        assert_eq!(ctrl.apply(TermKey::Enter.token().unwrap()), "ctrl+enter");
         let mut l = Latch::default();
         assert!(l.is_empty());
         l.toggle(TermKey::Ctrl);
@@ -447,70 +516,116 @@ mod tests {
     }
 
     #[test]
-    fn the_row_is_nine_columns_with_the_plus_and_the_toggle_at_its_ends() {
-        // A 411 pt phone at scale 1: (411 - 10 × 4) / 9, about 41 pt.
-        let row = Rect::new(0.0, 0.0, 411.0, KEYS_H);
+    fn two_rows_of_eight_columns_as_the_amendment_draws_them() {
+        // A 411 pt phone at scale 1: (411 - 9 × 4) / 8, about 47 pt.
+        let row = Rect::new(0.0, 100.0, 411.0, KEYS_H);
         let keys = lay_out(row, 1.0);
-        let rect = |k| keys.iter().find(|(key, _)| *key == k).unwrap().1;
-        let w = (411.0 - 10.0 * 4.0) / 9.0;
-        assert!((rect(TermKey::Esc).w - w).abs() < 0.01 && (w - 41.2).abs() < 0.1);
-        assert_eq!(rect(TermKey::Attach).x, 4.0);
-        assert!((rect(TermKey::Ime).x + w - (411.0 - 4.0)).abs() < 0.01);
-        assert!(rect(TermKey::Attach).x < rect(TermKey::Esc).x);
-        assert!(rect(TermKey::Right).x < rect(TermKey::Ime).x);
-        // Neither sends; the + is inert while neither of its actions works.
-        assert_eq!(TermKey::Attach.token(), None);
-        assert_eq!(TermKey::Ime.token(), None);
-        let phone = Tools {
-            attach: Some(false),
-            ime: Some((true, true)),
-        };
-        assert!(!phone.takes(TermKey::Attach) && phone.takes(TermKey::Ime));
-        assert!(!Tools::default().takes(TermKey::Ime), "the desktop");
-        assert!(phone.takes(TermKey::Esc));
-    }
-
-    #[test]
-    fn the_dpad_is_in_two_halves_and_every_key_one_column() {
-        let s = 2.0;
-        let row = Rect::new(0.0, 1000.0, 1080.0, KEYS_H * s);
-        let keys = lay_out(row, s);
         assert_eq!(
             keys.iter().map(|k| k.0).collect::<Vec<_>>(),
             TermKey::ALL.to_vec()
         );
         let rect = |k| keys.iter().find(|(key, _)| *key == k).unwrap().1;
-        // Left to right, inside the row.
+        let w = (411.0 - 9.0 * 4.0) / 8.0;
+        let col = |k| ((rect(k).x - 4.0) / (w + 4.0)).round() as usize + 1;
+        let top = |k: TermKey| rect(k).y < row.y + ROW_H;
+        // The top row: + ESC TAB ⏎Enter(4–5) ↑(6) _ ⛶.
+        for (k, c) in [
+            (TermKey::Attach, 1),
+            (TermKey::Esc, 2),
+            (TermKey::Tab, 3),
+            (TermKey::Enter, 4),
+            (TermKey::Up, 6),
+            (TermKey::Hide, 8),
+        ] {
+            assert_eq!(col(k), c, "{k:?}");
+            assert!(top(k), "{k:?} on top");
+        }
+        // The bottom row: CTRL ALT _ _ ← ↓ → ⌨.
+        for (k, c) in [
+            (TermKey::Ctrl, 1),
+            (TermKey::Alt, 2),
+            (TermKey::Left, 5),
+            (TermKey::Down, 6),
+            (TermKey::Right, 7),
+            (TermKey::Ime, 8),
+        ] {
+            assert_eq!(col(k), c, "{k:?}");
+            assert!(!top(k), "{k:?} below");
+        }
+        // Enter spans two columns; the rest one; all a row high, less gaps.
+        assert!((rect(TermKey::Enter).w - (2.0 * w + 4.0)).abs() < 0.01);
         for (k, r) in &keys {
+            if *k != TermKey::Enter {
+                assert!((r.w - w).abs() < 0.01, "{k:?}");
+            }
+            assert!((r.h - (KEYS_H - 12.0) / 2.0).abs() < 0.01, "{k:?}");
             assert!(r.x >= row.x && r.x + r.w <= row.x + row.w + 0.01, "{k:?}");
             assert!(r.y >= row.y && r.y + r.h <= row.y + row.h + 0.01, "{k:?}");
         }
-        let attach = rect(TermKey::Attach);
-        let (esc, tab, ctrl, alt) = (
-            rect(TermKey::Esc),
-            rect(TermKey::Tab),
-            rect(TermKey::Ctrl),
-            rect(TermKey::Alt),
-        );
-        assert!(attach.x < esc.x && esc.x < tab.x && tab.x < ctrl.x && ctrl.x < alt.x);
-        let (up, left, down, right) = (
-            rect(TermKey::Up),
-            rect(TermKey::Left),
-            rect(TermKey::Down),
-            rect(TermKey::Right),
-        );
-        assert!(alt.x + alt.w < left.x);
-        // ↑ over ↓, ← ↓ → in one line below it, each half the height.
-        assert_eq!(up.x, down.x);
-        assert!(up.y + up.h <= down.y);
-        assert_eq!(left.y, down.y);
-        assert_eq!(down.y, right.y);
-        assert!(left.x < down.x && down.x < right.x);
-        assert!(up.h < esc.h / 2.0 && up.h > esc.h / 2.0 - 4.0 * s);
-        // Every key the same width.
-        for (_, r) in &keys {
-            assert!((r.w - esc.w).abs() < 0.01);
+        // ↑ over ↓; ⛶ over ⌨.
+        assert_eq!(rect(TermKey::Up).x, rect(TermKey::Down).x);
+        assert_eq!(rect(TermKey::Hide).x, rect(TermKey::Ime).x);
+        assert!((rect(TermKey::Ime).x + w - (411.0 - 4.0)).abs() < 0.01);
+        // No two keys' tap areas overlap.
+        for (i, (a, ra)) in keys.iter().enumerate() {
+            for (b, rb) in &keys[i + 1..] {
+                let (ta, tb) = (tap_area(*ra, 1.0), tap_area(*rb, 1.0));
+                let apart = ta.x + ta.w <= tb.x + 0.01
+                    || tb.x + tb.w <= ta.x + 0.01
+                    || ta.y + ta.h <= tb.y + 0.01
+                    || tb.y + tb.h <= ta.y + 0.01;
+                assert!(apart, "{a:?} and {b:?}");
+            }
         }
+        // None of the +, ⛶ and the toggle sends; the + is inert while
+        // neither of its actions works; ⛶ always takes taps.
+        for k in [TermKey::Attach, TermKey::Hide, TermKey::Ime] {
+            assert_eq!(k.token(), None);
+        }
+        let phone = Tools {
+            attach: Some(false),
+            ime: Some((true, true)),
+            ..Tools::default()
+        };
+        assert!(!phone.takes(TermKey::Attach) && phone.takes(TermKey::Ime));
+        assert!(!Tools::default().takes(TermKey::Ime), "the desktop");
+        assert!(phone.takes(TermKey::Esc) && Tools::default().takes(TermKey::Hide));
+    }
+
+    #[test]
+    fn hide_is_highlighted_while_hidden_and_shows_a_dot() {
+        let s = 2.0;
+        let row = Rect::new(0.0, 0.0, 1080.0, KEYS_H * s);
+        let keys = lay_out(row, s);
+        let hide = keys.iter().find(|k| k.0 == TermKey::Hide).unwrap().1;
+        let ctx = DrawContext::default();
+        let fills = |tools| {
+            let mut list = DrawList::new();
+            draw(&mut list, &ctx, row, &keys, Latch::default(), tools, s);
+            list.instances
+                .iter()
+                .filter(|i| {
+                    i.position[0] >= hide.x
+                        && i.position[0] < hide.x + hide.w
+                        && i.position[1] >= hide.y
+                        && i.position[1] < hide.y + hide.h
+                })
+                .map(|i| i.color)
+                .collect::<Vec<_>>()
+        };
+        assert!(!fills(Tools::default()).contains(&theme().accent));
+        let hidden = Tools {
+            hidden: true,
+            ..Tools::default()
+        };
+        assert!(fills(hidden).contains(&theme().accent));
+        assert!(!fills(hidden).contains(&theme().red));
+        let dot = Tools {
+            hidden: true,
+            dot: true,
+            ..Tools::default()
+        };
+        assert!(fills(dot).contains(&theme().red));
     }
 
     #[test]

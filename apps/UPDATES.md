@@ -337,3 +337,12 @@ These changes came before the app had version numbers.
 
 **Changed**
 - The terminal's cursor is an underline that blinks, whatever shape the program asks for. It shows again at once when it moves or you type, and stays hidden when the program hides it or the desktop has the tab.
+
+## 0.7.15 — 2026-11-03
+
+**Added**
+- The terminal's keys are two rows: + ESC TAB, a wide ⏎ Enter, ↑ and ⛶ on top; CTRL ALT, ← ↓ → and the keyboard key below. Enter sends Enter into the terminal, with CTRL or ALT if you latched them.
+- ⛶ hides everything of flankr's over the terminal (the header, the bottom buttons and the cards), so the terminal takes the whole screen above the keys. Tap ⛶ again or press Back to bring them back. It stays that way as you move between sessions until you change it, and starts shown after a restart. While hidden, a dot on ⛶ says an approval or a question came in.
+
+**Fixed**
+- The + in the terminal's keys works: it opens a menu with Paste text, which types the clipboard's text into the terminal.
