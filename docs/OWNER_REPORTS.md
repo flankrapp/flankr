@@ -528,3 +528,22 @@ follow.
 
 **In hand.** Handed to a subagent to find why the keyboard does not
 always rise after the hold, and fix it.
+
+## 2026-11-03 13:06 EST — Owner: the record on the approval card; a new card dismissed input; a keyboard on voice cards
+
+This corrects the entry "a hold on record should open text input": the
+record button meant there is the approval card's, not the bottom bar's
+(asked which, the owner answered).
+
+**Report.** "the record on the approval card. also a new card dismissed my
+input, and voice input cards should have the keyboard icon to switch to
+text input".
+
+1. **The approval card's record button** should open text input.
+2. **A card that arrived dismissed the input being typed.**
+3. **Voice input cards** should carry the keyboard icon, to switch to
+   typing.
+
+**In hand.** All three handed to a subagent; the bottom bar's hold in the
+earlier entry is not the report, though its keyboard not rising at
+12:59:22 is passed on with it.
