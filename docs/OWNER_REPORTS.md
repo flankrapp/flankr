@@ -562,3 +562,18 @@ the reply typed".
 dismisses a typed card, and the voice cards carry the keyboard glyph.
 
 **In hand.** The hold, given to the same subagent, for app 0.7.9.
+
+## 2026-11-03 14:35 EST — Owner: More and Less always at the card's bottom right
+
+Device: Galaxy S23 Ultra (app 0.7.10).
+
+**Report.** "Small thing, but the more or less link should always be at
+the bottom right of the card".
+
+**Seen.** The pinned cards' *More* and *Less* (the harness protocol plan's
+L3 amendment of 2026-10-30 15:20 EDT, item 1) and the summary cards' dim
+"more" are placed by each card's own layout, so they do not always sit at
+its bottom right.
+
+**In hand.** Handed to a subagent: *More*, *Less* and "more" at the bottom
+right of every card that shows them, folded or open.
