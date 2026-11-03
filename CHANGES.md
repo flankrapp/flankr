@@ -4321,3 +4321,53 @@ One reading, within the amendment: the drag handed back is the
 conversation's vertical scroll, with the press's start as its start; a
 pinned card's sideways drag that would take the card away is not started
 from it.
+
+## 2026-11-03 14:49 EST — Workspace groups in the drawer, steps 1 and 2; every version in its series
+
+Plan: the workspace groups in the drawer plan (20261103_02), steps 1 and
+2, with its 13:05 EST amendment. On the owner's instruction "keep the
+same version series", all patches: libflankr_proto 0.5.12 (the two
+appended `AgentInfo` fields), flankr 0.7.6 (no `UPDATES.md` entry:
+nothing changes for the person running `flankr`, as decision 5 says),
+flankr-companion 0.8.4 (a new `Input` variant, an appended `RemoteInfo`
+field, new `RemoteState` methods, all additive) and app 0.7.11. Step 3,
+the check on the S23, is the owner's.
+
+Departures and readings, within the plan:
+
+1. Decision 3.3 (finding 2 of the plan did not say it): the drawer's
+   rows already show `<tab> · <summary>`, never the name the daemon
+   builds, so a row under a header has no workspace part to drop and
+   keeps today's text. Only a row with no header (a workspace of one,
+   the 13:05 EST amendment, item 3) changes: its lead is the full name
+   ("Claude in libmorph, tab -mb") in place of the tab.
+2. Decision 2 says *Drawer sessions* goes "in the general group under
+   *At startup*": *At startup* is in the Voice section, so the row is
+   there, right under it. `StartupRow` became `SelectRow<T>`, generic
+   over a `Choice` trait, with `StartupRow` and `DrawerSessionsRow` as
+   its two aliases.
+3. Decision 3.4, the collapsed state: the remote's `state.redb` is held
+   by the client's net thread, so flankr-companion keeps it (a `drawer`
+   table, `collapsed`: the workspace ids as a JSON list), set with
+   `Input::SetCollapsedWorkspaces { id, workspaces }` and given back in
+   `RemoteInfo::collapsed_workspaces`. Keyed by remote and workspace id;
+   ids of workspaces no longer listed are kept, so a workspace that comes
+   back is as it was. The local socket (no remote) keeps none.
+4. Decision 3.1, the header: its count is in the rows' 20 pt indicator
+   column, right-aligned; the waiting dot is the remote card's (7 pt, the
+   accent colour), centred in that column, with the count moved before
+   it. Its text is the first `workspace_label` among its rows, else the
+   first `project`, else *Workspace &lt;n&gt;*, else *Workspace* (new
+   copy `drawer_workspace_number` and `drawer_workspace`). Sessions with
+   no `workspace_id` (an older daemon) are listed after the groups, with
+   no header, as today. No chevron or other collapsed mark beyond the
+   hidden rows and the count, as the plan has none.
+5. Decision 3.5: "starts waiting" is judged between lists: the first
+   list after a start or a remote switch only sets what waits, so a group
+   collapsed over a session that was already waiting stays collapsed with
+   its dot. A group also expands when a session in it becomes the one
+   open in the agent view; one collapsed after that stays collapsed. An
+   expansion is kept like a tap's.
+6. herdr 0.9.5's `session.snapshot` gives each workspace `number` and
+   `label` (its display name, never empty there); an empty or missing
+   label gives no `workspace_label`.
