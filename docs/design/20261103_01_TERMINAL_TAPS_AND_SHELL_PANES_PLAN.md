@@ -193,3 +193,30 @@ they touch, and opens terminal view on any pane.
    pick it (its number, or arrows and Enter)? This draft picks it.
 3. Decision 7: should shell panes sit in the drawer's session list, or in a
    separate collapsed *Shells* group?
+
+## Amendment — 2026-11-03 12:34 EST: the open questions answered; typing on by default, any pane without an agent
+
+On the owner's instruction, 2026-11-03: "should it just be any tab which
+doesn't have a detected agent? the default for terminals should be allow
+input"; then, offered the items below, "yes, write the amendment and push".
+This answers section 6 and replaces decision 6 and the parts of decisions 7
+and 9 and step 2 that name `[terminal] shells`:
+
+1. **Any pane without a detected agent takes typing** in terminal view,
+   whatever program runs in it. `[terminal] shells` is not added.
+2. **Terminal input is on by default.** `[terminal] input` defaults to
+   true, and each `[[agents]]` entry's `terminal_input` defaults to true;
+   either set to false turns typing off where it applies. A principal that
+   may approve and the arm are still needed; signal keys still need the
+   agent's `terminal_signals` (a pane with no agent allows them).
+3. **An agent with no `[[agents]]` entry** opens in terminal view and
+   takes typing too, under the defaults of item 2; the `[[agents]]`
+   filter still governs the voice tools and the general agent, not terminal
+   view.
+4. **A tap on a choice option picks it** (open question 2, as decision 5.2
+   says).
+5. **Shell panes sit in the drawer's session list**, below the active
+   remote's agent sessions (open question 3, as decision 7 says).
+6. **Versions.** The daemon's `UPDATES.md` entry says terminal typing is
+   now on by default and how to turn it off (`[terminal] input = false`),
+   in place of naming `[terminal] shells`.
