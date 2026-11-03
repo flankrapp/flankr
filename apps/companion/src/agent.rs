@@ -59,6 +59,8 @@ pub mod choice_card;
 mod input_box;
 pub mod keys_row;
 pub mod link_spans;
+#[cfg(test)]
+mod more_link_tests;
 mod notice_line;
 pub mod subagent_link;
 pub mod subagent_menu;
@@ -721,12 +723,22 @@ pub fn shrunk_line(card: &AgentCard, context: Option<&str>) -> String {
     }
 }
 
+/// The gap between a card's action row and the *More*, *Less* or "more"
+/// line under it: so that the link's tap area, from the row's bottom to
+/// the card's, is 40 pt tall and shares no pixel with the buttons.
+fn link_gap(s: f32) -> f32 {
+    let pad = CARD_PAD * s;
+    (40.0 * s - line_h(TOOL_PT * s) - pad).max(pad * 0.5)
+}
+
 /// The *More* or *Less* link (`label`) at the bottom right of a card laid
 /// out by [`card_block`] at `(x, y)`, `w` wide and `h` tall, into `flow`
-/// from the marks `from` (its rows, fills and buttons before it): a
-/// summary card's own dim "more" becomes it; otherwise a line for it is
-/// added under the text, above the buttons. The card's new height, and
-/// the link's tap area.
+/// from the marks `from` (its rows, fills and buttons before it), on the
+/// card's last line (plan 20261022_03, the L3 amendment of 2026-11-03
+/// 14:49 EST): a summary card's own dim "more" becomes it; otherwise a
+/// line for it is added under the text, or under the action row when the
+/// card has one. The replay button beside "spoken" is not that row. The
+/// card's new height, and the link's tap area.
 #[allow(clippy::too_many_arguments)]
 fn add_more_link(
     flow: &mut Flow,
@@ -743,12 +755,23 @@ fn add_more_link(
     let lh = line_h(px);
     let right = x + w - pad;
     let lw = label.len() as f32 * px * 0.5;
-    // A tap area of at least 40 pt square, within the card.
-    let area = |row_y: f32, h: f32| {
-        let tw = (lw + 2.0 * pad).max(40.0 * s);
-        let th = (lh + 8.0 * s).max(40.0 * s);
-        let top = (row_y + lh * 0.5 - th * 0.5).max(y);
-        Rect::new(right - tw + pad * 0.5, top, tw, th.min(y + h - top))
+    let tw = (lw + 2.0 * pad).max(40.0 * s);
+    let left = right - tw + pad * 0.5;
+    // The bottom of the action row, if the card has one.
+    let actions_bottom = flow.buttons[from.2..]
+        .iter()
+        .filter(|b| !matches!(b.hit, AgentHit::Replay(_)))
+        .map(|b| b.rect.y + b.rect.h)
+        .reduce(f32::max);
+    // A tap area of at least 40 pt square, within the card: under the
+    // action row, from its bottom to the card's; else around the line.
+    let area = |row_y: f32, h: f32| match actions_bottom {
+        Some(top) => Rect::new(left, top, tw, y + h - top),
+        None => {
+            let th = (lh + 8.0 * s).max(40.0 * s);
+            let top = (row_y + lh * 0.5 - th * 0.5).max(y);
+            Rect::new(left, top, tw, th.min(y + h - top))
+        }
     };
     if let Some(r) = flow.rows[from.0..]
         .iter_mut()
@@ -760,18 +783,16 @@ fn add_more_link(
         let row_y = r.y;
         return (h, area(row_y, h));
     }
-    // Under the text: above the buttons, or above the bottom padding.
-    let row_y = flow.buttons[from.2..]
-        .iter()
-        .map(|b| b.rect.y - pad * 0.5)
-        .reduce(f32::min)
-        .unwrap_or(y + h - pad);
-    for b in &mut flow.buttons[from.2..] {
-        b.rect.y += lh;
-    }
+    let (row_y, new_h) = match actions_bottom {
+        Some(bottom) => {
+            let row_y = bottom + link_gap(s);
+            (row_y, row_y + lh + pad - y)
+        }
+        None => (y + h - pad, h + lh),
+    };
     for f in &mut flow.fills[from.1..] {
         if (f.rect.h - h).abs() < 0.01 {
-            f.rect.h += lh;
+            f.rect.h = new_h;
         }
     }
     flow.rows.push(Row {
@@ -782,7 +803,7 @@ fn add_more_link(
         color: theme().link,
         mono: false,
     });
-    (h + lh, area(row_y, h + lh))
+    (new_h, area(row_y, new_h))
 }
 
 /// How an answer's style is drawn (plan 20261027_06, decision 3): its
@@ -1344,11 +1365,16 @@ fn card_block(
     let lines_h: f32 = parts.iter().map(part_h).sum();
     let acts = actions(card);
     let mut h = pad + line_h(title_px) + 4.0 * s + lines_h + pad;
-    if cut {
-        h += line_h(label_px);
-    }
     if !acts.is_empty() {
         h += ACTION_H * s + pad * 0.5;
+    }
+    if cut {
+        // "more" on the card's last line: under the action row, when
+        // there is one, with its gap.
+        h += line_h(label_px);
+        if !acts.is_empty() {
+            h += link_gap(s);
+        }
     }
     let panel = Rect::new(x, y, w, h);
     flow.fills.push(Fill {
@@ -1410,20 +1436,26 @@ fn card_block(
         });
         ty += line_h(text_px);
     }
+    link_spans::mark(flow, first_text, &card.links, targets);
     if cut {
-        // "more", small and dim, at the card's bottom right.
+        // "more", small and dim, at the card's bottom right (plan
+        // 20261022_03, the L3 amendment of 2026-11-03 14:49 EST): its last
+        // line, under the action row when there is one.
         let w_more = MORE.len() as f32 * label_px * 0.5;
+        let more_y = if acts.is_empty() {
+            ty
+        } else {
+            ty + pad * 0.5 + ACTION_H * s + link_gap(s)
+        };
         flow.rows.push(Row {
             text: MORE.to_string(),
             x: inner_x + inner_w - w_more,
-            y: ty,
+            y: more_y,
             px: label_px,
             color: theme().dim,
             mono: false,
         });
-        ty += line_h(label_px);
     }
-    link_spans::mark(flow, first_text, &card.links, targets);
     if !acts.is_empty() {
         let gap = 12.0 * s;
         let n = acts.len().max(2) as f32;
@@ -8858,6 +8890,92 @@ mod tests {
         let pin = a.frame().pin.as_ref().unwrap().rect;
         assert_ne!(a.hit(pin.x + 40.0, pin.y + 40.0), Some(AgentHit::Expand));
         assert!(a.frame().pin.as_ref().unwrap().more.is_none(), "no More");
+    }
+
+    /// *More* and *Less* on a pinned card with buttons, tapped as a finger
+    /// does (touch down and up at its middle): it opens, then folds (plan
+    /// 20261022_03, the L3 amendment of 2026-11-03 14:49 EST). Every part
+    /// of the link's tap area is the link's, none of the buttons'.
+    #[test]
+    fn more_and_less_on_a_card_with_buttons_open_and_fold_it() {
+        let long = "Should I go on with the next step, which moves the readers onto the record trait, \
+                    changes every test fixture's loader, and then rebuilds the daemon and the app \
+                    before the check on the phone, or stop here so you can look first?";
+        let answers = vec![
+            Answer {
+                label: "Go on".into(),
+                style: "approve".into(),
+                sends: Some("go on".into()),
+                starts: None,
+                command: false,
+                answers: true,
+            },
+            Answer {
+                label: "Stop".into(),
+                style: "deny".into(),
+                sends: Some("stop".into()),
+                starts: None,
+                command: false,
+                answers: true,
+            },
+        ];
+        let base = |kind| AgentCard {
+            text: long.to_string(),
+            ..card(kind, 12, true)
+        };
+        let cards = [
+            ("approval", base(CardKind::Approval)),
+            ("yes/no", base(CardKind::Question)),
+            (
+                "answers",
+                AgentCard {
+                    answers,
+                    ..base(CardKind::Question)
+                },
+            ),
+            (
+                "plan",
+                AgentCard {
+                    about_plan: true,
+                    ..base(CardKind::Question)
+                },
+            ),
+        ];
+        for (what, c) in cards {
+            let mut a = screen(conversation(3), vec![c], Some(0));
+            let pin = |a: &AgentScreen| a.frame().pin.clone().unwrap();
+            let folded = pin(&a);
+            let more = folded.more.unwrap_or_else(|| panic!("{what}: More"));
+            for b in &folded.flow.buttons {
+                assert!(
+                    b.rect.y + b.rect.h <= more.y + 0.01,
+                    "{what}: {:?} shares pixels with More",
+                    b.hit
+                );
+            }
+            for (x, y) in [
+                (more.x + 1.0, more.y + 1.0),
+                (more.x + more.w - 1.0, more.y + more.h - 1.0),
+            ] {
+                assert_eq!(a.hit(x, y), Some(AgentHit::Expand), "{what} at {x},{y}");
+            }
+            assert_eq!(tap(&mut a, 1, more, MS), Some(AgentHit::Expand), "{what}");
+            a.toggle_expand();
+            let open = pin(&a);
+            assert!(open.rect.h > folded.rect.h, "{what}: opened");
+            assert!(open.flow.rows.iter().any(|r| r.text == PIN_LESS));
+            let less = open.more.unwrap_or_else(|| panic!("{what}: Less"));
+            assert_eq!(tap(&mut a, 2, less, MS * 3), Some(AgentHit::Expand));
+            a.toggle_expand();
+            assert_eq!(pin(&a).rect.h, folded.rect.h, "{what}: folded");
+            // The buttons, the record among them, still take their own
+            // taps, where they were.
+            for b in &folded.flow.buttons {
+                let r = b.rect;
+                assert_eq!(a.hit(r.x + r.w * 0.5, r.y + r.h * 0.5), Some(b.hit));
+                assert_eq!(a.hit(r.x + 1.0, r.y + r.h - 1.0), Some(b.hit));
+            }
+        }
     }
 
     #[test]

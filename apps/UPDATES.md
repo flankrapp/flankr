@@ -321,3 +321,9 @@ These changes came before the app had version numbers.
 - The drawer groups your sessions under their herdr workspace, in herdr's order: a small header with the workspace's name and how many sessions it has, then its agent sessions by tab, then its shell panes. A workspace with only one session has no header; that session shows its full name, such as "Claude in libmorph, tab -mb".
 - Tap a workspace's header to fold its sessions away, and again to show them. The phone remembers which are folded for each remote, after a restart too. A folded workspace shows a dot while one of its sessions has a question or approval waiting, and opens by itself when one starts waiting or when you open one of its sessions from elsewhere.
 - A new setting, Drawer sessions, under At startup: Grouped by workspace (the default) or Not grouped, which keeps the single list as before.
+
+## 0.7.12 — 2026-11-03
+
+**Fixed**
+- More and Less are always at the card's bottom right, on its last line, folded or open. On a card with buttons they now sit below the buttons, with room of their own, so tapping them no longer answers or starts a voice reply by mistake.
+- Less on an open Finished card with spoken text is at the card's bottom right again, not in the middle beside "spoken", and the replay button stays where it was.
