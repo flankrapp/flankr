@@ -367,3 +367,23 @@ camera before.
 
 **Done.** App 0.7.3 (`607c66d`): the pairing screen is laid out over a
 session's view too.
+
+## 2026-11-03 00:04 EST — Owner: a pairing code for 127.0.0.1 offers a device code that cannot work
+
+Device: Galaxy S23 Ultra (app 0.7.3).
+
+**Report.** "the phone says 127.0.0.1 cannot be accessed directly and
+suggests pasting the bip code, but that's not actually going to set up the
+connection".
+
+**Seen.** The MacBook's `flankr pair` offered only 127.0.0.1:7347 (its link
+listens on loopback, and Tailscale was not forwarding). The phone, given a
+pairing link whose only address is a loopback one, falls back to the
+device code (`pairing: the request reached no daemon; the device code
+instead`). The device code still has to reach the daemon over that
+address, so it can never complete.
+
+**In hand.** The daemon side is in the link VPN plan's 2026-11-02 23:53 EST
+amendment (no QR code or URL for an offer only the machine can reach),
+being built. The phone side, for a link that names only loopback addresses
+(from an older daemon, or pasted), is handed to a subagent.
