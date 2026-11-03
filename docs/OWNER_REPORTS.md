@@ -493,3 +493,20 @@ to make them all 500ms".
 **In hand.** Given to the same subagent: the drawer card, the text input's
 **+**, the centre and right buttons and the volume button all fire at
 500 ms; the drawer card's 1 s from the first entry is replaced.
+
+## 2026-11-03 12:36 EST — Owner: one modal after pairing, with a flash
+
+Device: Galaxy S23 Ultra (app 0.7.5).
+
+**Report.** "do we need two modals? once the pairing is complete the
+details modal should work, it should have a \"flash\" message if that makes
+sense on the first use"; then, offered the outline below, "yes, build it
+and install on s23".
+
+**Seen.** In 0.7.5, a finished pairing shows "Paired with <name>" with
+Details and Done; Details closes it and opens the remote's details modal.
+
+**In hand.** Handed to a subagent: when pairing completes, the pairing
+modal becomes the remote's details modal in place, with a "Paired with
+<name>" flash at its top for about 3 s on that first open only; the
+"Paired with" screen goes.
