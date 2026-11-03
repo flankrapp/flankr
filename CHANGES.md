@@ -4446,3 +4446,18 @@ Two readings, within the amendment:
    terminal view that takes typing, without an `[[agents]]` entry; the
    path typed is absolute and unquoted) waits for one; Attach image…
    shows in that menu once the app offers images.
+
+## 2026-11-03 15:56 EST — A continued Claude Code session followed to its newest transcript; daemon 0.7.9, app 0.7.16
+
+Plan: the harness protocol plan (20261022_03), living section L1, by its
+2026-11-03 15:47 EST amendment, from the owner's report of 15:40 EST in
+`docs/OWNER_REPORTS.md` ("Check the list mode is getting behind the
+terminal again"). A fix, so daemon 0.7.9 and, since the app's user sees
+the list view keep up, app 0.7.16 (FLANKR RULE 2 item 4), both patches in
+their 0.7 series. flankr-companion and libflankr_proto do not change.
+
+How it was found: the old transcript's last line is a `continued-in`
+record with `continuedInSessionId`, and the new transcript starts with a
+copy of the old one's conversation since its last compaction (about 990
+lines in the owner's case), which the daemon now counts but does not read,
+so the list view does not show it twice.
