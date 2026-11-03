@@ -459,10 +459,12 @@ pub struct ServerConfig {
 #[serde(default)]
 pub struct LinkConfig {
     /// Addresses to listen on, `<addr>:<port>` or `<addr>` (port 7347).
-    /// Replaces the default `127.0.0.1:7347` and turns off the Tailscale
-    /// check; these are the addresses a pairing string carries. An empty
-    /// list turns the link off.
+    /// Replaces the default `127.0.0.1:7347`; `--bind` replaces it for a
+    /// run. An empty list turns the link off.
     pub listen: Option<Vec<String>>,
+    /// The VPN the link is reached through: `"tailscale"` (the default)
+    /// or `"none"`; `--vpn` wins (plan 20261102_03, decision 3).
+    pub vpn: Option<String>,
     /// The server's private key (default: ~/.config/flankr/link_key).
     pub key: Option<String>,
     /// The paired clients (default: ~/.config/flankr/auth.toml).

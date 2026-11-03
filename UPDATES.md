@@ -217,3 +217,15 @@ These changes came before the program had version numbers.
 - `flankr key set gemini` asks for the key without showing it (or reads one line from stdin when it is piped) and stores it in the macOS Keychain; elsewhere, or with `--file`, in `~/.config/flankr/secrets/gemini_api_key`, created only readable by you. It prints where it stored it, never the key. An empty key is refused.
 - `flankr key import gemini <file>` stores the key from a file the same way and leaves the file for you to delete.
 - `flankr key status` lists each place in the order above with `found`, `none`, `locked` or `refused: <why>`, and which one the daemon would use.
+
+## 0.7.1 — 2026-11-03
+
+**Added**
+- With Tailscale running, the daemon makes Tailscale forward this machine's tailnet port 7347 to the link itself, by running `tailscale serve --bg --tcp 7347 tcp://127.0.0.1:7347` when the forward is missing; it logs `[link] tailscale: forwarding <name>:7347 to the link`, or `[link] tailscale: <name>:7347 already forwards to the link`. The forward stays after the daemon stops. If Tailscale refuses (for example, serving is off for the tailnet), the log gives its error and the command to run by hand. Tailscale's CLI is found on `PATH`, else in `/Applications/Tailscale.app`.
+- `--vpn tailscale|none` on `flankr serve`, `flankr server` and `flankr pair`, and `vpn = "tailscale" | "none"` under `[link]` in `config.toml` (the flag wins; `tailscale` is the default). `--vpn none` runs and reads nothing for Tailscale.
+- `--bind <addr:port>` (repeatable) on the same commands replaces `[link] listen` for that run, e.g. `--vpn none --bind 0.0.0.0:7347` to pair over this network. A pairing then names this machine first (`<name>.local` on macOS), then its addresses; for `0.0.0.0` or `::`, each network interface's address.
+- `flankr pair` passes `--vpn` and `--bind` on to a daemon it starts.
+
+**Changed**
+- When every address the link has is this machine's own (127.0.0.1), `flankr pair` shows no QR code or pairing URL: it prints `flankr is only reachable from this machine (127.0.0.1:7347): a phone can't connect to it.` and what would fix it (start Tailscale, or `--vpn none --bind 0.0.0.0:7347`, or Tailscale's error), and exits 1. The daemon's log says the same at start.
+- A pairing offer through Tailscale names the tailnet address first, then 127.0.0.1:7347, as before; it no longer needs you to run `tailscale serve`.

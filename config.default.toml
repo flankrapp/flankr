@@ -148,12 +148,23 @@ terminal_input = false
 # "17-fl" = "flankr"
 # "agy" = "antigravity"
 
-# The encrypted link for paired devices (`flankr pair`). By default it
-# listens only on 127.0.0.1:7347; to reach it from the tailnet, run
-#   tailscale serve --bg --tcp 7347 tcp://127.0.0.1:7347
-# An explicit list replaces the default and the Tailscale check, and is what
-# pairing strings carry. `listen = []` turns the link off.
+# The encrypted link for paired devices (`flankr pair`). It listens on
+# 127.0.0.1:7347 unless `listen` (or `--bind <addr:port>`, repeatable, for
+# one run) says otherwise; `listen = []` turns the link off.
+#
+# `vpn = "tailscale"` (the default): when Tailscale is running, the daemon
+# makes Tailscale forward this machine's tailnet port 7347 to the link, by
+# running `tailscale serve --bg --tcp 7347 tcp://127.0.0.1:7347` itself if
+# the forward is missing (it stays after the daemon stops), and pairing
+# offers name the tailnet address first. It changes nothing else in
+# Tailscale. The forward goes to the first 127.0.0.1 address in `listen`.
+#
+# `vpn = "none"` (or `--vpn none`): nothing is run or read for a VPN. Bind an
+# address other machines can reach, e.g. `listen = ["0.0.0.0:7347"]`; offers
+# then name this machine (`<name>.local` on macOS) and its addresses. With
+# only 127.0.0.1, `flankr pair` shows no QR code: a phone could not connect.
 # [link]
+# vpn = "tailscale"
 # listen = ["127.0.0.1:7347"]
 # key = "~/.config/flankr/link_key"      # the server's private key, mode 0600
 # auth = "~/.config/flankr/auth.toml"    # the paired clients

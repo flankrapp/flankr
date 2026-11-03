@@ -61,3 +61,83 @@ pub trait Vpn: Send + Sync {
     /// The command [`Vpn::forward`] runs, to print for running by hand.
     fn forward_command(&self, port: u16) -> String;
 }
+
+/// Which VPN the link is reached through (decision 3).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum VpnChoice {
+    /// The default.
+    #[default]
+    Tailscale,
+    /// No VPN: nothing is run or read for one.
+    None,
+}
+
+impl VpnChoice {
+    /// `tailscale` or `none`, in any case; `what` names where it came from
+    /// in the error.
+    pub fn parse(name: &str, what: &str) -> Result<VpnChoice, String> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "tailscale" => Ok(VpnChoice::Tailscale),
+            "none" => Ok(VpnChoice::None),
+            _ => Err(format!(
+                "{what} '{name}' is not known; use tailscale or none"
+            )),
+        }
+    }
+
+    /// `--vpn`, else `[link] vpn`, else Tailscale.
+    pub fn choose(flag: Option<&str>, config: Option<&str>) -> Result<VpnChoice, String> {
+        if let Some(flag) = flag {
+            return VpnChoice::parse(flag, "--vpn");
+        }
+        match config {
+            Some(config) => VpnChoice::parse(config, "[link] vpn ="),
+            None => Ok(VpnChoice::default()),
+        }
+    }
+
+    /// The VPN to use, `None` for no VPN.
+    pub fn open(self) -> Option<std::sync::Arc<dyn Vpn>> {
+        match self {
+            VpnChoice::Tailscale => Some(std::sync::Arc::new(tailscale::Tailscale::find())),
+            VpnChoice::None => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_flag_wins_then_the_config_then_tailscale() {
+        assert_eq!(VpnChoice::choose(None, None), Ok(VpnChoice::Tailscale));
+        assert_eq!(VpnChoice::choose(None, Some("none")), Ok(VpnChoice::None));
+        assert_eq!(
+            VpnChoice::choose(Some("tailscale"), Some("none")),
+            Ok(VpnChoice::Tailscale)
+        );
+        assert_eq!(
+            VpnChoice::choose(Some("None"), Some("tailscale")),
+            Ok(VpnChoice::None)
+        );
+        let err = VpnChoice::choose(Some("wireguard"), None).unwrap_err();
+        assert_eq!(err, "--vpn 'wireguard' is not known; use tailscale or none");
+        let err = VpnChoice::choose(None, Some("zt")).unwrap_err();
+        assert!(err.starts_with("[link] vpn = 'zt'"), "{err}");
+    }
+
+    #[test]
+    fn addresses_print_with_brackets_for_ipv6() {
+        let a = VpnAddress {
+            host: "mini.ts.net".into(),
+            port: 7347,
+        };
+        assert_eq!(a.to_string(), "mini.ts.net:7347");
+        let a = VpnAddress {
+            host: "fd7a::1".into(),
+            port: 7347,
+        };
+        assert_eq!(a.to_string(), "[fd7a::1]:7347");
+    }
+}

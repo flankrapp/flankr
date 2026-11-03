@@ -8,11 +8,13 @@
 //! flankr [serve [--foreground | --stop] | server]
 //!        [--config <file>] [--transport <name> | --remote <user@host> |
 //!         --socket <herdr.sock> | --mock] [--listen <flankr.sock>] [--show-tokens]
+//!        [--vpn tailscale|none] [--bind <addr:port>]...
 //!        [--prompts <ADDITIONAL_PROMPTS.md>] [--suggestions <SUGGESTIONS.md>]
 //! flankr ctl [--listen <flankr.sock>] [--client <name>] [--follow] [--handle <text>]
 //!            <method> [<params as JSON>]
 //! flankr pair [--foreground] [--listen <flankr.sock>] [--name <name>] [--protocols companion,harness]
 //!             [--replace] [--code <code>] [--qr-png <file>] [--timeout <secs>]
+//!             [--vpn tailscale|none] [--bind <addr:port>]...
 //! flankr session tail [--listen <flankr.sock>] [--pane <id or name>] [--follow]
 //!                     [--entries N] [--history N] [--outline] [--from N] [--to N]
 //! flankr prompt [--use general_agent] [--agent <name>] [--prompts <ADDITIONAL_PROMPTS.md>]
@@ -37,6 +39,10 @@ struct AppArgs {
     mock_mode: bool,
     /// The daemon socket, for `serve` and `ctl`.
     listen: Option<String>,
+    /// The link's VPN, `tailscale` or `none` (plan 20261102_03, decision 3).
+    vpn: Option<String>,
+    /// The link's addresses for this run, in place of `[link] listen`.
+    bind: Vec<String>,
     show_tokens: bool,
     /// `serve`'s prompts file, in place of the shipped
     /// `ADDITIONAL_PROMPTS.md` (plan 20261023_05, decision 7).
@@ -90,6 +96,8 @@ fn parse_args(args: impl Iterator<Item = String>) -> AppArgs {
         socket: None,
         mock_mode: false,
         listen: None,
+        vpn: None,
+        bind: Vec::new(),
         show_tokens: false,
         prompts: None,
         suggestions: None,
@@ -124,6 +132,8 @@ fn parse_args(args: impl Iterator<Item = String>) -> AppArgs {
             "--socket" => parsed.socket = args.next(),
             "--mock" => parsed.mock_mode = true,
             "--listen" => parsed.listen = args.next(),
+            "--vpn" => parsed.vpn = args.next(),
+            "--bind" => parsed.bind.extend(args.next()),
             "--show-tokens" => parsed.show_tokens = true,
             "--prompts" => parsed.prompts = args.next(),
             "--suggestions" => parsed.suggestions = args.next(),
@@ -272,7 +282,8 @@ async fn serve(args: AppArgs) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // The link: its key is checked (and created) before anything listens.
-    let settings = flankr::server::link::LinkSettings::from_config(&config.link);
+    let settings = flankr::server::link::LinkSettings::from_config(&config.link)?
+        .with_flags(args.vpn.as_deref(), &args.bind)?;
     let link = if settings.enabled() {
         Some(flankr::server::link::Link::open(settings)?)
     } else {
@@ -424,11 +435,16 @@ fn server_flags(args: &AppArgs) -> Vec<String> {
     };
     valued("--config", &args.config);
     valued("--listen", &args.listen);
+    valued("--vpn", &args.vpn);
     valued("--transport", &args.transport_name);
     valued("--remote", &args.remote);
     valued("--socket", &args.socket);
     valued("--prompts", &args.prompts);
     valued("--suggestions", &args.suggestions);
+    for bind in &args.bind {
+        flags.push("--bind".to_string());
+        flags.push(bind.clone());
+    }
     if args.mock_mode {
         flags.push("--mock".to_string());
     }
@@ -441,7 +457,7 @@ fn server_flags(args: &AppArgs) -> Vec<String> {
 async fn pair(args: AppArgs) -> Result<i32, Box<dyn std::error::Error>> {
     let config = flankr::config::AppConfig::load_or_default(args.config.as_deref().map(Path::new));
     let socket = daemon_socket(&args, &config);
-    let usage = "usage: flankr pair [--foreground] [--listen <socket>] [--name <name>] [--protocols companion,harness] [--replace] [--code <code>] [--qr-png <file>] [--timeout <secs>]";
+    let usage = "usage: flankr pair [--foreground] [--listen <socket>] [--name <name>] [--protocols companion,harness] [--replace] [--code <code>] [--qr-png <file>] [--timeout <secs>] [--vpn tailscale|none] [--bind <addr:port>]...";
     if !args.positional.is_empty() || args.stop {
         return Err(usage.into());
     }
@@ -573,14 +589,21 @@ flankr version | --version | -V
 flankr [serve [--foreground | --stop] | server]
        [--config <file>] [--transport <name> | --remote <user@host> |
         --socket <herdr.sock> | --mock] [--listen <flankr.sock>] [--show-tokens]
+       [--vpn tailscale|none] [--bind <addr:port>]...
        [--prompts <ADDITIONAL_PROMPTS.md>] [--suggestions <SUGGESTIONS.md>]
   serve (the default) starts `flankr server` in the background and returns;
   log and pid in ~/.local/state/flankr/. --foreground runs it here, as
   `server` does; --stop stops it.
+  The link listens on 127.0.0.1:7347; --bind <addr:port> (repeatable, e.g.
+  0.0.0.0:7347) replaces [link] listen for the run. --vpn tailscale (the
+  default) makes Tailscale forward its port 7347 to the link, adding the
+  forward if it is missing; --vpn none runs nothing for a VPN.
 flankr ctl [--listen <flankr.sock>] [--client <name>] [--follow] [--handle <text>]
            <method> [<params as JSON>]
 flankr pair [--foreground] [--listen <flankr.sock>] [--name <name>] [--protocols companion,harness]
             [--replace] [--code <code>] [--qr-png <file>] [--timeout <secs>]
+            [--vpn tailscale|none] [--bind <addr:port>]...
+  a daemon pair starts gets its --vpn, --bind and other server flags.
 flankr session tail [--listen <flankr.sock>] [--pane <id or name>] [--follow]
                     [--entries N] [--history N] [--outline] [--from N] [--to N]
 flankr prompt [--use general_agent] [--agent <name>] [--prompts <ADDITIONAL_PROMPTS.md>]
@@ -739,4 +762,46 @@ async fn run(
         std::process::exit(serve_background(&args, argv).await?);
     }
     serve(args).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(words: &[&str]) -> AppArgs {
+        parse_args(words.iter().map(|w| w.to_string()))
+    }
+
+    #[test]
+    fn pair_passes_vpn_and_bind_on_and_not_its_own_flags() {
+        let a = args(&[
+            "--vpn",
+            "none",
+            "--bind",
+            "0.0.0.0:7347",
+            "--bind",
+            "[::1]:7400",
+            "--name",
+            "s23",
+            "--timeout",
+            "30",
+            "--mock",
+        ]);
+        assert!(a.unknown.is_empty());
+        assert_eq!(a.vpn.as_deref(), Some("none"));
+        assert_eq!(a.bind, vec!["0.0.0.0:7347", "[::1]:7400"]);
+        assert_eq!(
+            server_flags(&a),
+            vec![
+                "--vpn",
+                "none",
+                "--bind",
+                "0.0.0.0:7347",
+                "--bind",
+                "[::1]:7400",
+                "--mock"
+            ]
+        );
+        assert!(server_flags(&args(&["--name", "x"])).is_empty());
+    }
 }

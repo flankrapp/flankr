@@ -54,7 +54,7 @@ impl Rig {
         )
     }
 
-    /// `flankr <command> --mock --config … --listen …` here, with only the
+    /// `flankr <command> --mock --config … --listen … --vpn none` here, with only the
     /// test environment and `extra`.
     fn command(&self, command: &[&str], extra: &[(&str, &str)]) -> Command {
         let home = self.home();
@@ -65,6 +65,9 @@ impl Rig {
             .arg(home.join("config.toml"))
             .arg("--listen")
             .arg(&self.socket)
+            // Never a real VPN (plan 20261102_03, decision 9).
+            .arg("--vpn")
+            .arg("none")
             .current_dir(&home)
             .env_clear()
             .env("HOME", &home)
@@ -413,6 +416,42 @@ fn pair_starts_the_daemon_unless_foreground() {
         "{out:?}"
     );
     assert_eq!(read_pid(&files.pid), Some(pid));
+}
+
+/// `flankr pair` passes `--vpn` and `--bind` on to the daemon it starts,
+/// and with only a loopback address shows no pairing URL and says why
+/// (plan 20261102_03, step 2 and the 23:53 EST amendment).
+#[test]
+fn pair_passes_vpn_and_bind_on_and_offers_nothing_only_this_machine_reaches() {
+    let rig = Rig::new();
+    let files = rig.files();
+    let out = rig.run(&["pair", "--bind", "127.0.0.1:0", "--timeout", "1"], &[]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.contains("flankr is only reachable from this machine (127.0.0.1:")
+            && stderr.contains("): a phone can't connect to it.\n")
+            && stderr.contains("run flankr with --vpn none --bind 0.0.0.0:"),
+        "{stderr}"
+    );
+    assert!(!text(&out.stdout).contains("flankr://"), "{out:?}");
+    rig.wait_until("the pid file", || files.pid.exists());
+    let pid = read_pid(&files.pid).unwrap();
+    let ps = Command::new("ps")
+        .args(["-o", "command=", "-p", &pid.to_string()])
+        .output()
+        .unwrap();
+    let line = text(&ps.stdout);
+    assert!(
+        line.contains("--vpn none") && line.contains("--bind 127.0.0.1:0"),
+        "{line}"
+    );
+    let log = std::fs::read_to_string(&files.log).unwrap();
+    assert!(log.contains("[link] vpn: none"), "{log}");
+    assert!(
+        log.contains("[link] flankr is only reachable from this machine (127.0.0.1:"),
+        "{log}"
+    );
 }
 
 /// `--version`, `-V` and `version` print the version and start nothing;

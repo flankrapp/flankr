@@ -39,6 +39,7 @@ use tokio::sync::mpsc;
 use tokio_util::codec::{FramedRead, LinesCodec};
 
 use crate::server::conn::MAX_LINE;
+use crate::server::link::ONLY_THIS_MACHINE;
 use crate::server::link::pair_mode::{
     PairAnswerParams, PairAnswerResult, PairBeginExtra, PairBeginParams, PairCodeParams, PairEnded,
     PairRequestInfo, methods as pair_methods,
@@ -312,6 +313,12 @@ pub async fn run_with<W: Write + Send>(
     };
     let begun = match daemon.call(methods::LINK_PAIR_BEGIN, params).await? {
         Ok(result) => result,
+        // Only this machine could reach the offer: the daemon's two
+        // lines, as they are (plan 20261102_03, the 23:53 EST amendment).
+        Err(error) if error.message.starts_with(ONLY_THIS_MACHINE) => {
+            eprintln!("{}", error.message);
+            return Ok(1);
+        }
         Err(error) => {
             eprintln!("flankr pair: {}", error.message);
             return Ok(1);
@@ -473,7 +480,7 @@ fn show(
     if !shown.remote {
         eprintln!(
             "warning: every address is this machine's own; a phone cannot reach it \
-             (run tailscale serve, or pass --listen to flankr serve)"
+             (start Tailscale, or run flankr with --vpn none --bind 0.0.0.0:7347)"
         );
     }
     say(

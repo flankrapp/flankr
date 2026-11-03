@@ -105,6 +105,8 @@ async fn start(read: &str) -> Env {
         auth_path: dir.path().join("auth.toml"),
         listen: Some(vec!["127.0.0.1:0".to_string()]),
         revoke_interval: Duration::from_secs(60),
+        vpn: flankr::server::link::vpn::VpnChoice::None,
+        loopback_offers: true,
     })
     .unwrap();
     let listeners = link.bind().await.unwrap();

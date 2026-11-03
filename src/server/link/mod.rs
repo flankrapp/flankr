@@ -3,8 +3,17 @@
 //! the amendments of 11:58, 18:20 and 23:07 EDT; the rules for step 3 in
 //! CHANGES.md, 2026-10-22 18:24 EDT).
 //!
-//! * By default the link binds only `127.0.0.1:7347`. `[link] listen`
-//!   replaces that and turns off the Tailscale check.
+//! * By default the link binds only `127.0.0.1:7347`; `--bind` or
+//!   `[link] listen` replace that. Through a VPN ([`vpn`], Tailscale by
+//!   default), the daemon forwards the VPN's port to the first
+//!   `127.0.0.1` address it binds, adding the forward itself when it is
+//!   missing; `--vpn none` runs and reads nothing for a VPN
+//!   (docs/design/20261102_03_LINK_VPN_PLAN.md, decisions 3 to 8).
+//! * A pairing offer carries the VPN's address first, then, with no VPN
+//!   and a binding other machines can reach, this machine's network name
+//!   ([`machine`]), then the bound addresses (each interface's for
+//!   `0.0.0.0` and `::`). An offer only this machine could reach is
+//!   refused (the plan's 23:53 EST amendment).
 //! * A connection is `IK`, or a pairing request (`NK`) while a
 //!   `flankr pair` run is in pair mode ([`pair_mode`]; plan 20261028_01,
 //!   the amendments of 14:37 to 14:44 EDT). A handshake must finish within
@@ -34,14 +43,14 @@
 
 pub mod auth;
 pub mod keyfile;
+pub mod machine;
 pub mod pair_mode;
-pub mod tailscale;
 pub mod vpn;
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -58,8 +67,9 @@ use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
 use self::auth::{AuthEntry, AuthFile};
+use self::machine::{Machine, ThisMachine};
 use self::pair_mode::{PairBeginExtra, PairBeginParams, PairEvent, PairRun};
-use self::tailscale::Tailscale;
+use self::vpn::{Vpn, VpnAddress, VpnChoice};
 use super::Daemon;
 use crate::config::LinkConfig;
 
@@ -78,9 +88,14 @@ pub const DEFAULT_REVOKE_INTERVAL: Duration = Duration::from_secs(60);
 pub struct LinkSettings {
     pub key_path: PathBuf,
     pub auth_path: PathBuf,
-    /// `None`: the default listener and the Tailscale check.
+    /// `None`: the default listener, `127.0.0.1:7347`.
     pub listen: Option<Vec<String>>,
     pub revoke_interval: Duration,
+    /// The VPN the link is reached through (`--vpn`, `[link] vpn`).
+    pub vpn: VpnChoice,
+    /// Give pairing offers whose addresses are all loopback, which the
+    /// daemon refuses: for tests over `127.0.0.1` only.
+    pub loopback_offers: bool,
 }
 
 fn config_dir() -> PathBuf {
@@ -98,9 +113,10 @@ fn expand_tilde(p: &str) -> PathBuf {
 }
 
 impl LinkSettings {
-    /// From `[link]`; files default to `~/.config/flankr/`.
-    pub fn from_config(config: &LinkConfig) -> Self {
-        LinkSettings {
+    /// From `[link]`; files default to `~/.config/flankr/`. An unknown
+    /// `vpn` is an error.
+    pub fn from_config(config: &LinkConfig) -> Result<Self, String> {
+        Ok(LinkSettings {
             key_path: config
                 .key
                 .as_deref()
@@ -116,7 +132,31 @@ impl LinkSettings {
                 .revoke_check_secs
                 .map(|s| Duration::from_secs(s.max(1)))
                 .unwrap_or(DEFAULT_REVOKE_INTERVAL),
+            vpn: VpnChoice::choose(None, config.vpn.as_deref())?,
+            loopback_offers: false,
+        })
+    }
+
+    /// With the command line's `--vpn` and `--bind`s, which replace
+    /// `[link] vpn` and `[link] listen` for this run.
+    pub fn with_flags(mut self, vpn: Option<&str>, bind: &[String]) -> Result<Self, String> {
+        if let Some(vpn) = vpn {
+            self.vpn = VpnChoice::parse(vpn, "--vpn")?;
         }
+        if !bind.is_empty() {
+            let mut listen = Vec::new();
+            for addr in bind {
+                let normal = normalize_listen(addr);
+                if normal.parse::<SocketAddr>().is_err() {
+                    return Err(format!(
+                        "--bind '{addr}' is not an address: give an IP and port, such as 127.0.0.1:7347, 0.0.0.0:7347 or [::]:7347"
+                    ));
+                }
+                listen.push(normal);
+            }
+            self.listen = Some(listen);
+        }
+        Ok(self)
     }
 
     /// Whether the link is on: anything but an explicit empty list.
@@ -138,6 +178,107 @@ pub fn normalize_listen(addr: &str) -> String {
         Some((_, port)) if port.parse::<u16>().is_ok() => addr.to_string(),
         _ => format!("{addr}:{DEFAULT_PORT}"),
     }
+}
+
+/// How a pairing offer only this machine can reach begins.
+pub const ONLY_THIS_MACHINE: &str = "flankr is only reachable from this machine";
+
+/// What the VPN's set-up found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Reach {
+    /// Not looked yet, or no VPN.
+    Unknown,
+    /// No `127.0.0.1` address bound to forward to.
+    NoLoopback,
+    /// Not installed or not running.
+    NotRunning,
+    /// Forwarding, at this address.
+    Forwarded(VpnAddress),
+    /// Forwarding, but with no name for this machine.
+    NoName,
+    /// The forward could not be read or made: the error and the command.
+    Failed(String),
+}
+
+/// `tailscale` as a name in a sentence.
+fn title(name: &str) -> String {
+    match name {
+        "tailscale" => "Tailscale".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn host_of(address: &str) -> &str {
+    let host = address.rsplit_once(':').map_or(address, |(host, _)| host);
+    host.trim_start_matches('[').trim_end_matches(']')
+}
+
+/// Whether only this machine can reach `address`: `127.0.0.0/8`, `::1`
+/// or `localhost`.
+pub fn is_loopback(address: &str) -> bool {
+    let host = host_of(address);
+    host.eq_ignore_ascii_case("localhost")
+        || host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
+}
+
+/// Whether `address` is `0.0.0.0` or `::`, every address.
+pub fn is_unspecified(address: &str) -> bool {
+    address
+        .parse::<SocketAddr>()
+        .is_ok_and(|a| a.ip().is_unspecified())
+}
+
+/// The port of the first bound `127.0.0.1` address: the one a VPN's
+/// forward to `127.0.0.1:<port>` reaches.
+pub fn forward_port(bound: &[String]) -> Option<u16> {
+    bound.iter().find_map(|a| {
+        a.parse::<SocketAddr>()
+            .ok()
+            .filter(|a| a.ip() == IpAddr::from([127, 0, 0, 1]))
+            .map(|a| a.port())
+    })
+}
+
+/// A pairing offer's addresses, in the order a phone tries them: the
+/// VPN's, this machine's name (with the first reachable bound port), then
+/// each bound address, `0.0.0.0` and `::` replaced by the interfaces'
+/// addresses (IPv4 for `0.0.0.0`, both for `::`). No address twice.
+pub fn offer_addresses(
+    bound: &[String],
+    vpn: Option<&str>,
+    host_name: Option<&str>,
+    interfaces: &[IpAddr],
+) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut push = |a: String| {
+        if !out.contains(&a) {
+            out.push(a);
+        }
+    };
+    if let Some(vpn) = vpn {
+        push(vpn.to_string());
+    }
+    if let Some(host) = host_name
+        && let Some(port) = bound
+            .iter()
+            .filter(|a| !is_loopback(a))
+            .find_map(|a| a.parse::<SocketAddr>().ok().map(|a| a.port()))
+    {
+        push(format!("{host}:{port}"));
+    }
+    for address in bound {
+        match address.parse::<SocketAddr>() {
+            Ok(a) if a.ip().is_unspecified() => {
+                for ip in interfaces {
+                    if a.is_ipv6() || ip.is_ipv4() {
+                        push(SocketAddr::new(*ip, a.port()).to_string());
+                    }
+                }
+            }
+            _ => push(address.clone()),
+        }
+    }
+    out
 }
 
 /// A device `link.pair_add` added that has not said `hello` yet.
@@ -171,8 +312,15 @@ pub struct Link {
     next_conn: AtomicU64,
     /// Serializes writes to `auth.toml`.
     auth_lock: Mutex<()>,
-    /// The addresses of an explicit `listen`, as bound.
+    /// The addresses bound, as bound (a port 0 replaced by the OS's).
     bound: Mutex<Vec<String>>,
+    /// The VPN, `None` with `--vpn none`.
+    vpn: Option<Arc<dyn Vpn>>,
+    machine: Arc<dyn Machine>,
+    /// What the VPN's set-up found; held while it runs.
+    reach: tokio::sync::Mutex<Reach>,
+    /// Whether "not running" was logged.
+    not_running_logged: AtomicBool,
     /// The `flankr pair` run in pair mode.
     pair_run: Mutex<Option<PairRun>>,
 }
@@ -197,6 +345,17 @@ impl Link {
     /// Load (or create) the server key. Refuses a key file that others may
     /// read.
     pub fn open(settings: LinkSettings) -> Result<Arc<Link>, String> {
+        let vpn = settings.vpn.open();
+        Link::open_with(settings, vpn, Arc::new(ThisMachine))
+    }
+
+    /// [`Link::open`] with this VPN (`None`: none, whatever
+    /// `settings.vpn` says) and machine, as tests give them.
+    pub fn open_with(
+        settings: LinkSettings,
+        vpn: Option<Arc<dyn Vpn>>,
+        machine: Arc<dyn Machine>,
+    ) -> Result<Arc<Link>, String> {
         let keypair = keyfile::load_or_create(&settings.key_path)?;
         Ok(Arc::new(Link {
             settings,
@@ -206,6 +365,10 @@ impl Link {
             next_conn: AtomicU64::new(1),
             auth_lock: Mutex::new(()),
             bound: Mutex::new(Vec::new()),
+            vpn,
+            machine,
+            reach: tokio::sync::Mutex::new(Reach::Unknown),
+            not_running_logged: AtomicBool::new(false),
             pair_run: Mutex::new(None),
         }))
     }
@@ -224,29 +387,18 @@ impl Link {
         AuthFile::load(&self.settings.auth_path)
     }
 
-    /// Bind the listeners. With no explicit `listen`, also checks Tailscale
-    /// and logs the forward command if it is missing.
+    /// Bind the listeners: `listen`, else `127.0.0.1:7347`. Then sets up
+    /// the VPN's forward (decisions 4 to 6), and logs when only this
+    /// machine can reach the link.
     pub async fn bind(&self) -> Result<Vec<TcpListener>, String> {
-        let Some(listen) = &self.settings.listen else {
-            let listener = TcpListener::bind(DEFAULT_LISTEN)
-                .await
-                .map_err(|e| format!("link: bind {DEFAULT_LISTEN}: {e}"))?;
-            log::info!("Link listening on {DEFAULT_LISTEN}");
-            match tailscale::detect().await {
-                ts @ Tailscale::NoForward { .. } => {
-                    log::warn!("{}", ts.warning().unwrap_or_default());
-                }
-                Tailscale::Forwarded { dns_name } => log::info!(
-                    "Tailscale forwards {}:7347 to the link",
-                    dns_name.as_deref().unwrap_or("this machine")
-                ),
-                Tailscale::NotRunning => {}
-            }
-            return Ok(vec![listener]);
-        };
+        let listen = self
+            .settings
+            .listen
+            .clone()
+            .unwrap_or_else(|| vec![DEFAULT_LISTEN.to_string()]);
         let mut listeners = Vec::new();
         let mut bound = Vec::new();
-        for addr in listen {
+        for addr in &listen {
             let addr = normalize_listen(addr);
             let listener = TcpListener::bind(&addr)
                 .await
@@ -261,16 +413,158 @@ impl Link {
             listeners.push(listener);
         }
         *self.bound.lock().unwrap() = bound;
+        if self.vpn.is_none() {
+            log::info!("[link] vpn: none");
+        }
+        self.set_up_vpn().await;
+        if let Err(only_here) = self.offer_addresses().await {
+            log::warn!("[link] {}", only_here.replace('\n', " "));
+        }
         Ok(listeners)
     }
 
-    /// The addresses a pairing string carries now, and any warning.
-    async fn addresses(&self) -> (Vec<String>, Vec<String>) {
-        if self.settings.listen.is_some() {
-            return (self.bound.lock().unwrap().clone(), Vec::new());
+    fn bound(&self) -> Vec<String> {
+        self.bound.lock().unwrap().clone()
+    }
+
+    /// Decisions 4 and 6: forward the VPN's port to the first
+    /// `127.0.0.1` address bound, unless it already is.
+    async fn set_up_vpn(&self) {
+        let Some(vpn) = &self.vpn else {
+            return;
+        };
+        let mut reach = self.reach.lock().await;
+        let name = vpn.name();
+        let bound = self.bound();
+        let Some(port) = forward_port(&bound) else {
+            log::info!(
+                "[link] {name}: no address on 127.0.0.1 among {}; no forward is made",
+                bound.join(", ")
+            );
+            *reach = Reach::NoLoopback;
+            return;
+        };
+        let running = vpn.running().await.unwrap_or_else(|e| {
+            log::warn!("[link] {name}: {e}");
+            false
+        });
+        if !running {
+            if !self.not_running_logged.swap(true, Ordering::Relaxed) {
+                log::info!(
+                    "[link] {name}: not running; the link is on {} only",
+                    bound.join(", ")
+                );
+            }
+            *reach = Reach::NotRunning;
+            return;
         }
-        let ts = tailscale::detect().await;
-        (ts.addresses(), ts.warning().into_iter().collect())
+        let address = vpn.address(port).await.unwrap_or_else(|e| {
+            log::warn!("[link] {name}: {e}");
+            None
+        });
+        let shown = address
+            .as_ref()
+            .map_or_else(|| format!("this machine:{port}"), VpnAddress::to_string);
+        let command = vpn.forward_command(port);
+        let failed = match vpn.forwards(port).await {
+            Ok(true) => {
+                log::info!("[link] {name}: {shown} already forwards to the link");
+                None
+            }
+            Ok(false) => match vpn.forward(port).await {
+                Ok(()) => {
+                    log::info!("[link] {name}: forwarding {shown} to the link");
+                    None
+                }
+                Err(e) => Some(format!(
+                    "{} could not forward {shown} to the link: {e}; to do it by hand, run: {command}",
+                    title(name)
+                )),
+            },
+            Err(e) => Some(format!(
+                "{} could not say whether it forwards {shown} to the link: {e}; to forward it by hand, run: {command}",
+                title(name)
+            )),
+        };
+        *reach = match (failed, address) {
+            (Some(failed), _) => {
+                log::warn!("[link] {name}: {failed}");
+                Reach::Failed(failed)
+            }
+            (None, Some(address)) => Reach::Forwarded(address),
+            (None, None) => Reach::NoName,
+        };
+    }
+
+    /// The addresses a pairing offer carries now, or, when only this
+    /// machine could reach every one, why (the 23:53 EST amendment).
+    async fn offer_addresses(&self) -> Result<Vec<String>, String> {
+        let bound = self.bound();
+        let reach = self.reach.lock().await.clone();
+        let vpn_address = match &reach {
+            Reach::Forwarded(address) => Some(address.to_string()),
+            _ => None,
+        };
+        let reachable = bound.iter().any(|a| !is_loopback(a));
+        let machine = Arc::clone(&self.machine);
+        let wants_name = self.vpn.is_none() && reachable;
+        let wants_interfaces = bound.iter().any(|a| is_unspecified(a));
+        let (host_name, interfaces) = tokio::task::spawn_blocking(move || {
+            (
+                wants_name.then(|| machine.host_name()).flatten(),
+                if wants_interfaces {
+                    machine.interface_addresses()
+                } else {
+                    Vec::new()
+                },
+            )
+        })
+        .await
+        .unwrap_or_default();
+        let addresses = offer_addresses(
+            &bound,
+            vpn_address.as_deref(),
+            host_name.as_deref(),
+            &interfaces,
+        );
+        if addresses.iter().any(|a| !is_loopback(a)) {
+            return Ok(addresses);
+        }
+        let port = forward_port(&bound).unwrap_or(DEFAULT_PORT);
+        let hint = match (&self.vpn, &reach) {
+            (None, _) => format!(
+                "Bind an address other machines can reach: run flankr with --vpn none --bind 0.0.0.0:{port} to use this network, or without --vpn none to use Tailscale"
+            ),
+            (Some(_), Reach::Failed(failed)) => failed.clone(),
+            (Some(vpn), Reach::NoName) => format!(
+                "{} forwards the link but did not give this machine's name; run flankr with --vpn none --bind 0.0.0.0:{port} to use this network",
+                title(vpn.name())
+            ),
+            (Some(_), Reach::NoLoopback) => {
+                "No network interface has an address to offer".to_string()
+            }
+            (Some(vpn), _) => format!(
+                "{} is not running; start it, or run flankr with --vpn none --bind 0.0.0.0:{port} to use this network",
+                title(vpn.name())
+            ),
+        };
+        let shown = if addresses.is_empty() {
+            bound.join(", ")
+        } else {
+            addresses.join(", ")
+        };
+        Err(format!(
+            "{ONLY_THIS_MACHINE} ({shown}): a phone can't connect to it.\n{hint}"
+        ))
+    }
+
+    /// [`Link::offer_addresses`], or every loopback address when
+    /// `loopback_offers`.
+    async fn offer(&self) -> Result<Vec<String>, String> {
+        match self.offer_addresses().await {
+            Err(_) if self.settings.loopback_offers => Ok(self.bound()),
+            other => other,
+        }
     }
 
     /// `link.pair_begin` from the daemon-socket connection `owner`: the
@@ -284,10 +578,12 @@ impl Link {
         params: PairBeginParams,
     ) -> Result<Begun, String> {
         let secs = pair_mode::timeout_secs(params.timeout_secs)?;
-        let (addresses, warnings) = self.addresses().await;
-        if addresses.is_empty() {
-            return Err("the link has no address to pair with".to_string());
+        if self.vpn.is_some() && !matches!(*self.reach.lock().await, Reach::Forwarded(_)) {
+            // The VPN may have come up since the start.
+            self.set_up_vpn().await;
         }
+        let addresses = self.offer().await?;
+        let warnings = Vec::new();
         let offer = generate_offer().map_err(|e| format!("pairing offer: {e}"))?;
         let payload = PairingPayload {
             server_key: self.keypair.public,
@@ -653,15 +949,17 @@ mod tests {
 
     #[test]
     fn settings_default_to_the_config_dir_and_an_empty_list_is_off() {
-        let s = LinkSettings::from_config(&LinkConfig::default());
+        let s = LinkSettings::from_config(&LinkConfig::default()).unwrap();
         assert!(s.key_path.ends_with(".config/flankr/link_key"));
         assert!(s.auth_path.ends_with(".config/flankr/auth.toml"));
         assert_eq!(s.revoke_interval, DEFAULT_REVOKE_INTERVAL);
         assert!(s.enabled());
+        assert_eq!(s.vpn, VpnChoice::Tailscale);
         let off = LinkSettings::from_config(&LinkConfig {
             listen: Some(vec![]),
             ..Default::default()
-        });
+        })
+        .unwrap();
         assert!(!off.enabled());
     }
 
@@ -674,6 +972,8 @@ mod tests {
             auth_path: dir.path().join("auth.toml"),
             listen: Some(vec!["127.0.0.1:0".to_string()]),
             revoke_interval: DEFAULT_REVOKE_INTERVAL,
+            vpn: VpnChoice::None,
+            loopback_offers: true,
         };
         let first = Link::open(settings.clone()).unwrap().public_key();
         assert_eq!(Link::open(settings.clone()).unwrap().public_key(), first);
@@ -692,5 +992,287 @@ mod tests {
             br#"{"jsonrpc":"2.0","id":1,"method":"agents.send","params":{}}"#
         ));
         assert!(!is_hello(b"not json"));
+    }
+
+    // The link VPN plan (20261102_03), decisions 4 to 6 and the 23:53 EST
+    // amendment, with the fake VPN and machine: nothing real is run.
+
+    use self::machine::FakeMachine;
+    use self::vpn::fake::{FakeCall, FakeVpn};
+
+    fn strings(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn ips(list: &[&str]) -> Vec<IpAddr> {
+        list.iter().map(|s| s.parse().unwrap()).collect()
+    }
+
+    #[test]
+    fn every_address_binding_offers_the_interfaces() {
+        let interfaces = ips(&["192.168.1.20", "fd7a:115c:a1e0::5", "10.0.0.7"]);
+        assert_eq!(
+            offer_addresses(&strings(&["0.0.0.0:7347"]), None, None, &interfaces),
+            vec!["192.168.1.20:7347", "10.0.0.7:7347"]
+        );
+        assert_eq!(
+            offer_addresses(&strings(&["[::]:7347"]), None, None, &interfaces),
+            vec![
+                "192.168.1.20:7347",
+                "[fd7a:115c:a1e0::5]:7347",
+                "10.0.0.7:7347"
+            ]
+        );
+    }
+
+    #[test]
+    fn the_name_comes_first_with_no_vpn_and_the_vpn_first_with_one() {
+        let interfaces = ips(&["192.168.1.20"]);
+        assert_eq!(
+            offer_addresses(
+                &strings(&["127.0.0.1:7347", "0.0.0.0:7400"]),
+                None,
+                Some("mini.local"),
+                &interfaces
+            ),
+            vec!["mini.local:7400", "127.0.0.1:7347", "192.168.1.20:7400"]
+        );
+        assert_eq!(
+            offer_addresses(
+                &strings(&["192.168.1.20:7347"]),
+                None,
+                Some("mini.local"),
+                &[]
+            ),
+            vec!["mini.local:7347", "192.168.1.20:7347"]
+        );
+        assert_eq!(
+            offer_addresses(
+                &strings(&["127.0.0.1:7347"]),
+                Some("mini.ts.net:7347"),
+                None,
+                &[]
+            ),
+            vec!["mini.ts.net:7347", "127.0.0.1:7347"]
+        );
+        // Loopback alone gets no name.
+        assert_eq!(
+            offer_addresses(&strings(&["127.0.0.1:7347"]), None, Some("mini.local"), &[]),
+            vec!["127.0.0.1:7347"]
+        );
+    }
+
+    #[test]
+    fn loopback_and_the_forward_port() {
+        assert!(is_loopback("127.0.0.1:7347"));
+        assert!(is_loopback("127.0.0.2:7347"));
+        assert!(is_loopback("[::1]:7347"));
+        assert!(is_loopback("localhost:7347"));
+        assert!(!is_loopback("0.0.0.0:7347"));
+        assert!(!is_loopback("mini.local:7347"));
+        assert_eq!(
+            forward_port(&strings(&["[::1]:9", "0.0.0.0:7400", "127.0.0.1:7401"])),
+            Some(7401)
+        );
+        assert_eq!(
+            forward_port(&strings(&["0.0.0.0:7347", "[::1]:7347"])),
+            None
+        );
+    }
+
+    #[test]
+    fn bind_and_vpn_flags_replace_the_config() {
+        let base = LinkSettings::from_config(&LinkConfig {
+            vpn: Some("none".into()),
+            listen: Some(strings(&["127.0.0.1:7347"])),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(base.vpn, VpnChoice::None);
+        let s = base
+            .clone()
+            .with_flags(Some("tailscale"), &strings(&["0.0.0.0", "[::]:7400"]))
+            .unwrap();
+        assert_eq!(s.vpn, VpnChoice::Tailscale);
+        assert_eq!(s.listen, Some(strings(&["0.0.0.0:7347", "[::]:7400"])));
+        assert_eq!(base.clone().with_flags(None, &[]).unwrap(), base);
+        assert!(
+            base.clone()
+                .with_flags(None, &strings(&["mini.local:7347"]))
+                .unwrap_err()
+                .starts_with("--bind 'mini.local:7347' is not an address")
+        );
+        assert!(base.with_flags(Some("wg"), &[]).is_err());
+        assert!(
+            LinkSettings::from_config(&LinkConfig {
+                vpn: Some("wg".into()),
+                ..Default::default()
+            })
+            .is_err()
+        );
+        assert!(VpnChoice::None.open().is_none());
+    }
+
+    struct Rig {
+        _dir: tempfile::TempDir,
+        link: Arc<Link>,
+        fake: Option<Arc<FakeVpn>>,
+        port: u16,
+    }
+
+    async fn rig(listen: &[&str], fake: Option<FakeVpn>) -> Rig {
+        let dir = tempfile::tempdir().unwrap();
+        let settings = LinkSettings {
+            key_path: dir.path().join("link_key"),
+            auth_path: dir.path().join("auth.toml"),
+            listen: Some(strings(listen)),
+            revoke_interval: DEFAULT_REVOKE_INTERVAL,
+            vpn: VpnChoice::None,
+            loopback_offers: false,
+        };
+        let fake = fake.map(Arc::new);
+        let vpn = fake.clone().map(|f| f as Arc<dyn Vpn>);
+        let machine = Arc::new(FakeMachine {
+            host_name: Some("mini.local".into()),
+            addresses: ips(&["192.168.1.20"]),
+        });
+        let link = Link::open_with(settings, vpn, machine).unwrap();
+        let listeners = link.bind().await.unwrap();
+        let port = listeners[0].local_addr().unwrap().port();
+        Rig {
+            _dir: dir,
+            link,
+            fake,
+            port,
+        }
+    }
+
+    async fn begin(link: &Arc<Link>) -> Result<Vec<String>, String> {
+        link.pair_begin(1, PairBeginParams { timeout_secs: None })
+            .await
+            .map(|b| b.result.addresses)
+    }
+
+    #[tokio::test]
+    async fn a_missing_forward_is_made_once_and_offered_first() {
+        let r = rig(&["127.0.0.1:0"], Some(FakeVpn::running_as("mini.ts.net"))).await;
+        let fake = r.fake.as_ref().unwrap();
+        assert_eq!(fake.forward_calls(), 1);
+        assert!(fake.calls().contains(&FakeCall::Forward(r.port)));
+        let want = vec![
+            format!("mini.ts.net:{}", r.port),
+            format!("127.0.0.1:{}", r.port),
+        ];
+        assert_eq!(begin(&r.link).await.unwrap(), want);
+        assert_eq!(begin(&r.link).await.unwrap(), want);
+        assert_eq!(fake.forward_calls(), 1, "{:?}", fake.calls());
+    }
+
+    #[tokio::test]
+    async fn a_forward_already_there_is_not_made_again() {
+        // The port is the OS's, so the fake learns it after binding.
+        let r = rig(&["127.0.0.1:0"], Some(FakeVpn::running_as("mini.ts.net"))).await;
+        let fake = r.fake.as_ref().unwrap();
+        let before = fake.forward_calls();
+        // A fresh link on the same port, the forward now in place.
+        let again = Arc::new(FakeVpn::running_as("mini.ts.net").with_forward(r.port));
+        let dir = tempfile::tempdir().unwrap();
+        let link = Link::open_with(
+            LinkSettings {
+                key_path: dir.path().join("link_key"),
+                auth_path: dir.path().join("auth.toml"),
+                listen: None,
+                revoke_interval: DEFAULT_REVOKE_INTERVAL,
+                vpn: VpnChoice::None,
+                loopback_offers: false,
+            },
+            Some(Arc::clone(&again) as Arc<dyn Vpn>),
+            Arc::new(FakeMachine::default()),
+        )
+        .unwrap();
+        // Not bound: set up as `bind` would, on the first link's port.
+        *link.bound.lock().unwrap() = vec![format!("127.0.0.1:{}", r.port)];
+        link.set_up_vpn().await;
+        assert_eq!(again.forward_calls(), 0, "{:?}", again.calls());
+        assert_eq!(
+            begin(&link).await.unwrap(),
+            vec![
+                format!("mini.ts.net:{}", r.port),
+                format!("127.0.0.1:{}", r.port)
+            ]
+        );
+        assert_eq!(again.forward_calls(), 0);
+        assert_eq!(fake.forward_calls(), before);
+    }
+
+    #[tokio::test]
+    async fn not_running_gives_no_offer_and_says_why() {
+        let stopped = FakeVpn::running_as("mini.ts.net");
+        stopped.set_running(false);
+        let r = rig(&["127.0.0.1:0"], Some(stopped)).await;
+        let fake = r.fake.as_ref().unwrap();
+        let err = begin(&r.link).await.unwrap_err();
+        assert_eq!(
+            err,
+            format!(
+                "flankr is only reachable from this machine (127.0.0.1:{p}): a phone can't connect to it.\n\
+                 fake is not running; start it, or run flankr with --vpn none --bind 0.0.0.0:{p} to use this network",
+                p = r.port
+            )
+        );
+        assert_eq!(fake.forward_calls(), 0);
+        // Started later: the next pairing forwards and offers it.
+        fake.set_running(true);
+        assert_eq!(
+            begin(&r.link).await.unwrap(),
+            vec![
+                format!("mini.ts.net:{}", r.port),
+                format!("127.0.0.1:{}", r.port)
+            ]
+        );
+        assert_eq!(fake.forward_calls(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_failed_forward_names_the_error_and_the_command() {
+        let r = rig(
+            &["127.0.0.1:0"],
+            Some(FakeVpn::running_as("mini.ts.net").failing_forward("Serve is not enabled")),
+        )
+        .await;
+        let err = begin(&r.link).await.unwrap_err();
+        assert!(err.starts_with(ONLY_THIS_MACHINE), "{err}");
+        let hint = err.lines().nth(1).unwrap();
+        assert!(hint.contains("Serve is not enabled"), "{hint}");
+        assert!(
+            hint.ends_with(&format!("to do it by hand, run: fake forward {}", r.port)),
+            "{hint}"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_127_0_0_1_binding_makes_no_forward() {
+        let r = rig(&["[::1]:0"], Some(FakeVpn::running_as("mini.ts.net"))).await;
+        assert!(r.fake.as_ref().unwrap().calls().is_empty());
+        assert!(
+            begin(&r.link)
+                .await
+                .unwrap_err()
+                .starts_with(ONLY_THIS_MACHINE)
+        );
+    }
+
+    #[tokio::test]
+    async fn no_vpn_on_loopback_gives_no_offer() {
+        let r = rig(&["127.0.0.1:0"], None).await;
+        let err = begin(&r.link).await.unwrap_err();
+        assert_eq!(
+            err,
+            format!(
+                "flankr is only reachable from this machine (127.0.0.1:{p}): a phone can't connect to it.\n\
+                 Bind an address other machines can reach: run flankr with --vpn none --bind 0.0.0.0:{p} to use this network, or without --vpn none to use Tailscale",
+                p = r.port
+            )
+        );
     }
 }
