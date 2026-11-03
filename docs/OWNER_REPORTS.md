@@ -577,3 +577,15 @@ its bottom right.
 
 **In hand.** Handed to a subagent: *More*, *Less* and "more" at the bottom
 right of every card that shows them, folded or open.
+
+## 2026-11-03 14:50 EST — Owner: More and Less below the buttons; they don't work on button cards
+
+This follows the entry "More and Less always at the card's bottom right".
+
+**Report.** Asked where the link goes on a card with buttons, the owner
+first answered "Yes, on cards with buttons, put More Less at the text's
+bottom right, above the buttons", then "actually should be below the
+buttons but they don't really work on cards with buttons".
+
+**In hand.** Given to the same subagent: the link below the button row on
+cards with buttons, and why *More*/*Less* does not work on those cards.
