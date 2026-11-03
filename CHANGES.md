@@ -3996,3 +3996,12 @@ check from a terminal app. Also seen: each readiness probe leaves one
 `WARN … Refused a connection: cannot read its credentials` line in the
 daemon's log (the probe connects and closes at once); harmless, worth
 quieting later.
+
+## 2026-11-02 22:50 EST — The Gemini key in the Keychain or flankr's config folder
+
+Plan: `docs/design/20261102_02_GEMINI_KEY_STORE_PLAN.md` (approved). On the
+owner's instruction (2026-11-02): the daemon no longer reads the key from
+`.private/` against its working folder or from `.env`; it reads an
+explicit `api_key_file`, the macOS Keychain, then a file in flankr's
+config folder, and `flankr key set|import|status gemini` store and report
+it without it reaching a command line or a log.
