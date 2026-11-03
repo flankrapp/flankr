@@ -635,7 +635,11 @@ fn title_target(bar: &Bar, x: f32, y: f32) -> Option<TitleTarget> {
 
 /// The soft keyboard's options: a nickname (`field`) is one line, and the
 /// keyboard's Done saves it; a prompt is many lines, with no action.
-fn text_options(field: bool) -> libmorph::TextInputOptions {
+fn text_options(typing: Option<Typing>) -> libmorph::TextInputOptions {
+    if typing == Some(Typing::Terminal) {
+        return terminal_keys::terminal_text_options();
+    }
+    let field = typing == Some(Typing::Field);
     let mut options = libmorph::TextInputOptions::default();
     options.multiline = !field;
     options.action = if field {
@@ -2189,7 +2193,6 @@ impl App {
             .settings_screen
             .as_ref()
             .and_then(SettingsScreen::nickname_editing);
-        let field = nickname.is_some();
         let typing = match nickname {
             Some(text) => Some((Typing::Field, text)),
             None => typing,
@@ -2202,7 +2205,7 @@ impl App {
         }
         match ime {
             Ime::Start(text) => {
-                ctx.start_text_input(&text, &text_options(field));
+                ctx.start_text_input(&text, &text_options(typing.map(|(t, _)| t)));
                 self.keyboard.started(self.started.elapsed());
             }
             Ime::Stop => ctx.stop_text_input(),
@@ -2215,7 +2218,7 @@ impl App {
             && let Some((_, text)) = typing
         {
             log::info!("keyboard: not up; asked for again");
-            ctx.start_text_input(text, &text_options(field));
+            ctx.start_text_input(text, &text_options(typing.map(|(t, _)| t)));
         }
     }
 
@@ -3379,12 +3382,15 @@ impl App {
     }
 
     /// Sends `keys` into the agent view's armed terminal.
-    fn send_terminal_keys(&self, keys: &str) {
+    fn send_terminal_keys(&mut self, keys: &str) {
         if keys.is_empty() {
             return;
         }
         if let (Some(companion), Some(pane)) = (&self.companion, &self.agent_pane) {
             companion.terminal_send_keys(pane, keys);
+        }
+        if let Some(agent) = &mut self.agent {
+            agent.terminal_typed();
         }
     }
 
@@ -5067,20 +5073,14 @@ impl MorphApp for App {
             return;
         }
         // Into the armed terminal: each edit as the keys that make it.
+        // The action key is Enter there, and the keyboard stays up.
         if let Some(old) = &self.term_ime {
-            match event {
-                libmorph::TextInputEvent::Changed(text) => {
-                    let keys = terminal_keys::edit_keys(old, text);
-                    self.term_ime = Some(text.clone());
-                    let keys = self.modify_typed(&keys);
-                    self.send_terminal_keys(&keys);
-                }
-                libmorph::TextInputEvent::Action(_) => {
-                    let keys = self.modify_typed("enter");
-                    self.send_terminal_keys(&keys);
-                }
-                libmorph::TextInputEvent::Dismissed => self.keyboard.dismiss(),
-                _ => {}
+            if let Some((keys, text)) = terminal_keys::ime_keys(old, event) {
+                self.term_ime = Some(text);
+                let keys = self.modify_typed(&keys);
+                self.send_terminal_keys(&keys);
+            } else if *event == libmorph::TextInputEvent::Dismissed {
+                self.keyboard.dismiss();
             }
             return;
         }

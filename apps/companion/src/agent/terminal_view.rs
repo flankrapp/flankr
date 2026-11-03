@@ -38,14 +38,15 @@
 //!   sizes the pane to the fit, so the frame fits and does not pan; a
 //!   frame larger than the view (the poll, or the desktop's size while it
 //!   has the tab) still pans.
-//! - **Cursor.** Drawn from [`Screen::cursor`] by herdr's DECSCUSR shape
-//!   (`herdr::CursorState.shape`, wire.rs's `CursorShapeParam`, passed
-//!   through unchanged by libherdr_term's conversion): 0 (the terminal's
-//!   default), 1 and 2 a block, reverse video of the cell under it; 3 and
-//!   4 an underline; 5 and 6 a bar at the cell's left edge; anything else
-//!   a block. Odd (blinking) and even (steady) are drawn alike, steady.
-//!   Hidden while the program hides it (`visible` false) or while the
-//!   frame is `stale`.
+//! - **Cursor.** Drawn at [`Screen::cursor`]'s cell as an underline at
+//!   the cell's foot in the cell's text colour, whatever herdr's DECSCUSR
+//!   shape (`herdr::CursorState.shape`) asks for, blinking locally: on for
+//!   [`BLINK`] (530 ms), off as long, and on again from the start whenever
+//!   it moves to another cell or a key is sent (plan 20261103_01, the
+//!   2026-11-03 15:36 EST amendment, item 2, in place of plan 20261027_08
+//!   step 9's block, underline or bar by shape). Hidden while the program hides it
+//!   (`visible` false) or while the frame is `stale`; the view draws again
+//!   for the blink only while the terminal shows and the cursor is drawn.
 //! - **Stale.** While the desktop has the tab (`Cursor::stale`, the 23:32
 //!   EDT amendment) a pill says so over the frames, which keep coming; the
 //!   next touch that sends input takes it back (the daemon re-claims on
@@ -233,46 +234,20 @@ fn dragged(button: MouseButton) -> TerminalMouseKind {
     TerminalMouseKind::Drag { button }
 }
 
-/// How the cursor is drawn.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CursorShape {
-    Block,
-    Underline,
-    Bar,
-}
-
-/// herdr's DECSCUSR shape (`CursorState.shape`) as drawn: 3 and 4 an
-/// underline, 5 and 6 a bar, the rest (0 the default, 1 and 2) a block.
-pub fn cursor_shape(shape: u8) -> CursorShape {
-    match shape {
-        3 | 4 => CursorShape::Underline,
-        5 | 6 => CursorShape::Bar,
-        _ => CursorShape::Block,
-    }
-}
+/// How long the local cursor shows, and then how long it is off, in each
+/// blink (plan 20261103_01, the 2026-11-03 15:36 EST amendment, item 2).
+pub const BLINK: Duration = Duration::from_millis(530);
 
 /// Where the cursor is drawn for a grid whose top left cell is at
-/// `origin`, at `cell` by `lh` pixels a cell: its shape and rectangle, or
-/// `None` while it is hidden (`!visible`) or the frame is stale.
-pub fn cursor_mark(
-    cursor: Option<Cursor>,
-    origin: [f32; 2],
-    cell: f32,
-    lh: f32,
-) -> Option<(CursorShape, Rect)> {
+/// `origin`, at `cell` by `lh` pixels a cell: an underline at the foot of
+/// its cell, whatever the program's DECSCUSR shape, or `None` while it is
+/// hidden (`!visible`) or the frame is stale.
+pub fn cursor_mark(cursor: Option<Cursor>, origin: [f32; 2], cell: f32, lh: f32) -> Option<Rect> {
     let c = cursor.filter(|c| c.visible && !c.stale)?;
     let x = origin[0] + c.col as f32 * cell;
     let y = origin[1] + c.row as f32 * lh;
-    let shape = cursor_shape(c.shape);
-    let rect = match shape {
-        CursorShape::Block => Rect::new(x, y, cell, lh),
-        CursorShape::Underline => {
-            let h = (lh * 0.1).max(2.0);
-            Rect::new(x, y + lh - h, cell, h)
-        }
-        CursorShape::Bar => Rect::new(x, y, (cell * 0.15).max(2.0), lh),
-    };
-    Some((shape, rect))
+    let h = (lh * 0.1).max(2.0);
+    Some(Rect::new(x, y + lh - h, cell, h))
 }
 
 /// The character at column `col` of `row` and its run, if the row reaches
@@ -529,6 +504,10 @@ pub struct TermView {
     mouse_held: Option<(u16, u16)>,
     /// How long the error pill has shown, while it shows.
     error_shown: Option<Duration>,
+    /// How long since the cursor's blink last began on, and the cell it
+    /// was at then ([`TermView::tick_blink`]).
+    blink: Duration,
+    blink_at: Option<(u16, u16)>,
 }
 
 impl Default for TermView {
@@ -551,6 +530,8 @@ impl Default for TermView {
             mouse_mode: false,
             gesture_mouse: false,
             mouse_held: None,
+            blink: Duration::ZERO,
+            blink_at: None,
         }
     }
 }
@@ -914,6 +895,43 @@ impl TermView {
         self.error_shown.is_none()
     }
 
+    /// The cursor is in the on half of its blink.
+    pub fn cursor_on(&self) -> bool {
+        (self.blink.as_millis() / BLINK.as_millis()).is_multiple_of(2)
+    }
+
+    /// Starts the blink again, on, as a terminal does when a key is sent;
+    /// returns whether the cursor was off (the view must draw again).
+    pub fn restart_blink(&mut self) -> bool {
+        let was_off = !self.cursor_on();
+        self.blink = Duration::ZERO;
+        was_off
+    }
+
+    /// Carries the cursor's blink on by `dt` for `cursor`, the frame's:
+    /// on for [`BLINK`], off for [`BLINK`], and on again from the start
+    /// whenever it moves to another cell. While it is not drawn (none,
+    /// hidden by the program, or stale) the blink stands still, on.
+    /// Returns whether the cursor turned on or off: only then must the
+    /// view draw again for it.
+    pub fn tick_blink(&mut self, dt: Duration, cursor: Option<Cursor>) -> bool {
+        let Some(c) = cursor.filter(|c| c.visible && !c.stale) else {
+            self.blink = Duration::ZERO;
+            self.blink_at = None;
+            return false;
+        };
+        let at = Some((c.col, c.row));
+        if at != self.blink_at {
+            self.blink_at = at;
+            return self.restart_blink();
+        }
+        let before = self.cursor_on();
+        self.blink += dt;
+        // Kept to one cycle, so it never grows without end.
+        self.blink = Duration::from_nanos((self.blink.as_nanos() % (2 * BLINK.as_nanos())) as u64);
+        before != self.cursor_on()
+    }
+
     /// The error pill's rect in `rect` at scale `s`: sized to its words,
     /// centred.
     pub fn error_pill(rect: Rect, s: f32) -> Rect {
@@ -1012,46 +1030,19 @@ impl TermView {
                     }
                 }
             }
-            // The cursor, over its cell.
+            // The cursor: an underline at its cell, in the cell's text
+            // colour, while the blink has it on.
             let origin = [rect.x - self.pan[0], rect.y - self.pan[1]];
-            if let Some((shape, r)) = cursor_mark(screen.cursor(), origin, cell, lh) {
+            if self.cursor_on()
+                && let Some(r) = cursor_mark(screen.cursor(), origin, cell, lh)
+            {
                 let under = screen.cursor().and_then(|c| {
                     grid.lines
                         .get(c.row as usize)
                         .and_then(|row| char_at(row, c.col as usize))
                 });
-                let (fg, bg) =
-                    under.map_or((theme().text, None), |(_, run)| run_colours(run, dark));
+                let fg = under.map_or(theme().text, |(_, run)| run_colours(run, dark).0);
                 fill(list, r, fg, 0.0);
-                // A block shows its cell in reverse video.
-                if shape == CursorShape::Block
-                    && let Some((ch, run)) = under.filter(|(ch, _)| !ch.is_whitespace())
-                {
-                    let text = ch.to_string();
-                    let colour = bg.unwrap_or(theme().bg);
-                    let style = if run.flags & flags::BOLD != 0 {
-                        GlyphStyle::Bold
-                    } else {
-                        GlyphStyle::Regular
-                    };
-                    match term {
-                        Some(t) => {
-                            let line = t.shaper.line(&text, style);
-                            list.push_terminal_line(
-                                &line,
-                                t.text,
-                                t.symbols,
-                                [r.x, r.y],
-                                px,
-                                t.px_range,
-                                colour,
-                            );
-                        }
-                        None => {
-                            ctx.draw_text(list, &text, [r.x, r.y], px, colour);
-                        }
-                    }
-                }
             }
         }
         list.push_clip_end();
@@ -1781,29 +1772,18 @@ mod tests {
     }
 
     #[test]
-    fn herdrs_cursor_shapes_draw_as_block_underline_and_bar() {
-        use CursorShape::*;
-        let want = [Block, Block, Block, Underline, Underline, Bar, Bar, Block];
-        for (shape, w) in want.iter().enumerate() {
-            assert_eq!(cursor_shape(shape as u8), *w, "shape {shape}");
-        }
-        assert_eq!(cursor_shape(200), Block);
+    fn every_cursor_shape_draws_as_an_underline_at_the_cells_foot() {
         let (cell, lh) = (12.0, 26.0);
         let origin = [100.0, 50.0];
-        let (shape, r) = cursor_mark(Some(cursor(3, 2, 2)), origin, cell, lh).unwrap();
-        assert_eq!(shape, Block);
-        assert_eq!(r, Rect::new(136.0, 102.0, 12.0, 26.0));
-        let (shape, r) = cursor_mark(Some(cursor(3, 2, 4)), origin, cell, lh).unwrap();
-        assert_eq!(shape, Underline);
-        assert_eq!((r.x, r.w), (136.0, 12.0));
-        assert!(
-            r.h < 4.0 && (r.y + r.h - 128.0).abs() < 1e-3,
-            "at the cell's foot"
-        );
-        let (shape, r) = cursor_mark(Some(cursor(3, 2, 6)), origin, cell, lh).unwrap();
-        assert_eq!(shape, Bar);
-        assert_eq!((r.x, r.y, r.h), (136.0, 102.0, 26.0));
-        assert!(r.w < 3.0, "a thin bar at the left edge");
+        // herdr's DECSCUSR shapes, blinking or steady, and beyond.
+        for shape in [0, 1, 2, 3, 4, 5, 6, 200] {
+            let r = cursor_mark(Some(cursor(3, 2, shape)), origin, cell, lh).unwrap();
+            assert_eq!((r.x, r.w), (136.0, 12.0), "shape {shape}");
+            assert!(
+                r.h < 4.0 && (r.y + r.h - 128.0).abs() < 1e-3,
+                "shape {shape}: at the cell's foot"
+            );
+        }
         // Hidden: by the program, or while the desktop has the tab.
         let hidden = Cursor {
             visible: false,
@@ -1816,6 +1796,61 @@ mod tests {
         };
         assert_eq!(cursor_mark(Some(stale), origin, cell, lh), None);
         assert_eq!(cursor_mark(None, origin, cell, lh), None);
+    }
+
+    #[test]
+    fn the_cursor_blinks_and_starts_on_again_when_it_moves_or_a_key_is_sent() {
+        let ms = Duration::from_millis;
+        let mut v = TermView::default();
+        let c = Some(cursor(3, 2, 2));
+        // The first frame: on, nothing to draw again for.
+        assert!(!v.tick_blink(ms(0), c));
+        assert!(v.cursor_on());
+        assert!(!v.tick_blink(ms(500), c));
+        assert!(v.cursor_on());
+        // Off at 530 ms, on again at 1060 ms: one redraw for each.
+        assert!(v.tick_blink(ms(40), c));
+        assert!(!v.cursor_on());
+        assert!(!v.tick_blink(ms(500), c));
+        assert!(v.tick_blink(ms(30), c));
+        assert!(v.cursor_on());
+        // Long runs stay in step.
+        for _ in 0..1000 {
+            v.tick_blink(ms(66), c);
+        }
+        let on = v.cursor_on();
+        v.tick_blink(BLINK, c);
+        assert_ne!(v.cursor_on(), on);
+        // Off, then the cursor moves: on at once, a redraw.
+        while v.cursor_on() {
+            v.tick_blink(ms(66), c);
+        }
+        assert!(v.tick_blink(ms(66), Some(cursor(4, 2, 2))));
+        assert!(v.cursor_on());
+        assert!(!v.tick_blink(ms(500), Some(cursor(4, 2, 2))));
+        // Off, then a key is sent: on at once.
+        assert!(v.tick_blink(ms(40), Some(cursor(4, 2, 2))));
+        assert!(!v.cursor_on());
+        assert!(v.restart_blink());
+        assert!(v.cursor_on());
+        assert!(!v.restart_blink(), "already on: nothing to draw");
+        // Hidden or stale: it stands still, on, and asks for no frames.
+        for c in [
+            None,
+            Some(Cursor {
+                visible: false,
+                ..cursor(4, 2, 2)
+            }),
+            Some(Cursor {
+                stale: true,
+                ..cursor(4, 2, 2)
+            }),
+        ] {
+            for _ in 0..40 {
+                assert!(!v.tick_blink(ms(66), c));
+            }
+            assert!(v.cursor_on());
+        }
     }
 
     #[test]
@@ -1841,10 +1876,10 @@ mod tests {
     }
 
     #[test]
-    fn the_cursor_is_drawn_by_its_shape_and_not_when_hidden_or_stale() {
+    fn the_cursor_is_drawn_as_an_underline_and_not_when_off_hidden_or_stale() {
         let rect = Rect::new(0.0, 0.0, 800.0, 600.0);
         let s = 2.0;
-        let draw = |c: Option<Cursor>| {
+        let draw = |c: Option<Cursor>, off: bool| {
             let mut v = TermView::default();
             let state = TermState {
                 supported: true,
@@ -1853,6 +1888,10 @@ mod tests {
                 ..Default::default()
             };
             v.follow(state.screen.as_ref(), rect, s, true);
+            v.tick_blink(Duration::ZERO, c);
+            if off {
+                assert!(v.tick_blink(BLINK, c));
+            }
             let mut list = DrawList::new();
             v.draw(&mut list, &DrawContext::default(), None, &state, rect, s);
             let px = v.pt() * s;
@@ -1864,24 +1903,35 @@ mod tests {
             );
             (list, mark)
         };
-        // A block over the red 'e' of row 1, col 1: filled in the cell's
-        // own colour (reverse video).
-        let (list, mark) = draw(Some(cursor(1, 1, 2)));
-        let (shape, r) = mark.unwrap();
-        assert_eq!(shape, CursorShape::Block);
+        // Under the red 'e' of row 1, col 1, a block's shape asked for:
+        // an underline in the cell's colour, and the cell is not inverted.
+        let (list, mark) = draw(Some(cursor(1, 1, 2)), false);
+        let r = mark.unwrap();
+        assert!(r.h < 0.2 * r.w + 4.0, "an underline, not a block");
         assert_eq!(fills_at(&list, r), vec![palette_colour(1, dark_theme())]);
-        // The default shape, over a blank: the theme's text colour.
-        let (list, mark) = draw(Some(cursor(9, 0, 0)));
-        assert_eq!(fills_at(&list, mark.unwrap().1), vec![theme().text]);
-        // A bar and an underline.
-        for shape in [4, 6] {
-            let (list, mark) = draw(Some(cursor(0, 0, shape)));
-            let (_, r) = mark.unwrap();
-            assert_eq!(fills_at(&list, r).len(), 1, "shape {shape}");
+        // Over a blank: the theme's text colour; any shape alike.
+        for shape in [0, 4, 6] {
+            let (list, mark) = draw(Some(cursor(9, 0, shape)), false);
+            assert_eq!(fills_at(&list, mark.unwrap()), vec![theme().text]);
         }
+        // In the off half of the blink: not drawn.
+        let (list, mark) = draw(Some(cursor(9, 0, 0)), true);
+        assert!(fills_at(&list, mark.unwrap()).is_empty());
         // Hidden or stale: no mark is drawn at the cell.
         let px = START_PT * s;
-        let cell = Rect::new(CELL_EM * px, term_h(px), CELL_EM * px, term_h(px));
+        let foot = |c: Cursor| {
+            cursor_mark(
+                Some(Cursor {
+                    visible: true,
+                    stale: false,
+                    ..c
+                }),
+                [0.0, 0.0],
+                CELL_EM * px,
+                term_h(px),
+            )
+            .unwrap()
+        };
         for c in [
             Cursor {
                 visible: false,
@@ -1892,9 +1942,9 @@ mod tests {
                 ..cursor(1, 1, 2)
             },
         ] {
-            let (list, mark) = draw(Some(c));
+            let (list, mark) = draw(Some(c), false);
             assert_eq!(mark, None);
-            assert!(fills_at(&list, cell).is_empty());
+            assert!(fills_at(&list, foot(c)).is_empty());
         }
     }
 

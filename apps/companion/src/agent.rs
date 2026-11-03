@@ -5756,6 +5756,14 @@ impl AgentScreen {
         std::mem::take(&mut self.term_latch).apply_first(keys)
     }
 
+    /// Keys were sent to the terminal: the cursor's blink starts again,
+    /// on, as a terminal's does.
+    pub fn terminal_typed(&mut self) {
+        if self.term.restart_blink() {
+            self.dirty = true;
+        }
+    }
+
     /// A `terminal.*` call failed: the terminal shows its short error
     /// pill for a moment (plan 20261027_07, the 2026-10-30 13:31 EDT
     /// amendment); the error's text is the app's to log.
@@ -5943,6 +5951,12 @@ impl AgentScreen {
         }
         // The terminal's error pill, once its time is up.
         if self.term.tick(dt) {
+            self.dirty = true;
+        }
+        // The cursor's blink: a frame each time it turns on or off, and
+        // only while the terminal shows and its cursor is drawn.
+        let cursor = self.term_shown.then(|| self.term_state.cursor()).flatten();
+        if self.term.tick_blink(dt, cursor) {
             self.dirty = true;
         }
         // The pinned card springs back once let go short.
@@ -8452,6 +8466,86 @@ mod tests {
         a.toggle_terminal();
         assert!(!a.keys_row_shown());
         assert!(a.frame().keys_row.is_none());
+    }
+
+    /// The owner's report of 2026-11-03 15:27 EST, item 2: the view
+    /// draws again for the cursor's blink only while the terminal shows
+    /// and its cursor is drawn, once each time it turns on or off; a key
+    /// sent turns it on.
+    #[test]
+    fn the_blink_asks_for_frames_only_while_the_terminals_cursor_shows() {
+        let (mut a, _) = keys_row_screen();
+        let ms = Duration::from_millis;
+        let frames = |a: &mut AgentScreen, n: usize| {
+            let mut drawn = 0;
+            for _ in 0..n {
+                a.dirty = false;
+                a.tick(ms(66));
+                drawn += usize::from(a.dirty);
+            }
+            drawn
+        };
+        frames(&mut a, 1);
+        // 66 ms frames for 5.3 s: ten turns, one frame each.
+        let n = frames(&mut a, 80);
+        assert!((9..=11).contains(&n), "{n} frames for the blink");
+        // Off, then a key is sent: on again, drawn at once.
+        while a.terminal_view().cursor_on() {
+            a.tick(ms(66));
+        }
+        a.dirty = false;
+        a.terminal_typed();
+        assert!(a.dirty && a.terminal_view().cursor_on());
+        // The cursor hidden by the program: no frames.
+        let mut st = attached_state(true, false);
+        let mut grid = libflankr_term::parse_ansi("htop");
+        grid.cursor = st.cursor().map(|c| flankr_companion::Cursor {
+            visible: false,
+            ..c
+        });
+        let mut sc = flankr_companion::Screen::default();
+        assert!(sc.apply(&libflankr_term::Frame::full(1, 1, &grid)));
+        st.screen = Some(sc);
+        a.set_terminal_state((9, true, true, Some(0)), st);
+        assert_eq!(frames(&mut a, 80), 0, "hidden");
+        // The transcript shown: none either.
+        a.set_terminal_state((10, true, true, Some(0)), attached_state(true, false));
+        a.toggle_terminal();
+        assert!(!a.terminal_shown());
+        frames(&mut a, 1);
+        assert_eq!(frames(&mut a, 80), 0, "the transcript");
+    }
+
+    /// The owner's report of 2026-11-03 15:27 EST, item 3: the pane's
+    /// last row, at what the terminal asks for, ends above the keys row
+    /// and the bar, with the soft keyboard up and down.
+    #[test]
+    fn the_panes_last_row_is_above_the_keys_row_with_and_without_the_keyboard() {
+        let (mut a, l) = keys_row_screen();
+        let s = l.scale;
+        let check = |a: &AgentScreen, what: &str| {
+            let rect = a.terminal_rect();
+            let (_, rows) = a.terminal_fit().expect("a fit");
+            let lh = term_h(a.terminal_view().pt() * s);
+            let foot = rect.y + rows as f32 * lh;
+            assert!(foot <= rect.y + rect.h + 0.01, "{what}: in the rect");
+            let row = a.frame().keys_row.expect("the keys row");
+            assert!(foot <= row.y + 0.01, "{what}: above the keys row");
+            for b in &a.frame().buttons {
+                assert!(foot <= b.rect.y + 0.01, "{what}: above {:?}", b.hit);
+            }
+            // A pane of that many rows is drawn whole: nothing panned off.
+            assert!(rect.y + rect.h <= row.y + 0.01, "{what}: the rect too");
+            rows
+        };
+        let up = check(&a, "keyboard up");
+        a.set_keys_row(false);
+        a.set_layout(PHONE);
+        let down = check(&a, "keyboard down");
+        assert!(down > up, "the keyboard going gives the rows back");
+        // The resize for it is asked for.
+        let asks = a.take_terminal_asks();
+        assert!(resizes(&asks).iter().any(|&(_, r)| r == down), "{asks:?}");
     }
 
     #[test]

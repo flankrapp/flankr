@@ -70,6 +70,34 @@ pub fn edit_keys(old: &str, new: &str) -> String {
     tokens.join(" ")
 }
 
+/// The soft keyboard's `event` while it types into the armed terminal,
+/// whose field held `old`: the keys to send and the field's text after
+/// it, or `None` for an event that sends nothing (the dismissal, which the
+/// app handles itself). The action key, whatever it shows (Done, Go,
+/// Send or Enter), is Enter, and the keyboard stays up for it; a newline
+/// in the text is Enter too (plan 20261103_01, the 2026-11-03 15:36 EST
+/// amendment, item 1).
+pub fn ime_keys(old: &str, event: &libmorph::TextInputEvent) -> Option<(String, String)> {
+    match event {
+        libmorph::TextInputEvent::Changed(text) => Some((edit_keys(old, text), text.clone())),
+        libmorph::TextInputEvent::Action(_) => Some(("enter".to_string(), old.to_string())),
+        _ => None,
+    }
+}
+
+/// The soft keyboard asked for while it types into the terminal: one
+/// line, its action key Enter (no Done or Send), no autocorrect or
+/// suggestions, so what is typed reaches the pane as typed (as terminal
+/// apps such as Termux ask). The prompts' and fields' keyboards are not
+/// these.
+pub fn terminal_text_options() -> libmorph::TextInputOptions {
+    let mut options = libmorph::TextInputOptions::default();
+    options.multiline = false;
+    options.action = libmorph::TextAction::None;
+    options.autocorrect = false;
+    options
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,5 +142,41 @@ mod tests {
             "backspace backspace backspace a t u s"
         );
         assert_eq!(edit_keys("same", "same"), "");
+    }
+
+    #[test]
+    fn the_action_key_is_enter_and_the_text_stays() {
+        use libmorph::{TextAction, TextInputEvent};
+        // Whatever the key shows, it is Enter, and the field's text is
+        // kept, so the next edit diffs against it.
+        for action in [
+            TextAction::Done,
+            TextAction::Go,
+            TextAction::Send,
+            TextAction::Search,
+            TextAction::None,
+        ] {
+            assert_eq!(
+                ime_keys("ls", &TextInputEvent::Action(action)),
+                Some(("enter".to_string(), "ls".to_string())),
+                "{action:?}"
+            );
+        }
+        // A newline typed into the text is Enter as well.
+        assert_eq!(
+            ime_keys("ls", &TextInputEvent::Changed("ls -la\n".into())),
+            Some(("space - l a enter".to_string(), "ls -la\n".to_string()))
+        );
+        // The dismissal sends nothing.
+        assert_eq!(ime_keys("ls", &TextInputEvent::Dismissed), None);
+    }
+
+    #[test]
+    fn the_terminals_keyboard_is_one_line_with_enter_and_no_suggestions() {
+        let o = terminal_text_options();
+        assert!(!o.multiline);
+        assert_eq!(o.action, libmorph::TextAction::None);
+        assert!(!o.autocorrect);
+        assert_eq!(o.kind, libmorph::TextKind::Text);
     }
 }

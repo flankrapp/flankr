@@ -332,3 +332,8 @@ These changes came before the app had version numbers.
 
 **Fixed**
 - A passing test run no longer shows as Something broke.
+
+## 0.7.14 — 2026-11-03
+
+**Changed**
+- The terminal's cursor is an underline that blinks, whatever shape the program asks for. It shows again at once when it moves or you type, and stays hidden when the program hides it or the desktop has the tab.
