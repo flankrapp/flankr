@@ -652,3 +652,17 @@ ends "read the full transcript at: <the old file's path>".
 
 **In hand.** Handed to a subagent: the daemon follows a continued session
 from the file herdr names to the newer transcript that names it.
+
+## 2026-11-03 17:31 EST — Owner: the keyboard and a question in terminal view, left as it is
+
+This follows the entry "Enter in the terminal, the click, and a blinking
+cursor", item 2.
+
+**Report.** Offered keeping the soft keyboard down and folding the question
+card while a choice question is open in terminal view, the owner answered
+"on when input line is tappedonky only only No, don't keep the keyboard
+down and fold the card while a question is open in terminal view".
+
+**Decided.** No change: the keyboard rises only for a tap on the input
+line, as the terminal taps plan's decision 4 already says, and the
+question card is drawn as it is.
