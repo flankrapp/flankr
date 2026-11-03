@@ -677,3 +677,86 @@ Implementation has started: every step that does not need the phone, with
 flankr-audio 0.2.0 on libmorph 0.5.0. The status is `In implementation`,
 and the document is now immutable: it changes only on the owner's explicit
 instruction.
+
+## Amendment — 2026-11-02 22:46 EST: opening the window starts the camera, asking for CAMERA whenever it is not granted
+
+The owner's report of 2026-11-02 (`docs/OWNER_REPORTS.md`, the 22:43 EST
+entry), on the S23 with app 0.7.1: "it didn't open the camera, regardless
+of the trailscale serve". The drawer's **+** was tapped twice; the app
+logged `remotes: pairing another` and nothing after it. CAMERA was
+`granted=false` with `ONE_TIME`: it had once been allowed "only this time"
+and Android had revoked it since.
+
+**Cause.** Decision 4, decision 5 and the 16:40 EDT amendment's item 1: the
+window opens on the placeholder and the camera, with Android's request,
+starts only on a tap in the area (`App::open_add` and `App::pairing_tap`'s
+`Hit::Area` in `apps/companion/src/lib.rs`). Opening the window started
+nothing, asked nothing, and said nothing about the camera being off. The
+first-run window and the add mode share this path; neither asked.
+
+This amendment replaces: decision 4's "Opening the window, from **+** or on
+first run, never starts the camera and never asks for anything" and its
+"A tap anywhere in the area calls `start_qr`" as the only start; decision
+5; the 16:40 EDT amendment's item 1 (Tap to scan every time); decision 13's
+`pairing_camera_denied` and `pairing_camera_denied_settings` copy and its
+"on `on_resume` the window returns to plain **Tap to scan**"; and decision
+6's `pairing_camera_why` words "The camera opens only when you tap". The
+rest stands.
+
+1. **Opening the window starts the scan.** When the pairing window comes
+   on screen with a camera (`camera_window()`), from the drawer's or
+   Remotes' **+** (the add mode) or as the first-run window, the app calls
+   `start_qr(&qr_options())` at once, as a tap on the placeholder did. The
+   window "comes on screen" when `App::pairing()` turns true (the add mode
+   opened, or no remote is paired); it is not reopened by the words'
+   modal closing, a cancelled or failed pairing, Back while scanning, or
+   **Paste a link**: there the placeholder and **Tap to scan** stay, as
+   before. Closing the window (Cancel, "<", Done, paired) and opening it
+   again starts the scan again.
+2. **CAMERA not granted asks for it, every opening.** Never asked,
+   refused while Android will still ask, or a one-time grant Android has
+   revoked: libmobile's `start_qr` makes Android's runtime request (it asks
+   whenever CAMERA is not granted and no request is out), so each opening
+   while it is not granted shows Android's dialog. The app makes no request
+   of its own.
+3. **Granted** (already, or in the dialog): the viewfinder and the QR scan
+   run as after a tap (decisions 7-12).
+4. **Refused, Android will ask again** (`PermissionDenied { settings_only:
+   false }`): the placeholder, **Tap to scan** (a tap asks again) and
+   **Paste a link**, with the line `pairing_camera_denied`: "Camera is off
+   for flankr. Tap to scan to be asked again, or paste the link instead."
+5. **Refused, Android won't ask again** (`settings_only: true`, which
+   Android answers at once with no dialog): the line
+   `pairing_camera_denied_settings`: "Camera is off for flankr, and Android
+   won't ask again. Turn it on under Settings → Apps → flankr → Permissions
+   → Camera, or paste the link instead.", and **Open Settings**
+   (`ctx.open_app_settings()`) in the bottom row beside **Paste a link**.
+   Back in the app with CAMERA granted there (`on_resume`), the scan starts
+   at once.
+6. **Pasting always works.** In every state above, **Paste a link** shows
+   the field and **Pair**; `pair.txt`, opened links and `--pair` are
+   unchanged.
+7. **Logged** (`log::info!`, with the `pairing:` prefix): the window
+   opening the camera; CAMERA's state as each `start_qr` is made (granted,
+   or not granted and Android is asked); the camera opening (the scanner
+   started, with its scan id); a refusal, with whether Android will ask
+   again; and the scan started again after Settings.
+8. **Copy.** `pairing_camera_why` becomes: "Scan the QR code **flankr
+   pair** shows. The camera opens with this screen, and Android asks for
+   the Camera permission while it isn't allowed. Frames are decoded on the
+   phone, never saved or sent, and the camera closes when you leave this
+   screen." `PAIRING_COPY.md`'s note on the window's camera says the camera
+   starts on opening.
+9. **Tests** (`apps/companion/src/pairing_scan_tests.rs`, scripted, host
+   with `--camera`; the host's CAMERA is always granted, so Android's
+   request is the scripted camera's answer to `start_qr`): the first-run
+   window opened starts the scan with no tap; opened with CAMERA refused
+   (`camera-deny`) → the request's refusal, the line, **Tap to scan** and
+   **Paste a link**; refused for good (`camera-deny-forever`) → the line
+   and **Open Settings**; the drawer's **+** on a paired app starts the
+   scan as the first-run window does, and asks again on a second opening
+   after a refusal; a cancelled pairing and **Paste a link** do not start
+   it again.
+10. **Version.** A fix: app 0.7.1 → 0.7.2 with its `apps/UPDATES.md`
+    entry, tag `flankr-app-v0.7.2` (FLANKR RULE 1). The client and the
+    daemon do not change.
