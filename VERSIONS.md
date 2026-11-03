@@ -1191,3 +1191,22 @@ decision 3):
 - `Mirror` carries a grid's input rows in every frame made from it, and a
   grid that differs from the last only in them makes a frame with no
   rows.
+
+## libflankr_proto 0.5.11 — 2026-11-03 (the commit tagged `libflankr_proto-v0.5.11`)
+
+Additive (a new method and its types, and appended fields, by the
+owner's ruling that appending to a struct is additive; plan 20261103_01,
+decisions 1, 3 and 5.2):
+
+- **Added:** `TerminalOpenParams::input_rows: bool` (appended, default
+  false, not written when false): the phone reads libflankr_term 0.1.2's
+  input rows trailer, so the daemon finds the agent's input bar and
+  writes it on the terminal's frames.
+- **Added:** `TerminalOpenResult::input: Option<bool>` (appended, default
+  `None`, not written when `None`): whether the pane takes typing once
+  armed, by the daemon's gates. An older daemon sends none.
+- **Added:** `common::methods::TERMINAL_CHOICE_TAP`
+  (`terminal.choice_tap`), `TerminalChoiceTapParams { terminal_id, row }`
+  and `TerminalChoiceTapResult { question, option, label }`: a tap on a
+  choice question's option in the terminal, picked by the agent's keys;
+  `NOT_PERMITTED` when the row is no option. Gated as `terminal.input` is.

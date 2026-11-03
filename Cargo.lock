@@ -2350,7 +2350,7 @@ dependencies = [
 
 [[package]]
 name = "libflankr_proto"
-version = "0.5.10"
+version = "0.5.11"
 dependencies = [
  "bip39",
  "blake2",

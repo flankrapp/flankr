@@ -122,6 +122,14 @@ pub mod methods {
     /// (plan 20261028_05, the 23:43 EDT amendment, item 2). Gated as
     /// [`TERMINAL_INPUT`] is. Added in 0.5.4.
     pub const TERMINAL_PASTE: &str = "terminal.paste";
+    /// A tap on a row of an armed terminal while a choice question is open
+    /// for its pane ([`TerminalChoiceTapParams`](super::TerminalChoiceTapParams)
+    /// → [`TerminalChoiceTapResult`](super::TerminalChoiceTapResult)): the
+    /// daemon matches the row to an option on the agent's question screen
+    /// and sends the keys that pick it, or answers `NOT_PERMITTED` when the
+    /// row is no option (plan 20261103_01, decision 5.2). Gated as
+    /// [`TERMINAL_INPUT`] is. Added in 0.5.11.
+    pub const TERMINAL_CHOICE_TAP: &str = "terminal.choice_tap";
     /// Answer an open choice question
     /// ([`ChoiceAnswerParams`](super::ChoiceAnswerParams) →
     /// [`ChoiceAnswerResult`](super::ChoiceAnswerResult)), plan 20261029_01,
@@ -1711,6 +1719,11 @@ pub struct TerminalOpenParams {
     /// from older phones, whose frames never carry it. Added in 0.4.2.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub cursor: bool,
+    /// The phone reads libflankr_term 0.1.2's input rows trailer, so the
+    /// daemon may find the agent's input bar and write it (plan 20261103_01,
+    /// decision 3). Absent (false) from older phones. Added in 0.5.11.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub input_rows: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1731,6 +1744,13 @@ pub struct TerminalOpenResult {
     /// none: [`TerminalSource::Poll`]. Added in 0.4.2.
     #[serde(default)]
     pub source: TerminalSource,
+    /// Whether this pane takes typing once armed, by the daemon's gates
+    /// (`[terminal] input`, the agent's `terminal_input`, a principal that
+    /// may approve; plan 20261103_01, decisions 1 and 6 as amended). An
+    /// older daemon sends none: `TerminalInfo::input` is all there is to
+    /// go by. Added in 0.5.11.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<bool>,
 }
 
 /// Where a terminal's frames come from (plan 20261027_08, decisions 10
@@ -1934,6 +1954,24 @@ pub struct TerminalResizeParams {
     pub terminal_id: u32,
     pub cols: u16,
     pub rows: u16,
+}
+
+/// `terminal.choice_tap` (plan 20261103_01, decision 5.2): `row` is the
+/// tapped row of the frame the phone shows, from 0 at the top. Added in
+/// 0.5.11.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalChoiceTapParams {
+    pub terminal_id: u32,
+    pub row: u16,
+}
+
+/// What `terminal.choice_tap` picked: the question on screen and its
+/// option, both from 0, and the option's label. Added in 0.5.11.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalChoiceTapResult {
+    pub question: u32,
+    pub option: u32,
+    pub label: String,
 }
 
 #[cfg(test)]
@@ -3227,6 +3265,7 @@ mod tests {
             cols_hint: Some(60),
             rows_hint: None,
             cursor: false,
+            input_rows: false,
         };
         round_trip(open.clone());
         assert_eq!(
@@ -3243,6 +3282,7 @@ mod tests {
             rows: 60,
             cursor: false,
             source: TerminalSource::Poll,
+            input: None,
         });
         round_trip(TerminalCloseParams { terminal_id: 1 });
         assert_eq!(
@@ -3317,6 +3357,7 @@ mod tests {
             cols_hint: Some(48),
             rows_hint: Some(30),
             cursor: true,
+            input_rows: false,
         };
         round_trip(open.clone());
         assert_eq!(
@@ -3329,6 +3370,7 @@ mod tests {
             rows: 30,
             cursor: true,
             source: TerminalSource::Attached,
+            input: None,
         };
         round_trip(attached);
         assert_eq!(
@@ -3452,6 +3494,62 @@ mod tests {
                 "pane_id": "p1", "command": "", "parts": [{"video": "x"}]
             }))
             .is_err()
+        );
+    }
+
+    #[test]
+    fn input_rows_the_pane_s_typing_and_the_choice_tap() {
+        // Plan 20261103_01, decisions 1, 3 and 5.2.
+        assert_eq!(methods::TERMINAL_CHOICE_TAP, "terminal.choice_tap");
+        let open = TerminalOpenParams {
+            pane_id: "w1:p1".into(),
+            cols_hint: None,
+            rows_hint: None,
+            cursor: true,
+            input_rows: true,
+        };
+        round_trip(open.clone());
+        assert_eq!(
+            serde_json::to_value(&open).unwrap(),
+            json!({"pane_id": "w1:p1", "cursor": true, "input_rows": true})
+        );
+        let old: TerminalOpenParams =
+            serde_json::from_value(json!({"pane_id": "w1:p1", "cursor": true})).unwrap();
+        assert!(!old.input_rows);
+
+        let typed = TerminalOpenResult {
+            terminal_id: 2,
+            cols: 48,
+            rows: 30,
+            cursor: true,
+            source: TerminalSource::Attached,
+            input: Some(false),
+        };
+        round_trip(typed);
+        assert_eq!(serde_json::to_value(typed).unwrap()["input"], json!(false));
+        let old: TerminalOpenResult =
+            serde_json::from_value(json!({"terminal_id": 2, "cols": 48, "rows": 30})).unwrap();
+        assert_eq!(old.input, None);
+        assert!(serde_json::to_value(old).unwrap().get("input").is_none());
+
+        let tap = TerminalChoiceTapParams {
+            terminal_id: 2,
+            row: 7,
+        };
+        round_trip(tap);
+        assert_eq!(
+            serde_json::to_value(tap).unwrap(),
+            json!({"terminal_id": 2, "row": 7})
+        );
+        let picked = TerminalChoiceTapResult {
+            question: 0,
+            option: 1,
+            label: "Amber".into(),
+        };
+        round_trip(picked.clone());
+        assert_eq!(
+            serde_json::to_value(&picked).unwrap(),
+            json!({"question": 0, "option": 1, "label": "Amber"})
         );
     }
 
