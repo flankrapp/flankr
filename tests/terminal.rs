@@ -1016,10 +1016,11 @@ async fn a_shell_s_terminal_is_logged_but_never_its_keys() {
     assert!(!logged.iter().any(|l| l.contains(secret)), "{logged:?}");
 }
 
-/// A Claude Code screen with its prompt between two rules.
+/// A Claude Code screen with its prompt between two rules, the upper one
+/// with the session's name in it.
 const PROMPT_SCREEN: [&str; 5] = [
     "● Done.",
-    "────────────────────────────────────────",
+    "───────────────────────── Fix the test ─",
     "> fix the test",
     "────────────────────────────────────────",
     "  ? for shortcuts",
@@ -1048,7 +1049,8 @@ async fn frames_carry_the_input_bar_for_a_phone_that_asks() {
     let first = phone.frame().await;
     assert_eq!(
         first.input_rows,
-        Some(libflankr_term::RowSpan { first: 2, last: 2 })
+        Some(libflankr_term::RowSpan { first: 1, last: 3 }),
+        "the prompt's box, its rules included"
     );
     let mut screen = Screen::default();
     assert!(screen.apply(&first));

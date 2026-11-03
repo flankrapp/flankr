@@ -1,15 +1,19 @@
 //! The agent's input bar in a terminal frame
 //! (docs/design/20261103_01_TERMINAL_TAPS_AND_SHELL_PANES_PLAN.md,
-//! decision 3 and step 1).
+//! decision 3 and step 1, and its 2026-11-03 17:47 EST amendment for
+//! Claude Code).
 //!
 //! Per frame, the daemon finds the rows of the pane's input bar from the
 //! pane's agent kind, and sends them with the frame
 //! ([`libflankr_term::Grid::input_rows`]) to a phone that asked; a tap on
 //! them raises the soft keyboard (decision 4).
 //!
-//! - **Claude Code** (`claude`): the rows between the two full-width
-//!   horizontal rules (`─`) nearest the bottom that enclose a line starting
-//!   `>` or `❯` after optional box characters.
+//! - **Claude Code** (`claude`): the two full-width horizontal rules (`─`)
+//!   nearest the bottom that enclose a line starting `>` or `❯` after
+//!   optional box characters, and the rows between them: the prompt's box,
+//!   rules included, so an empty prompt is three rows to tap and not one.
+//!   Either rule may carry a title (`──── Fix the build ─`): Claude Code
+//!   writes the session's name into the rule above its prompt.
 //! - **Codex** (`codex`): the rows from the last line starting `›` to the
 //!   next rule or the frame's bottom.
 //! - **agy** (`agy`): the rows from its last prompt line (`>` after
@@ -55,6 +59,20 @@ fn is_rule(line: &str, cols: u16) -> bool {
     n >= RULE_MIN && n * 5 >= cols as usize * 4 && t.chars().all(|c| c == '─')
 }
 
+/// Whether `line` is a full-width rule with a title in it, as Claude Code
+/// draws the one above its prompt once the session has a name (`───── Fix
+/// the build ─`): `─` at both ends, one run of other text between, and as
+/// wide as [`is_rule`] asks.
+fn is_titled_rule(line: &str, cols: u16) -> bool {
+    let t = line.trim();
+    let n = t.chars().count();
+    if n * 5 < cols as usize * 4 || !t.starts_with('─') || !t.ends_with('─') {
+        return false;
+    }
+    let title = t.trim_matches('─');
+    !title.is_empty() && !title.contains('─')
+}
+
 /// The span `first..=last` when it is not empty.
 fn span(first: usize, last: usize) -> Option<RowSpan> {
     (first <= last).then(|| RowSpan {
@@ -82,11 +100,11 @@ fn is_option(rest: &str) -> bool {
     digits > 0 && rest[digits..].starts_with(". ")
 }
 
-/// Claude Code: between the two rules nearest the bottom that enclose a
-/// prompt line.
+/// Claude Code: the two rules nearest the bottom that enclose a prompt
+/// line, and the rows between them.
 fn claude(lines: &[String], cols: u16) -> Option<RowSpan> {
     let rules: Vec<usize> = (0..lines.len())
-        .filter(|&i| is_rule(&lines[i], cols))
+        .filter(|&i| is_rule(&lines[i], cols) || is_titled_rule(&lines[i], cols))
         .collect();
     let prompt = |l: &String| {
         let l = after_box(l);
@@ -100,7 +118,7 @@ fn claude(lines: &[String], cols: u16) -> Option<RowSpan> {
         .windows(2)
         .rev()
         .find(|pair| lines[pair[0] + 1..pair[1]].iter().any(prompt))
-        .and_then(|pair| span(pair[0] + 1, pair[1] - 1))
+        .and_then(|pair| span(pair[0], pair[1]))
 }
 
 /// From the last line that `is_prompt` to the row before the next rule, or
@@ -151,7 +169,7 @@ mod tests {
              {RULE}\n\
              \x20 ? for shortcuts                       ◐ medium\n"
         );
-        assert_eq!(find("claude", &grid(&frame)), rows(3, 3));
+        assert_eq!(find("claude", &grid(&frame)), rows(2, 4));
 
         // A prompt of two lines, the pointer as ❯, and an earlier pair of
         // rules in the transcript (a table) that encloses no prompt.
@@ -165,12 +183,43 @@ mod tests {
              {RULE}\n\
              \x20 ⏵⏵ accept edits on\n"
         );
-        assert_eq!(find("claude", &grid(&frame)), rows(4, 5));
+        assert_eq!(find("claude", &grid(&frame)), rows(3, 6));
 
         // The older boxed prompt: corners on the rules, sides on the line.
         let boxed =
             format!("text\n╭{RULE}╮\n│ > hello                                │\n╰{RULE}╯\n");
-        assert_eq!(find("claude", &grid(&boxed)), rows(2, 2));
+        assert_eq!(find("claude", &grid(&boxed)), rows(1, 3));
+    }
+
+    #[test]
+    fn claude_code_s_titled_rule_above_its_prompt_is_a_rule() {
+        // Today's Claude Code, in a session with a name, at a phone's
+        // width (44 columns): the name in the rule above the prompt, an
+        // empty `❯`, a plain rule, then the mode line and the agents.
+        let top = format!("{} Fix the badge colour ─", "─".repeat(20));
+        let bottom = "─".repeat(44);
+        let frame = format!(
+            "● Done.\n\
+             \n\
+             ✶ Billowing… (5s · ↓ 25 tokens)\n\
+             \n\
+             {top}\n\
+             ❯\x20\n\
+             {bottom}\n\
+             \x20 ⏵⏵ auto mode on (shift+tab to cycle)\n\
+             \n\
+             \x20 ⏺ main\n\
+             \x20 ◯ general-purpose  Checking… 1m 27s\n"
+        );
+        let g = grid(&frame);
+        assert_eq!(g.cols, 44);
+        assert_eq!(find("claude", &g), rows(4, 6));
+        // A title with no dash after it, or a short titled line in the
+        // transcript, is no rule.
+        let frame = format!("{} Fix\n❯ hi\n{bottom}\n", "─".repeat(40));
+        assert_eq!(find("claude", &grid(&frame)), None);
+        let frame = format!("── a heading ──\n❯ hi\n{bottom}\n");
+        assert_eq!(find("claude", &grid(&frame)), None);
     }
 
     #[test]

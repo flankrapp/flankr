@@ -272,3 +272,8 @@ These changes came before the program had version numbers.
 
 **Fixed**
 - A Claude Code session continued after its context ran out keeps updating in the phone's list view. Claude goes on in a new transcript while herdr still names the old one; the daemon now follows the old transcript's `continued-in` record to the new one (and on, if it is continued again), the earlier conversation staying above the new. The log says `[sessions] <pane>: Claude continued <old id> as <new id>; following it` once for each pane at each switch.
+
+## 0.7.10 — 2026-11-03
+
+**Fixed**
+- A tap on a Claude Code session's input line in the phone's terminal view raises the phone's keyboard again in a session that has a name. Claude Code writes the name into the line above its prompt, and the daemon no longer took that line for something else, so it found no input line to send the phone. The input line the phone gets is now the prompt's whole box, its two lines included, so it is easier to hit.
