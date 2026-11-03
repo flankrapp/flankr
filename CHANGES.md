@@ -3924,3 +3924,12 @@ and flankr-companion 0.7.4 are additive patches as the item says.
    flankr-companion 0.5.0, 0.6.0 and 0.7.0, flankr-audio's version is not
    moved here; Rule 5.5 may ask for flankr-audio 0.3.0, which is left to
    the owner.
+
+## 2026-11-02 21:57 EST — The daemon in the background by default
+
+Plan: `docs/design/20261102_01_BACKGROUND_DAEMON_PLAN.md` (Draft). On the
+owner's instruction (2026-11-02): `flankr serve` starts the daemon
+detached and returns, `flankr server` is the foreground server process,
+`--foreground` keeps today's behaviour, `--stop` stops it; a new crate,
+`flankr-daemon`, written from the OS documentation (not herdr's code),
+does the detaching.
