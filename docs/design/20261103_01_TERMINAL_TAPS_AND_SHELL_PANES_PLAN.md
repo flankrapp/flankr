@@ -1,7 +1,7 @@
 ---
 title: Terminal taps and shell panes
 date: 2026-11-03
-status: Draft
+status: In implementation
 covers:
   - "Terminal view's keys row shown whenever typing is allowed, with input
     armed by the first thing that sends input rather than by a tap"
@@ -225,3 +225,10 @@ and 9 and step 2 that name `[terminal] shells`:
 
 The owner approved the plan as it stands at `4e499f2` (2026-11-03:
 "approve"). The first implementing commit sets `In implementation`.
+
+## Amendment — 2026-11-03 13:22 EST: implementation started; the document is now immutable
+
+Step 1 has begun: libflankr_term 0.1.2 carries the input bar's rows on
+a grid and a frame (`RowSpan`, a second trailer after the cursor's),
+and `status` is `In implementation`. From here the document changes
+only on the owner's explicit instruction.

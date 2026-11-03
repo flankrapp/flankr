@@ -66,6 +66,13 @@ impl Mirror {
         self.acked.as_ref().map_or(0, |(seq, _)| *seq)
     }
 
+    /// The grid last sent, which a later [`Mirror::update`] that returns
+    /// `None` equals; `None` before the first frame or after a
+    /// [`Mirror::reset`] (0.1.2).
+    pub fn last_sent(&self) -> Option<&Grid> {
+        self.sent.back().map(|(_, grid)| &**grid)
+    }
+
     /// The frame to send for `grid`, or `None` when it equals the last grid
     /// sent (and [`Mirror::reset`] has not been called since).
     pub fn update(&mut self, grid: Grid) -> Option<Frame> {
@@ -155,7 +162,7 @@ impl Mirror {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Cursor, Screen, parse_ansi};
+    use crate::{Cursor, RowSpan, Screen, parse_ansi};
 
     #[test]
     fn unchanged_grids_send_nothing_until_reset() {
@@ -305,6 +312,34 @@ mod tests {
         };
         assert!(s.apply(&m.update(polled).unwrap()));
         assert_eq!(s.cursor(), None);
+    }
+
+    #[test]
+    fn input_rows_travel_with_every_frame_and_alone_make_one() {
+        let base = parse_ansi("text\n> prompt\nmore");
+        let with = |first: u16| Grid {
+            input_rows: Some(RowSpan { first, last: 1 }),
+            ..base.clone()
+        };
+        let mut m = Mirror::new(1);
+        let mut s = Screen::default();
+        assert_eq!(m.last_sent(), None);
+        let f = m.update(with(1)).unwrap();
+        assert_eq!(f.input_rows, Some(RowSpan { first: 1, last: 1 }));
+        assert!(s.apply(&Frame::decode(&f.encode()).unwrap()));
+        assert_eq!(s.input_rows(), f.input_rows);
+        assert_eq!(m.last_sent(), Some(&with(1)));
+        m.ack(s.seq());
+        // A change of the span alone is a frame with no rows.
+        let f = m.update(with(0)).unwrap();
+        assert_eq!((f.base_seq, f.diffs.len()), (1, 0));
+        assert!(s.apply(&Frame::decode(&f.encode()).unwrap()));
+        assert_eq!(s.input_rows(), Some(RowSpan { first: 0, last: 1 }));
+        // Gone again: cleared.
+        assert!(s.apply(&m.update(base.clone()).unwrap()));
+        assert_eq!(s.input_rows(), None);
+        m.reset();
+        assert_eq!(m.last_sent(), None);
     }
 
     #[test]

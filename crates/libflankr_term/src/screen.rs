@@ -3,13 +3,14 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use crate::{Cursor, Frame, Grid, HISTORY, Row};
+use crate::{Cursor, Frame, Grid, HISTORY, Row, RowSpan};
 
 static EMPTY: Grid = Grid {
     cols: 0,
     rows: 0,
     lines: Vec::new(),
     cursor: None,
+    input_rows: None,
 };
 
 /// One open terminal on the phone's side (decision 5).
@@ -70,6 +71,7 @@ impl Screen {
             rows: frame.rows,
             lines,
             cursor: frame.cursor,
+            input_rows: frame.input_rows,
         };
         self.shown.push_back((frame.seq, Arc::new(grid)));
         true
@@ -89,6 +91,13 @@ impl Screen {
     /// so this is the newest frame's, `None` when it carried none.
     pub fn cursor(&self) -> Option<Cursor> {
         self.grid().cursor
+    }
+
+    /// The rows of the agent's input bar in the frame shown, when the
+    /// daemon found them: every frame carries them whole, so the newest
+    /// frame's (0.1.2).
+    pub fn input_rows(&self) -> Option<RowSpan> {
+        self.grid().input_rows
     }
 
     /// The width of the grid shown.

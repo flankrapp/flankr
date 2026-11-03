@@ -1164,3 +1164,30 @@ owner's instruction to keep the same version series, as for 0.8.1.
 - **Changed (behaviour):** `Input::StartDictation` while a typed message
   is open and collecting goes on by voice with its text kept, as
   `Input::ContinueByVoice` does, in place of starting an empty message.
+
+## libflankr_term 0.1.2 — 2026-11-03 (the commit tagged `libflankr_term-v0.1.2`)
+
+Additive (a new type, appended fields and new functions, by the owner's
+ruling that appending to a struct is additive; plan 20261103_01,
+decision 3):
+
+- **Added:** `RowSpan { first, last }`, a span of rows, both included,
+  with `RowSpan::contains(row)`.
+- **Added:** `Grid::input_rows: Option<RowSpan>` (appended,
+  `serde(default)`), the rows of the agent's input bar. `Grid::from_lines`,
+  and so `parse_ansi`, give `None`.
+- **Added:** `Frame::input_rows: Option<RowSpan>` (appended,
+  `serde(default)`), written by `Frame::encode` as a 5-byte trailer after
+  the rows and the cursor trailer when `Some` (`u8 2, u16 first, u16
+  last`) and read by `Frame::decode` when present, refused as
+  `DecodeError::TrailingBytes` unless `first <= last < rows`. 0.1.1 bytes
+  decode unchanged.
+- **Added:** `Frame::encode_for(cursor, input_rows)` and
+  `Frame::encoded_len_for(cursor, input_rows)`; `INPUT_ROWS_TRAILER_LEN`
+  (5). `Frame::encode_with(cursor)` is unchanged, the 0.1.1 encoding,
+  without the input rows trailer, for a phone that did not ask for it.
+- **Added:** `Screen::input_rows()`, the newest frame's input rows, and
+  `Mirror::last_sent()`, the grid last sent.
+- `Mirror` carries a grid's input rows in every frame made from it, and a
+  grid that differs from the last only in them makes a frame with no
+  rows.

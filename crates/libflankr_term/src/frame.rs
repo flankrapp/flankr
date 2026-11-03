@@ -4,7 +4,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Color, Cursor, Grid, Row, Run};
+use crate::{Color, Cursor, Grid, Row, RowSpan, Run};
 
 /// One row of a [`Frame`]: its index and its runs.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -54,6 +54,23 @@ pub struct RowDiff {
 /// (0.1.0 decodes it as `TrailingBytes`), so the daemon writes that
 /// phone's frames with [`Frame::encode_with`]`(false)`, which leaves it
 /// out.
+///
+/// ## The input rows trailer (0.1.2)
+///
+/// When [`Frame::input_rows`] is `Some`, [`Frame::encode`] writes
+/// [`INPUT_ROWS_TRAILER_LEN`] more bytes after the rows and the cursor
+/// trailer, if there is one
+/// (docs/design/20261103_01_TERMINAL_TAPS_AND_SHELL_PANES_PLAN.md,
+/// decision 3):
+///
+/// ```text
+/// u8 2, u16 first, u16 last
+/// ```
+///
+/// `first <= last`, both rows of the frame. A frame without it is byte for
+/// byte the 0.1.1 frame. 0.1.1 cannot read it, so the daemon writes it
+/// only for a phone that asked (`terminal.open`'s `input_rows`), with
+/// [`Frame::encode_for`].
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Frame {
     pub terminal_id: u32,
@@ -67,7 +84,18 @@ pub struct Frame {
     /// diff included. Added in 0.1.1.
     #[serde(default)]
     pub cursor: Option<Cursor>,
+    /// The rows of the agent's input bar, written as the input rows
+    /// trailer when `Some`. Every frame of a grid that carries them carries
+    /// them whole, a diff included. Added in 0.1.2.
+    #[serde(default)]
+    pub input_rows: Option<RowSpan>,
 }
+
+/// The length of the input rows trailer that follows a frame's rows (and
+/// its cursor trailer) when it carries input rows.
+pub const INPUT_ROWS_TRAILER_LEN: usize = 1 + 2 + 2;
+
+const INPUT_ROWS_TAG: u8 = 2;
 
 /// The length of the cursor trailer that follows a frame's rows when it
 /// carries a cursor.
@@ -182,6 +210,7 @@ impl Frame {
                 })
                 .collect(),
             cursor: grid.cursor,
+            input_rows: grid.input_rows,
         }
     }
 
@@ -191,18 +220,27 @@ impl Frame {
     }
 
     /// The length of [`Frame::encode`]'s bytes, without encoding: the
-    /// cursor trailer included when the frame carries a cursor.
+    /// cursor trailer included when the frame carries a cursor, and the
+    /// input rows trailer when it carries input rows.
     pub fn encoded_len(&self) -> usize {
-        self.encoded_len_with(true)
+        self.encoded_len_for(true, true)
     }
 
     /// The length of [`Frame::encode_with`]`(cursor)`'s bytes.
     pub fn encoded_len_with(&self, cursor: bool) -> usize {
-        let trailer = if cursor && self.cursor.is_some() {
+        self.encoded_len_for(cursor, false)
+    }
+
+    /// The length of [`Frame::encode_for`]`(cursor, input_rows)`'s bytes.
+    pub fn encoded_len_for(&self, cursor: bool, input_rows: bool) -> usize {
+        let mut trailer = if cursor && self.cursor.is_some() {
             CURSOR_TRAILER_LEN
         } else {
             0
         };
+        if input_rows && self.input_rows.is_some() {
+            trailer += INPUT_ROWS_TRAILER_LEN;
+        }
         trailer
             + HEADER_LEN
             + self
@@ -219,16 +257,25 @@ impl Frame {
     }
 
     /// The frame's bytes, with the cursor trailer when the frame carries a
-    /// cursor. At most `u16::MAX` rows are written.
+    /// cursor and the input rows trailer when it carries input rows. At
+    /// most `u16::MAX` rows are written.
     pub fn encode(&self) -> Vec<u8> {
-        self.encode_with(true)
+        self.encode_for(true, true)
     }
 
     /// The frame's bytes, with the cursor trailer only when `cursor` is
-    /// true and the frame carries one. `encode_with(false)` is the 0.1.0
-    /// encoding, for a phone that did not ask for the cursor.
+    /// true and the frame carries one, and never the input rows trailer.
+    /// `encode_with(false)` is the 0.1.0 encoding, for a phone that did not
+    /// ask for the cursor; `encode_with(true)` the 0.1.1 encoding.
     pub fn encode_with(&self, cursor: bool) -> Vec<u8> {
-        let mut out = Vec::with_capacity(self.encoded_len_with(cursor));
+        self.encode_for(cursor, false)
+    }
+
+    /// The frame's bytes, with each trailer only when it is asked for and
+    /// the frame carries what it holds: `input_rows` for a phone that asked
+    /// for them (0.1.2).
+    pub fn encode_for(&self, cursor: bool, input_rows: bool) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.encoded_len_for(cursor, input_rows));
         out.extend_from_slice(&self.terminal_id.to_be_bytes());
         out.extend_from_slice(&self.seq.to_be_bytes());
         out.extend_from_slice(&self.base_seq.to_be_bytes());
@@ -269,13 +316,19 @@ impl Frame {
             out.push(bits);
             out.push(c.shape);
         }
+        if input_rows && let Some(span) = &self.input_rows {
+            out.push(INPUT_ROWS_TAG);
+            out.extend_from_slice(&span.first.to_be_bytes());
+            out.extend_from_slice(&span.last.to_be_bytes());
+        }
         out
     }
 
-    /// Read a frame's bytes, with or without the cursor trailer. Every byte
-    /// must belong to the frame: after the rows only a whole trailer (tag
-    /// 1, bits 4-7 zero) is read, and anything else is
-    /// [`DecodeError::TrailingBytes`]. Rows are
+    /// Read a frame's bytes, with or without the cursor trailer and the
+    /// input rows trailer. Every byte must belong to the frame: after the
+    /// rows only a whole cursor trailer (tag 1, bits 4-7 zero) and then a
+    /// whole input rows trailer (tag 2, `first <= last < rows`) are read,
+    /// and anything else is [`DecodeError::TrailingBytes`]. Rows are
     /// below `rows` and appear once; a full frame carries every row; `seq`
     /// is not 0 and a diff's `base_seq` is older than its `seq`.
     pub fn decode(bytes: &[u8]) -> Result<Frame, DecodeError> {
@@ -316,18 +369,38 @@ impl Frame {
             }
             diffs.push(RowDiff { row, runs });
         }
-        let cursor = match *r.bytes {
+        // A refusal counts every byte after the rows.
+        let trailing = r.bytes.len();
+        let (cursor, rest) = match *r.bytes {
+            [CURSOR_TAG, c0, c1, r0, r1, bits, shape, ref rest @ ..]
+                if bits & !CURSOR_BITS == 0 =>
+            {
+                let cursor = Cursor {
+                    col: u16::from_be_bytes([c0, c1]),
+                    row: u16::from_be_bytes([r0, r1]),
+                    visible: bits & CURSOR_VISIBLE != 0,
+                    shape,
+                    mouse_reporting: bits & CURSOR_MOUSE_REPORTING != 0,
+                    alternate_screen: bits & CURSOR_ALTERNATE_SCREEN != 0,
+                    stale: bits & CURSOR_STALE != 0,
+                };
+                (Some(cursor), rest)
+            }
+            ref rest => (None, rest),
+        };
+        let input_rows = match *rest {
             [] => None,
-            [CURSOR_TAG, c0, c1, r0, r1, bits, shape] if bits & !CURSOR_BITS == 0 => Some(Cursor {
-                col: u16::from_be_bytes([c0, c1]),
-                row: u16::from_be_bytes([r0, r1]),
-                visible: bits & CURSOR_VISIBLE != 0,
-                shape,
-                mouse_reporting: bits & CURSOR_MOUSE_REPORTING != 0,
-                alternate_screen: bits & CURSOR_ALTERNATE_SCREEN != 0,
-                stale: bits & CURSOR_STALE != 0,
-            }),
-            ref rest => return Err(DecodeError::TrailingBytes(rest.len())),
+            [INPUT_ROWS_TAG, f0, f1, l0, l1] => {
+                let span = RowSpan {
+                    first: u16::from_be_bytes([f0, f1]),
+                    last: u16::from_be_bytes([l0, l1]),
+                };
+                if span.first > span.last || span.last >= rows {
+                    return Err(DecodeError::TrailingBytes(trailing));
+                }
+                Some(span)
+            }
+            _ => return Err(DecodeError::TrailingBytes(trailing)),
         };
         if base_seq == 0 && count != rows {
             return Err(DecodeError::MissingRows { count, rows });
@@ -340,6 +413,7 @@ impl Frame {
             rows,
             diffs,
             cursor,
+            input_rows,
         })
     }
 }
@@ -410,6 +484,7 @@ mod tests {
                 },
             ],
             cursor: None,
+            input_rows: None,
         };
         assert_eq!(Frame::decode(&diff.encode()).unwrap(), diff);
     }
@@ -500,6 +575,52 @@ mod tests {
     }
 
     #[test]
+    fn the_input_rows_trailer_round_trips_after_the_cursor() {
+        let mut frame = sample();
+        let plain = frame.encode();
+        frame.input_rows = Some(RowSpan { first: 1, last: 2 });
+        let bytes = frame.encode();
+        assert_eq!(bytes.len(), frame.encoded_len());
+        assert_eq!(&bytes[plain.len()..], [2, 0, 1, 0, 2]);
+        assert_eq!(Frame::decode(&bytes).unwrap(), frame);
+
+        // After the cursor trailer, both read back.
+        frame.cursor = Some(a_cursor());
+        let both = frame.encode();
+        assert_eq!(
+            both.len(),
+            plain.len() + CURSOR_TRAILER_LEN + INPUT_ROWS_TRAILER_LEN
+        );
+        assert_eq!(Frame::decode(&both).unwrap(), frame);
+
+        // Left out unless asked: encode_with is the 0.1.1 encoding.
+        let with_cursor = frame.encode_with(true);
+        assert_eq!(with_cursor.len(), plain.len() + CURSOR_TRAILER_LEN);
+        assert_eq!(frame.encode_for(true, true), both);
+        assert_eq!(frame.encoded_len_for(false, true), plain.len() + 5);
+        let back = Frame::decode(&with_cursor).unwrap();
+        assert_eq!((back.cursor, back.input_rows), (frame.cursor, None));
+
+        // A span upside down or past the rows, a cut one and a wrong tag.
+        let rows_end = both.len() - INPUT_ROWS_TRAILER_LEN;
+        let refused = |first: u16, last: u16| {
+            let mut f = frame.clone();
+            f.input_rows = Some(RowSpan { first, last });
+            Frame::decode(&f.encode())
+        };
+        let t = CURSOR_TRAILER_LEN + INPUT_ROWS_TRAILER_LEN;
+        assert_eq!(refused(2, 1), Err(DecodeError::TrailingBytes(t)));
+        assert_eq!(refused(0, frame.rows), Err(DecodeError::TrailingBytes(t)));
+        assert_eq!(
+            Frame::decode(&both[..rows_end + 3]),
+            Err(DecodeError::TrailingBytes(CURSOR_TRAILER_LEN + 3))
+        );
+        let mut tag = both.clone();
+        tag[rows_end] = 3;
+        assert_eq!(Frame::decode(&tag), Err(DecodeError::TrailingBytes(t)));
+    }
+
+    #[test]
     fn the_header_is_big_endian() {
         let bytes = Frame {
             terminal_id: 0x0102_0304,
@@ -509,6 +630,7 @@ mod tests {
             rows: 0,
             diffs: vec![],
             cursor: None,
+            input_rows: None,
         }
         .encode();
         assert_eq!(
@@ -534,6 +656,7 @@ mod tests {
                 }],
             }],
             cursor: None,
+            input_rows: None,
         };
         let bytes = frame.encode();
         assert_eq!(bytes.len(), frame.encoded_len());
@@ -594,6 +717,7 @@ mod tests {
             rows: 3,
             diffs: vec![RowDiff::default(), RowDiff::default()],
             cursor: None,
+            input_rows: None,
         };
         assert_eq!(
             Frame::decode(&dup.encode()),
@@ -630,6 +754,7 @@ mod tests {
             rows: 1,
             diffs: vec![],
             cursor: None,
+            input_rows: None,
         };
         assert_eq!(
             Frame::decode(&diff.encode()),

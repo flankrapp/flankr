@@ -17,6 +17,10 @@
 //! * Since 0.1.1 a grid and a frame may carry a [`Cursor`]
 //!   (docs/design/20261027_08_HERDR_TERMINAL_CRATE_PLAN.md, decision 9),
 //!   written as a trailer after a frame's rows; see [`Frame`].
+//! * Since 0.1.2 a grid and a frame may carry the rows of the agent's
+//!   input bar, a [`RowSpan`]
+//!   (docs/design/20261103_01_TERMINAL_TAPS_AND_SHELL_PANES_PLAN.md,
+//!   decision 3), written as a second trailer; see [`Frame`].
 //!
 //! The crate is pure state: no herdr, link or protocol dependency.
 
@@ -26,7 +30,7 @@ mod mirror;
 mod screen;
 
 pub use ansi::{MAX_COLS, MAX_ROWS, parse_ansi};
-pub use frame::{CURSOR_TRAILER_LEN, DecodeError, Frame, RowDiff};
+pub use frame::{CURSOR_TRAILER_LEN, DecodeError, Frame, INPUT_ROWS_TRAILER_LEN, RowDiff};
 pub use mirror::Mirror;
 pub use screen::Screen;
 
@@ -140,6 +144,26 @@ pub struct Grid {
     /// `None`). Added in 0.1.1.
     #[serde(default)]
     pub cursor: Option<Cursor>,
+    /// The rows of the agent's input bar, when the source found them (the
+    /// daemon does, per frame, for a phone that asked). Added in 0.1.2.
+    #[serde(default)]
+    pub input_rows: Option<RowSpan>,
+}
+
+/// A span of a grid's rows, `first` to `last`, both included, from 0 at
+/// the top (docs/design/20261103_01_TERMINAL_TAPS_AND_SHELL_PANES_PLAN.md,
+/// decision 3). Added in 0.1.2.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct RowSpan {
+    pub first: u16,
+    pub last: u16,
+}
+
+impl RowSpan {
+    /// Whether `row` is in the span.
+    pub fn contains(&self, row: u16) -> bool {
+        (self.first..=self.last).contains(&row)
+    }
 }
 
 /// A terminal's cursor and the modes that go with it
@@ -167,7 +191,7 @@ pub struct Cursor {
 
 impl Grid {
     /// A grid of `lines`, `cols` the widest of them (both clamped to
-    /// `u16`), with no cursor.
+    /// `u16`), with no cursor and no input rows.
     pub fn from_lines(lines: Vec<Row>) -> Grid {
         let cols = lines.iter().map(row_width).max().unwrap_or(0);
         Grid {
@@ -175,6 +199,7 @@ impl Grid {
             rows: lines.len().min(u16::MAX as usize) as u16,
             lines,
             cursor: None,
+            input_rows: None,
         }
     }
 
