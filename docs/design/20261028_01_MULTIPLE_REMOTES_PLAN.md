@@ -1148,3 +1148,20 @@ protocol), and for a version 2 link, which has no request.
    no listener ending in `PairUnreachable` with no `PairingWords`; the
    app's scripted run of a loopback-only link with `--remote-loopback`
    shows the local-only text and no device code.
+
+## Amendment — 2026-11-03 12:40 EST: a finished pairing shows the remote's details modal, not "Paired with <name>"
+
+On the owner's explicit instruction (Rule 1.5), 2026-11-03, given through
+the lead: "do we need two modals? once the pairing is complete the
+details modal should work, it should have a \"flash\" message if that
+makes sense on the first use"; then, offered the outline, "yes, build it
+and install on s23".
+
+This replaces, in the 2026-10-28 14:42 EDT amendment's item 2, "then
+\"Paired with <name>\"": when pairing completes, the phone shows the new
+remote's details modal in place of the six words' modal, with "Paired
+with <name>" as a flash at its top for 3 s, as the pairing QR scan plan's
+amendment of this time sets out
+(docs/design/20261028_02_PAIRING_QR_SCAN_PLAN.md). The rest of that item
+(the camera, the six words with one line and Cancel, the reason a
+pairing failed) stands.

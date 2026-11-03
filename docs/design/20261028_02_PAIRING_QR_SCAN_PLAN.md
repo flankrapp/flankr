@@ -812,3 +812,58 @@ finished pairing's check, title, summary line and Done.
    `pairing_fingerprint_full` go.
 3. **The app's version** is 0.7.5, a patch, on the owner's instruction to
    keep the same version series.
+
+## Amendment — 2026-11-03 12:40 EST: a finished pairing opens the remote's details modal at once, with a "Paired with" flash
+
+On the owner's explicit instruction (Rule 1.5), 2026-11-03, given through
+the lead: "do we need two modals? once the pairing is complete the
+details modal should work, it should have a \"flash\" message if that
+makes sense on the first use"; then, offered the outline below, "yes,
+build it and install on s23".
+
+This replaces item 1 of the 2026-11-03 12:13 EST amendment (a finished
+pairing's "Paired with <name>" or "Already paired with <name>" with
+Details and Done, Details ending it and opening the remote's details
+modal, and Done alone until the remote's row is known), and what it kept
+of `CHANGES.md`'s 2026-10-28 18:03 EDT addendum on the pairing feedback,
+item 4 (pairing completes on "Paired with <name>", or "Already paired
+with <name>" with "Its addresses were updated.", with a check and a
+summary line, staying until Done). Item 2 of the 12:13 EST amendment (the
+waiting modal's Fingerprint row) and item 3 stand.
+
+1. **No "Paired with" screen.** When pairing completes, the waiting modal
+   ("Confirm on your Mac": the six words, Details with the Fingerprint
+   row, the time left, the device-code fallback, Cancel) becomes the
+   remote's details modal in place: the settings plan's modal (nickname,
+   status, hostname, when paired, the Fingerprint row, Close and Remove),
+   opened by the same call (`App::open_remote_details`) as a 500 ms press
+   on the remote's card in the drawer or a tap on its Remotes row. The
+   check, the title, the summary line, Details and Done of a finished
+   pairing go, and with them the pairing window's `Row::DoneOnly`.
+2. **The flash.** At the top of the card, above the remote's name, one
+   line in the accent colour: "Paired with <name>" (the daemon's name), or
+   "Already paired with <name>" for a daemon already listed. It shows at
+   full strength for 3 s, then fades out linearly over 300 ms, and the
+   modal is then laid out again without its line. It shows only on that
+   first open after pairing; the details opened by holding a remote's card
+   or from a Remotes row never show it, and neither does the modal opened
+   again later. Opening another modal from it (Remove) ends it. The line
+   "Its addresses were updated." goes: the modal's Hostname shows the
+   address in force.
+3. **Until the remote's row arrives.** The details modal needs the
+   remote's row (its id and its fields), which the client gives in the
+   `Remotes` after `Paired` (`RemoteUpdated` names it at once). Until the
+   row is known, the waiting modal stays as it is (its words, Details and
+   the Fingerprint row still work), and switches to the details modal when
+   the row arrives; its Cancel, and the system Back, then end the window
+   as Close would (the pairing has completed: nothing is cancelled, and
+   "Pairing cancelled: nothing was added." is not shown). With no waiting
+   modal to keep, the window shows the check and the title with Done alone
+   until the row arrives, as 0.7.5 did for that gap.
+4. **Where Close goes** is where Done went: back to Settings when the
+   pairing started there (the add mode from its **+**); otherwise, on the
+   first run, Settings opened for the modal closes with it, to the
+   overview; from the drawer's **+**, to the screen under, as the card's
+   press does.
+5. **The app's version** is 0.7.6, a patch, on the owner's instruction to
+   keep the same version series.

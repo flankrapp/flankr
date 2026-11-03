@@ -467,3 +467,23 @@ amendment of the same time.
    and updates once connected."
 6. **The app's version** takes the next minor with its `apps/UPDATES.md`
    entry (FLANKR RULE 1).
+
+## Amendment — 2026-11-03 12:40 EST: a finished pairing opens the remote's details, with a flash (living section)
+
+On the owner's explicit instruction (Rule 1.5), 2026-11-03, given through
+the lead: "do we need two modals? once the pairing is complete the
+details modal should work, it should have a \"flash\" message if that
+makes sense on the first use"; then, offered the outline, "yes, build it
+and install on s23".
+
+This replaces, in the 2026-10-28 17:48 EDT entry's item 2, "\"Paired
+with…\" and \"Already paired with <name>; addresses updated\" (...) are
+the pairing window's success state": a completed pairing opens the
+remote's details modal of the 17:46 EDT entry, with "Paired with <name>"
+(or "Already paired with <name>") as a flash in the accent colour at its
+top for 3 s, fading over 300 ms, on that first open only; the details
+opened from a Remotes row show no flash. "Addresses updated" is no longer
+said: the modal's Hostname shows the address in force. The details are
+the pairing QR scan plan's amendment of this time
+(docs/design/20261028_02_PAIRING_QR_SCAN_PLAN.md). The rest of that item
+(removal results in the remove confirm modal) stands.
