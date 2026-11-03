@@ -220,3 +220,8 @@ and 9 and step 2 that name `[terminal] shells`:
 6. **Versions.** The daemon's `UPDATES.md` entry says terminal typing is
    now on by default and how to turn it off (`[terminal] input = false`),
    in place of naming `[terminal] shells`.
+
+## Amendment — 2026-11-03 13:01 EST: approved
+
+The owner approved the plan as it stands at `4e499f2` (2026-11-03:
+"approve"). The first implementing commit sets `In implementation`.
