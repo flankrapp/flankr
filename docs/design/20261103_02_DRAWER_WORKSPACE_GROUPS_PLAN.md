@@ -139,3 +139,9 @@ replaces decision 3.6:
    had in herdr's order. A workspace that gains a second row gets its
    header, collapsed or not as it was kept; one that drops to one row
    loses it.
+
+## Amendment — 2026-11-03 13:07 EST: approved
+
+The owner approved the plan as it stands at `a663279` (2026-11-03:
+"Approve the plan"). The first implementing commit sets `In
+implementation`.
