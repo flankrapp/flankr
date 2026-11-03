@@ -587,8 +587,8 @@ pub fn is_error(summary: &str) -> bool {
 }
 
 /// Whether a tool result reports failing tests: cargo's `test result:
-/// FAILED`, a count such as `2 failed` (pytest, jest, go), or a line
-/// starting `FAIL` (jest, go).
+/// FAILED`, a line starting `FAIL` or `--- FAIL` (jest, go), or a count of
+/// failures above 0 next to `failed` (see [`failed_count`]).
 pub fn fails_tests(summary: &str) -> bool {
     if super::parse_command_exit_code(summary) == Some(0) {
         return false;
@@ -602,12 +602,111 @@ pub fn fails_tests(summary: &str) -> bool {
     }) {
         return true;
     }
-    let words: Vec<&str> = summary.split_whitespace().collect();
-    words.windows(2).any(|w| {
-        let count = w[0].trim_start_matches(['(', '[', ',']);
-        let failed = w[1].trim_end_matches([',', ';', '.', ')', ']']);
-        failed.eq_ignore_ascii_case("failed") && count.parse::<u64>().is_ok_and(|n| n > 0)
-    })
+    summary
+        .lines()
+        .any(|line| failed_counts(line).any(|n| n > 0))
+}
+
+/// Words that label a count in a test summary, as in `passed 622` or
+/// `5 passed`.
+const COUNT_LABELS: &[&str] = &[
+    "passed",
+    "pass",
+    "ok",
+    "failed",
+    "fail",
+    "skipped",
+    "ignored",
+    "error",
+    "errors",
+    "total",
+    "todo",
+    "pending",
+    "succeeded",
+    "warnings",
+    "measured",
+    "filtered",
+];
+
+/// A line's words, with `failed=0` and `failed:0` split after their `=`
+/// or `:`.
+fn summary_words(line: &str) -> Vec<&str> {
+    let mut words = Vec::new();
+    for w in line.split_whitespace() {
+        match w.find(['=', ':']) {
+            Some(i) if i + 1 < w.len() => {
+                words.push(&w[..=i]);
+                words.push(&w[i + 1..]);
+            }
+            _ => words.push(w),
+        }
+    }
+    words
+}
+
+/// `w` as a count: digits, with any opening bracket before and closing
+/// punctuation after.
+fn as_count(w: &str) -> Option<u64> {
+    w.trim_start_matches(['(', '['])
+        .trim_end_matches([',', ';', '.', ')', ']'])
+        .parse()
+        .ok()
+}
+
+/// `w` without its punctuation, lowercased.
+fn bare(w: &str) -> String {
+    w.trim_start_matches(['(', '['])
+        .trim_end_matches([',', ';', '.', ')', ']', ':', '='])
+        .to_ascii_lowercase()
+}
+
+/// The failure counts a line gives, one per `failed` it reads as a test
+/// summary's count:
+///
+/// - **After** (`failed 0`, `failed: 0`, `failed=0`): when `failed` does
+///   not end its clause (no `,` `;` `.` after it) and is followed by a
+///   number, that number is the count, so `passed 622 failed 0` is 0. It
+///   counts only where the number ends the line or its clause, or another
+///   count follows (`failed 2 skipped 1`), so prose such as `the build
+///   failed 3 times` is not read.
+/// - **Before** (`2 failed`, pytest and jest; cargo's `0 failed;`):
+///   otherwise the number before `failed`, unless that number is itself
+///   the value of a label before it (`ok 3 failed`; not `5 passed; 0
+///   failed`, where the `;` ends the label's clause).
+fn failed_counts(line: &str) -> impl Iterator<Item = u64> {
+    let words = summary_words(line);
+    let mut counts = Vec::new();
+    for (i, w) in words.iter().enumerate() {
+        if bare(w) != "failed" {
+            continue;
+        }
+        let ends_clause = w.ends_with([',', ';', '.', ')', ']']);
+        let after = words.get(i + 1).filter(|_| !ends_clause).and_then(|n| {
+            let count = as_count(n)?;
+            let summary_like = n.ends_with([',', ';', ')']) || {
+                match words.get(i + 2) {
+                    None => true,
+                    Some(next) => as_count(next).is_some() || COUNT_LABELS.contains(&&*bare(next)),
+                }
+            };
+            summary_like.then_some(count)
+        });
+        if let Some(count) = after {
+            counts.push(count);
+            continue;
+        }
+        let Some(count) = i.checked_sub(1).and_then(|p| as_count(words[p])) else {
+            continue;
+        };
+        let labelled = i
+            .checked_sub(2)
+            .map(|p| words[p])
+            .is_some_and(|l| !l.ends_with([',', ';', '.']) && COUNT_LABELS.contains(&&*bare(l)));
+        if !labelled {
+            counts.push(count);
+        }
+    }
+    counts.into_iter()
 }
 
 /// The first paragraph of a reply: up to its first blank line.
@@ -666,6 +765,39 @@ pub fn merged(built: impl IntoIterator<Item = Section>, cards: Vec<Section>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_counts_read_in_both_orders() {
+        // The owner's report: the count after `failed` is the count.
+        assert!(!fails_tests("passed 622 failed 0"));
+        assert!(!fails_tests(
+            "flankr passed 736 failed 0\napp passed 622 failed 0"
+        ));
+        assert!(fails_tests("passed 3 failed 2"));
+        assert!(!fails_tests("ok 3 failed 0"));
+        // Number before (pytest, jest).
+        assert!(fails_tests("2 failed, 3 passed"));
+        assert!(fails_tests("===== 2 failed, 3 passed in 0.12s ====="));
+        assert!(!fails_tests("0 failed"));
+        assert!(fails_tests("Tests:       1 failed, 4 passed, 5 total"));
+        // Number after.
+        assert!(!fails_tests("failed: 0"));
+        assert!(!fails_tests("failed=0"));
+        assert!(fails_tests("failed 1"));
+        assert!(fails_tests("failed=3 passed=1"));
+        // cargo.
+        assert!(!fails_tests(
+            "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out"
+        ));
+        assert!(fails_tests(
+            "test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured"
+        ));
+        assert!(fails_tests("5 passed; 1 failed; 0 ignored"));
+        // go.
+        assert!(fails_tests("--- FAIL: TestParse (0.00s)"));
+        // Prose is not a test summary.
+        assert!(!fails_tests("the build failed 3 times before it worked"));
+    }
 
     #[test]
     fn exit_code_zero_is_not_an_error_or_test_failure() {
