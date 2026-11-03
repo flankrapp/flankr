@@ -360,3 +360,41 @@ drawn in full over the terminal) and adds to the 15:38 EST amendment's item
 5. **With ⛶ hiding flankr's UI** (the 15:38 EST amendment), no bar shows,
    and a waiting card still draws the dot on ⛶.
 6. **Versions:** the app's next patch with its `apps/UPDATES.md` entry.
+
+## Amendment — 2026-11-03 17:37 EST: the agent's own screen is the interface; only the pinned card, as a notice where the agent takes the input
+
+On the owner's instruction (Rule 1.5), 2026-11-03, refining the 17:35 EST
+amendment before it was built: "The terminal view should allow the agents
+TUI to be the UI interface. With the cards as a out of band message"; then
+"Only pinned cards should work in terminal view. And only for final status
+or question cards requiring input. However, if it's input that the AGI
+already supports, it should interfere. It should just notify the user that
+that's required" (read as "should not interfere", from its last sentence);
+then "Record in Gemini are probably exceptions, but when submitting the
+message, it should be submitted to the terminal. So it should show up in
+the terminal". This replaces the 17:35 EST amendment's items 1 to 4; its
+items 5 and 6 stand.
+
+1. **The agent's screen is the interface.** In terminal view the agent's
+   TUI is where it is answered: its options, its input line and the keys
+   rows. flankr's cards are out-of-band messages and never take a tap
+   meant for the terminal.
+2. **Only the pinned card shows**, and only two kinds of it: the final
+   status (Finished, folded to its one-line bar as now) and a card that
+   needs input (an approval or a question). The stream's other cards
+   (Something broke, *While you spoke*, confirmations and the rest) do not
+   show over the terminal.
+3. **Input the agent's screen takes** (Claude Code's own question or
+   permission prompt, as the daemon recognises it on the pane): the card is
+   drawn only as a one-line notice above the terminal, such as "Claude is
+   asking — answer in the terminal", taking no taps; the terminal's rows
+   start below it and the pane is sized to that fit. It goes when the
+   agent's screen moves on.
+4. **Input only flankr takes** (flankr's own confirmation gate before it
+   sends a command, a daemon-side approval the agent's screen does not
+   show): the pinned card is drawn and works over the terminal as today.
+5. **Record and Gemini are the exceptions:** their input cards open over
+   the terminal as today (a tap or the 500 ms hold). The message card's
+   submit types the message into the agent's terminal: the text and Enter
+   go to the pane, so it shows in the terminal, and the view stays on the
+   terminal. Gemini's card still goes to Gemini.
