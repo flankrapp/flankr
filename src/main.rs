@@ -10,7 +10,7 @@
 //!        [--prompts <ADDITIONAL_PROMPTS.md>] [--suggestions <SUGGESTIONS.md>]
 //! flankr ctl [--listen <flankr.sock>] [--client <name>] [--follow] [--handle <text>]
 //!            <method> [<params as JSON>]
-//! flankr pair [--listen <flankr.sock>] [--name <name>] [--protocols companion,harness]
+//! flankr pair [--foreground] [--listen <flankr.sock>] [--name <name>] [--protocols companion,harness]
 //!             [--replace] [--code <code>] [--qr-png <file>] [--timeout <secs>]
 //! flankr session tail [--listen <flankr.sock>] [--pane <id or name>] [--follow]
 //!                     [--entries N] [--history N] [--outline] [--from N] [--to N]
@@ -360,11 +360,11 @@ fn daemon_files(socket: &Path) -> Option<flankr::daemon::DaemonFiles> {
 /// (plan 20261102_01, decision 1). `rest` is the command line after the
 /// command word, passed on to `flankr server`.
 async fn serve_background(
-    args: AppArgs,
+    args: &AppArgs,
     rest: Vec<String>,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     let config = flankr::config::AppConfig::load_or_default(args.config.as_deref().map(Path::new));
-    let socket = flankr::daemon::absolute(&daemon_socket(&args, &config));
+    let socket = flankr::daemon::absolute(&daemon_socket(args, &config));
     let files = daemon_files(&socket).ok_or("HOME is not set")?;
     if args.stop {
         return Ok(flankr::daemon::stop(&socket, &files).await);
@@ -393,12 +393,52 @@ async fn serve_background(
     Ok(flankr::daemon::serve_background(&background).await)
 }
 
+/// The flags a started server takes from another command's: only the
+/// server's own, never pairing's (plan 20261102_01, the 2026-11-02 22:26
+/// EST amendment, item 2).
+fn server_flags(args: &AppArgs) -> Vec<String> {
+    let mut flags = Vec::new();
+    let mut valued = |flag: &str, value: &Option<String>| {
+        if let Some(value) = value {
+            flags.push(flag.to_string());
+            flags.push(value.clone());
+        }
+    };
+    valued("--config", &args.config);
+    valued("--listen", &args.listen);
+    valued("--transport", &args.transport_name);
+    valued("--remote", &args.remote);
+    valued("--socket", &args.socket);
+    valued("--prompts", &args.prompts);
+    valued("--suggestions", &args.suggestions);
+    if args.mock_mode {
+        flags.push("--mock".to_string());
+    }
+    if args.show_tokens {
+        flags.push("--show-tokens".to_string());
+    }
+    flags
+}
+
 async fn pair(args: AppArgs) -> Result<i32, Box<dyn std::error::Error>> {
     let config = flankr::config::AppConfig::load_or_default(args.config.as_deref().map(Path::new));
     let socket = daemon_socket(&args, &config);
-    let usage = "usage: flankr pair [--listen <socket>] [--name <name>] [--protocols companion,harness] [--replace] [--code <code>] [--qr-png <file>] [--timeout <secs>]";
-    if !args.positional.is_empty() {
+    let usage = "usage: flankr pair [--foreground] [--listen <socket>] [--name <name>] [--protocols companion,harness] [--replace] [--code <code>] [--qr-png <file>] [--timeout <secs>]";
+    if !args.positional.is_empty() || args.stop {
         return Err(usage.into());
+    }
+    // No daemon answering: start one in the background first, as `serve`
+    // would, unless `--foreground` (the 22:26 EST amendment, items 1 and 3).
+    if !args.foreground
+        && flankr::daemon::answers(&flankr::daemon::absolute(&socket))
+            .await
+            .is_none()
+    {
+        let rest = server_flags(&args);
+        let code = serve_background(&args, rest).await?;
+        if code != 0 {
+            return Ok(code);
+        }
     }
     let timeout_secs = match args.timeout.as_deref() {
         Some(value) => match flankr::pair::parse_timeout(value) {
@@ -520,7 +560,7 @@ flankr [serve [--foreground | --stop] | server]
   `server` does; --stop stops it.
 flankr ctl [--listen <flankr.sock>] [--client <name>] [--follow] [--handle <text>]
            <method> [<params as JSON>]
-flankr pair [--listen <flankr.sock>] [--name <name>] [--protocols companion,harness]
+flankr pair [--foreground] [--listen <flankr.sock>] [--name <name>] [--protocols companion,harness]
             [--replace] [--code <code>] [--qr-png <file>] [--timeout <secs>]
 flankr session tail [--listen <flankr.sock>] [--pane <id or name>] [--follow]
                     [--entries N] [--history N] [--outline] [--from N] [--to N]
@@ -594,7 +634,7 @@ async fn run(
         );
     }
     if background {
-        std::process::exit(serve_background(args, argv).await?);
+        std::process::exit(serve_background(&args, argv).await?);
     }
     serve(args).await
 }

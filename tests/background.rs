@@ -363,3 +363,54 @@ fn a_server_that_does_not_come_up_shows_its_log() {
     );
     assert!(err.contains("/dev/null"), "{err}");
 }
+
+/// `flankr pair` starts the daemon when none answers, with the server's
+/// flags only, and `--foreground` never does (plan 20261102_01, the
+/// 2026-11-02 22:26 EST amendment).
+#[test]
+fn pair_starts_the_daemon_unless_foreground() {
+    let rig = Rig::new();
+    let files = rig.files();
+    // --foreground with nothing running: no daemon is started.
+    let out = rig.run(&["pair", "--foreground", "--timeout", "1"], &[]);
+    assert_ne!(out.status.code(), Some(0), "{out:?}");
+    assert!(!text(&out.stdout).contains("flankr is running"), "{out:?}");
+    assert!(!rig.answers(), "--foreground started a daemon");
+
+    // Without it: the daemon is started first, then pairing goes on.
+    let out = rig.run(&["pair", "--name", "phone", "--timeout", "1"], &[]);
+    let first = text(&out.stdout).lines().next().unwrap_or("").to_string();
+    assert_eq!(
+        first,
+        format!(
+            "flankr is running on {}; log: {}",
+            rig.socket.display(),
+            files.log.display()
+        ),
+        "{out:?}"
+    );
+    assert!(rig.answers(), "the started server does not answer");
+    rig.wait_until("the pid file", || files.pid.exists());
+    let pid = read_pid(&files.pid).unwrap();
+    let ps = Command::new("ps")
+        .args(["-o", "command=", "-p", &pid.to_string()])
+        .output()
+        .unwrap();
+    let line = text(&ps.stdout);
+    assert!(
+        line.contains(" server ") && line.contains("--mock"),
+        "{line}"
+    );
+    assert!(
+        !line.contains("--name") && !line.contains("--timeout"),
+        "{line}"
+    );
+
+    // Running already: pair starts nothing more.
+    let out = rig.run(&["pair", "--timeout", "1"], &[]);
+    assert!(
+        !text(&out.stdout).contains("flankr is running on"),
+        "{out:?}"
+    );
+    assert_eq!(read_pid(&files.pid), Some(pid));
+}

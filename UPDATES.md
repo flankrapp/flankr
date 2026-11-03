@@ -191,3 +191,8 @@ These changes came before the program had version numbers.
 - `flankr server` runs the daemon in the foreground, as `flankr serve` used to; `flankr serve --foreground` does the same.
 - `flankr serve --stop` stops the daemon on that socket (it waits up to 5 seconds, then kills it), and removes a pid file left by one that is gone.
 - The daemon's log and pid file are in `~/.local/state/flankr/`: `daemon.log` and `daemon.pid` for the default socket, `daemon-<8 hex>.log` and `.pid` for one given with `--listen` or `[server] socket`. The log is appended to.
+
+## 0.6.1 — 2026-11-02
+
+**Changed**
+- `flankr pair` starts the daemon in the background first when none is running, as `flankr serve` does, then pairs. `flankr pair --foreground` never starts one.
