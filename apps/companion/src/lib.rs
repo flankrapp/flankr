@@ -136,7 +136,7 @@ use crate::overview::{Overview, OverviewHit, Panel};
 use crate::plugins::{Outgoing, Plugins, Screen as PluginScreen};
 use crate::prompt::keyboard::{FocusedPrompt, Ime, KeyboardRoute, PromptScreen, Typing};
 use crate::prompt::{MessagePrompt, PromptKind, Prompts, Sent};
-use crate::scanner::{Action as CameraAction, Scanner, Touched as ScanTouched};
+use crate::scanner::{Action as CameraAction, CAMERA, Scanner, Touched as ScanTouched};
 use crate::session_cards::{SessionCards, SessionHit, Touched};
 use crate::settings::background::{self, POST_NOTIFICATIONS, PermissionOs, TurnedOn};
 use crate::settings::build_info::BuildInfo;
@@ -330,6 +330,10 @@ pub struct App {
     camera_calls: Vec<CameraAction<ScanId>>,
     /// **Open Settings** was tapped: opened with the context.
     open_app_settings: bool,
+    /// The camera was started for this opening of the pairing window
+    /// (plan 20261028_02, the 2026-11-02 22:46 EST amendment): cleared
+    /// when the window goes, so the next opening starts it again.
+    camera_opened: bool,
     /// A pairing note or an error, and its colour's role (looked up as it
     /// is drawn, so a theme change recolours it).
     note: Option<(String, Role)>,
@@ -2548,6 +2552,8 @@ impl App {
         log::info!("remotes: pairing another");
         self.drawer.close_now();
         self.pairing.open_add();
+        // A new opening: the camera starts on the next update.
+        self.camera_opened = false;
         self.field.clear();
         self.field_focused = false;
         self.note = None;
@@ -3635,8 +3641,18 @@ impl App {
             for action in std::mem::take(&mut self.camera_calls) {
                 match action {
                     CameraAction::Start => {
+                        // libmobile makes Android's request when CAMERA is
+                        // not granted (never asked, refused, or a one-time
+                        // grant revoked), on every start.
+                        if ctx.permission_granted(CAMERA) {
+                            log::info!("pairing: camera permission granted");
+                        } else {
+                            log::info!(
+                                "pairing: camera permission not granted: asking Android for it"
+                            );
+                        }
                         let scan = ctx.camera().start_qr(&scanner::qr_options());
-                        log::info!("pairing: scanning (scan {})", scan.id());
+                        log::info!("pairing: scan requested (scan {})", scan.id());
                         self.scanner.started(scan);
                     }
                     CameraAction::Stop(scan) => {
@@ -4207,10 +4223,14 @@ impl MorphApp for App {
         if self.pairing.adding {
             self.read_pair_file();
         }
-        // CAMERA granted in Settings after a refusal only Settings could
-        // undo: plain Tap to scan again.
-        self.scanner
-            .resumed(ctx.permission_granted("android.permission.CAMERA"));
+        // CAMERA granted in Settings after a refusal: the scan starts again
+        // at once while the window shows (the 2026-11-02 22:46 EST
+        // amendment).
+        if self.scanner.resumed(ctx.permission_granted(CAMERA)) && self.camera_window() {
+            log::info!("pairing: camera permission granted in Settings: starting the scan");
+            let start = self.scanner.tap();
+            self.call_camera(start);
+        }
         self.run_camera(ctx);
     }
 
@@ -4423,6 +4443,7 @@ impl MorphApp for App {
             viewfinder: camera.then(|| Viewfinder::new(ctx)),
             camera_calls: Vec::new(),
             open_app_settings: false,
+            camera_opened: false,
             note: None,
             field: String::new(),
             field_focused: false,
@@ -4728,6 +4749,25 @@ impl MorphApp for App {
             if let Some(screen) = &mut self.settings_screen {
                 screen.invalidate();
             }
+        }
+        // Opening the pairing window starts the camera, which asks for
+        // CAMERA when it is not granted (plan 20261028_02, the 2026-11-02
+        // 22:46 EST amendment); its words, a cancel or a failure do not
+        // reopen it.
+        if !self.pairing() {
+            self.camera_opened = false;
+        } else if !self.camera_opened && self.camera_window() {
+            self.camera_opened = true;
+            log::info!(
+                "pairing: the window opened ({}): starting the camera",
+                if self.pairing.adding {
+                    "pairing another"
+                } else {
+                    "first pairing"
+                }
+            );
+            let start = self.scanner.tap();
+            self.call_camera(start);
         }
         // The camera runs only while the window shows it (plan 20261028_02,
         // decision 15): the window replaced, or left while suspended, stops

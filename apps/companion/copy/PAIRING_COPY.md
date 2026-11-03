@@ -184,8 +184,9 @@ item 4).
 The pairing window's camera (docs/design/20261028_02_PAIRING_QR_SCAN_PLAN.md,
 decision 21; `src/scanner.rs`, Android only): the window opens on a
 placeholder reading `pairing_tap_to_scan` (or `pairing_scan_again` after a
-pairing failed), with `pairing_camera_why` under it; the camera starts only
-on a tap. While it runs the line under the viewfinder is
+pairing failed), with `pairing_camera_why` under it; the camera starts as
+the window opens, asking for the Camera permission while it is not granted
+(the 2026-11-02 22:46 EST amendment), and on a tap after that. While it runs the line under the viewfinder is
 `pairing_scan_hint`, `pairing_scan_ignored` for 3 s after a code that is
 not a pairing link, or `pairing_scan_unreadable` for a pairing code that
 cannot be used. A refusal shows `pairing_camera_denied`, or
@@ -204,9 +205,9 @@ instead; `pairing_retry` is the line after a failed pairing.
 # [Copy] pairing_camera_why
 
 - text: |
-    Scan the QR code **flankr pair** shows. The camera opens only when you tap,
-    and Android asks for the Camera permission the first time. Frames are
-    decoded on the phone, never saved or sent, and the camera closes when
+    Scan the QR code **flankr pair** shows. The camera opens with this screen,
+    and Android asks for the Camera permission while it isn't allowed. Frames
+    are decoded on the phone, never saved or sent, and the camera closes when
     you leave this screen.
 
 # [Copy] pairing_scan_hint
@@ -228,15 +229,15 @@ instead; `pairing_retry` is the line after a failed pairing.
 # [Copy] pairing_camera_denied
 
 - text: |
-    Camera permission was refused, so the code can't be scanned. Tap to be
-    asked again, or paste the link instead.
+    Camera is off for flankr. Tap to scan to be asked again, or paste the
+    link instead.
 
 # [Copy] pairing_camera_denied_settings
 
 - text: |
-    Camera permission is refused and Android won't ask again. Allow it
-    under Settings → Apps → flankr → Permissions → Camera, or paste the
-    link instead.
+    Camera is off for flankr, and Android won't ask again. Turn it on under
+    Settings → Apps → flankr → Permissions → Camera, or paste the link
+    instead.
 
 # [Copy] pairing_open_settings
 

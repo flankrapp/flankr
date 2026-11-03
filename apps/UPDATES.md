@@ -238,3 +238,9 @@ These changes came before the app had version numbers.
 
 **Changed**
 - If Gemini's request is denied or not answered in time, Gemini's card says so briefly, such as "Not sent: denied."
+
+## 0.7.2 — 2026-11-02
+
+**Fixed**
+- Pairing another remote with **+**, and pairing the first one, opens the camera at once, with no tap on *Tap to scan*. If the Camera permission isn't allowed, including after an "Only this time" allowance has run out, Android asks for it each time the screen opens.
+- If the Camera permission is refused, the screen says *Camera is off for flankr*: *Tap to scan* asks again, and the pairing link can still be pasted. When Android won't ask again, *Open Settings* goes to flankr's page in Settings, and the camera opens as soon as you come back with it allowed.

@@ -91,23 +91,24 @@ fn camera(p: &Probe) -> Vec<&str> {
         .collect()
 }
 
-/// Run 1: the placeholder, and no camera until the tap; then a code that
-/// is not a pairing link is ignored while the scan goes on.
+/// Run 1 (the 2026-11-02 22:46 EST amendment): the first-run window opens
+/// the camera at once, with no tap; then a code that is not a pairing link
+/// is ignored while the scan goes on.
 #[test]
-fn the_window_waits_for_a_tap_then_ignores_other_codes() {
+fn the_window_opens_the_camera_at_once_then_ignores_other_codes() {
     let Some(first) = opened() else { return };
-    assert!(first.shows("Tap to scan"), "{:?}", first.texts);
-    assert!(first.shows("Scan the QR code"), "{:?}", first.texts);
+    assert_eq!(camera(&first), ["opened 1"], "{:?}", first.log);
+    assert_eq!(first.state, "Running(ScanId(1))");
+    assert!(first.shows("Point at the QR code"), "{:?}", first.texts);
+    assert!(!first.shows("Tap to scan"), "{:?}", first.texts);
     assert!(first.shows("Paste a link"));
     assert!(!first.shows("paste a pairing URL"), "no field yet");
     assert!(!first.shows("not paired"), "no status lines");
-    assert!(first.log.is_empty(), "nothing started: {:?}", first.log);
-    let area = first.at(Hit::Area);
-    let script = format!(
-        "frames 2\n{}frames 1\ncamera-qr https://example.com\nframes 1\n",
-        tap(area)
-    );
-    let p = run(&script, &["--camera"]).unwrap();
+    let p = run(
+        "frames 2\ncamera-qr https://example.com\nframes 1\n",
+        &["--camera"],
+    )
+    .unwrap();
     assert_eq!(camera(&p), ["opened 1", "qr 1 19 bytes"], "{:?}", p.log);
     assert_eq!(p.state, "Running(ScanId(1))");
     assert!(p.shows("Not a flankr pairing code."), "{:?}", p.texts);
@@ -277,6 +278,8 @@ fn a_scanned_pairing_url_stops_the_scan_and_shows_the_daemons_words() {
         c.texts
     );
     assert!(c.shows("Tap to scan") && !c.shows("Confirm on your Mac"));
+    // A cancelled pairing does not reopen the window: no new scan.
+    assert!(!camera(&c).contains(&"opened 2"), "{:?}", c.log);
 }
 
 /// A scanned code whose daemon has not answered yet (a port that takes
@@ -375,35 +378,55 @@ fn a_refused_pairing_keeps_the_window_with_its_reason() {
     assert!(p.hits.iter().any(|(h, _)| *h == Hit::Area));
 }
 
-/// Runs 3 and 4: refusals, with the reason, Open Settings only when
-/// Android will not ask again, and a tap asking again.
+/// Runs 3 and 4 (the 2026-11-02 22:46 EST amendment): the window opened
+/// with CAMERA not granted asks for it (the scripted camera answers the
+/// opening's `start_qr` as Android's request would); refused, the window
+/// says the camera is off, still pastes, and asks again on a tap; Open
+/// Settings only when Android will not ask again.
 #[test]
-fn a_refusal_shows_why_and_open_settings_only_when_android_wont_ask() {
-    let Some(first) = opened() else { return };
-    let area = tap(first.at(Hit::Area));
-    let script = format!("frames 2\ncamera-deny\n{area}frames 1\n");
-    let p = run(&script, &["--camera"]).unwrap();
-    assert_eq!(camera(&p), ["denied 1 settings_only=false"]);
-    assert!(p.shows("Camera permission was refused"), "{:?}", p.texts);
-    assert!(p.shows("Tap to scan"));
+fn opened_without_camera_permission_it_asks_and_a_refusal_says_the_camera_is_off() {
+    let script = "camera-deny\nframes 2\n";
+    let Some(p) = run(script, &["--camera"]) else {
+        return;
+    };
+    assert_eq!(camera(&p), ["denied 1 settings_only=false"], "{:?}", p.log);
+    assert!(
+        p.shows("Camera is off for flankr. Tap to scan to be asked again"),
+        "{:?}",
+        p.texts
+    );
+    assert!(p.shows("Tap to scan") && p.shows("Paste a link"));
     assert!(!p.shows("Open Settings"));
-    let script = format!("frames 2\ncamera-deny\n{area}frames 1\n{area}frames 1\n");
-    let p = run(&script, &["--camera"]).unwrap();
+    let area = tap(p.at(Hit::Area));
+    let again = run(&format!("{script}{area}frames 1\n"), &["--camera"]).unwrap();
     assert_eq!(
-        camera(&p),
+        camera(&again),
         ["denied 1 settings_only=false", "opened 2"],
         "a tap asks again"
     );
-    let script = format!("frames 2\ncamera-deny-forever\n{area}frames 1\n");
-    let p = run(&script, &["--camera"]).unwrap();
-    assert_eq!(camera(&p), ["denied 1 settings_only=true"]);
-    assert!(p.shows("Camera permission is refused"), "{:?}", p.texts);
-    assert!(p.shows("Open Settings"));
-    // Open Settings: libmorph has no settings page off Android.
-    let script = format!(
-        "frames 2\ncamera-deny-forever\n{area}frames 1\n{}frames 1\n",
-        tap(p.at(Hit::OpenSettings))
+    // Refused, the link can still be pasted.
+    let paste = run(
+        &format!("{script}{}frames 1\n", tap(p.at(Hit::PasteLink))),
+        &["--camera"],
+    )
+    .unwrap();
+    assert!(
+        paste.shows("paste a pairing URL") && paste.shows("Pair"),
+        "{:?}",
+        paste.texts
     );
+
+    let script = "camera-deny-forever\nframes 2\n";
+    let p = run(script, &["--camera"]).unwrap();
+    assert_eq!(camera(&p), ["denied 1 settings_only=true"]);
+    assert!(
+        p.shows("Camera is off for flankr, and Android won't ask again"),
+        "{:?}",
+        p.texts
+    );
+    assert!(p.shows("Open Settings") && p.shows("Paste a link"));
+    // Open Settings: libmorph has no settings page off Android.
+    let script = format!("{script}{}frames 1\n", tap(p.at(Hit::OpenSettings)));
     let p = run(&script, &["--camera"]).unwrap();
     assert!(
         p.log
@@ -487,4 +510,173 @@ fn without_a_camera_the_window_is_the_paste_screen() {
     assert!(p.shows("not paired"), "the status lines");
     assert!(!p.hits.iter().any(|(h, _)| *h == Hit::Area));
     assert!(p.log.is_empty());
+}
+
+/// A paired remote, for the add mode's runs.
+fn remote(n: u8, name: &str, active: bool) -> flankr_companion::RemoteInfo {
+    flankr_companion::RemoteInfo {
+        id: flankr_companion::RemoteId([n; 8]),
+        name: name.into(),
+        host: format!("{name}.tail.ts.net:7347"),
+        fingerprint: format!("{n:02x}{n:02x} {n:02x}{n:02x}"),
+        paired_at: Some(1_761_600_000),
+        active,
+        online: true,
+        fingerprint_hex: String::new(),
+        fingerprint_words: String::new(),
+        nickname: None,
+        display_name: name.into(),
+        last_session: None,
+    }
+}
+
+/// The update on which [`run_paired`]'s remotes are given: after the
+/// client's own first events (an empty list: no remote is paired in the
+/// test's key directory), as in the drawer's tests.
+const READY: u32 = 4;
+
+/// As [`run`] with `--camera`, on a phone paired with m4 (in use) and
+/// mini, connected from update [`READY`]. Until then the first-run window
+/// shows, and opens the camera as scan 1, which closes when the overview
+/// replaces it.
+fn run_paired(script: &str) -> Option<Probe> {
+    use flankr_companion::Event;
+    probe::take();
+    probe::injected(u32::MAX);
+    probe::inject(
+        READY,
+        Event::Remotes(vec![remote(1, "m4", true), remote(2, "mini", false)]),
+    );
+    probe::inject(
+        READY,
+        Event::Connected {
+            server: "m4".into(),
+        },
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let keys = dir.path().join("keys");
+    let data = dir.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    let run = ScriptRun {
+        spec: libmorph::libdevice::GALAXY_S24,
+        out: OutDir::Exact(dir.path().join("out")),
+        overlay: false,
+        fallback_adapter: false,
+        args: ["companion", "--camera", "--keys", keys.to_str().unwrap()]
+            .into_iter()
+            .chain(["--data", data.to_str().unwrap()])
+            .map(String::from)
+            .collect(),
+    };
+    let script = Script::parse(script).unwrap();
+    match libmorph::script::run::<App>(&script, run) {
+        Err(MorphError::Gpu(GpuError::Adapter(error))) => {
+            eprintln!("skipped: no GPU adapter ({error})");
+            None
+        }
+        result => {
+            result.unwrap();
+            Some(probe::take())
+        }
+    }
+}
+
+fn tap_rect(r: libcontrols::Rect) -> String {
+    let [x, y] = r.center();
+    format!("tap {x} {y}\n")
+}
+
+/// The camera events after the first-run window's scan 1 closed.
+fn camera_after_start(p: &Probe) -> Vec<&str> {
+    let events = camera(p);
+    assert_eq!(events[..2], ["opened 1", "closed 1"], "{:?}", p.log);
+    events[2..].to_vec()
+}
+
+/// The drawer opened from the overview's ≡, then its **+** ("pair another
+/// remote"): the script's lines, ending on the add mode.
+fn pair_another() -> Option<String> {
+    let at = run_paired("frames 8\n")?;
+    let menu = at.drawer.menu.expect("the overview's menu");
+    let open = run_paired(&format!("frames 8\n{}frames 10\n", tap_rect(menu))).unwrap();
+    let plus = *open.drawer.cards.last().expect("the drawer's +");
+    Some(format!(
+        "{}frames 10\n{}frames 4\n",
+        tap_rect(menu),
+        tap_rect(plus)
+    ))
+}
+
+/// The owner's report (2026-11-02): "pair another" opens the camera at
+/// once, as the first-run window does, with no tap; a phone already paired
+/// starts no camera on the overview.
+#[test]
+fn pair_another_opens_the_camera_as_first_pairing_does() {
+    let Some(again) = pair_another() else { return };
+    let add = format!("frames 8\n{again}");
+    let overview = run_paired("frames 8\n").unwrap();
+    assert!(
+        camera_after_start(&overview).is_empty(),
+        "{:?}",
+        overview.log
+    );
+    let p = run_paired(&add).unwrap();
+    assert!(p.drawer.adding, "the add mode");
+    assert_eq!(camera_after_start(&p), ["opened 2"], "{:?}", p.log);
+    assert_eq!(p.state, "Running(ScanId(2))");
+    assert!(p.shows("Point at the QR code"), "{:?}", p.texts);
+    assert!(!p.shows("Tap to scan"));
+    assert!(p.shows("Paste a link") && p.shows("Cancel"));
+}
+
+/// "Pair another" with CAMERA refused, as on the S23: Android is asked on
+/// opening; refused, the window says the camera is off and pastes; closed
+/// and opened again, it asks again; refused for good, Open Settings.
+#[test]
+fn pair_another_without_camera_permission_asks_on_every_opening() {
+    let Some(again) = pair_another() else { return };
+    // Refused from the add mode's opening on (the first-run window's scan
+    // before the remotes came is granted).
+    let add = format!("frames 8\ncamera-deny\n{again}");
+    let denied = run_paired(&add).unwrap();
+    assert_eq!(
+        camera_after_start(&denied),
+        ["denied 2 settings_only=false"]
+    );
+    assert!(
+        denied.shows("Camera is off for flankr. Tap to scan to be asked again"),
+        "{:?}",
+        denied.texts
+    );
+    assert!(denied.shows("Tap to scan") && denied.shows("Paste a link"));
+    assert!(!denied.shows("Open Settings"));
+    // Cancel, back to the overview, and + again: asked again.
+    let cancel = tap(denied.at(Hit::Cancel));
+    let back = run_paired(&format!("{add}{cancel}frames 2\nkey back\nframes 4\n")).unwrap();
+    assert!(
+        !back.drawer.adding && !back.drawer.settings,
+        "{:?}",
+        back.drawer
+    );
+    let p = run_paired(&format!(
+        "{add}{cancel}frames 2\nkey back\nframes 4\n{again}"
+    ))
+    .unwrap();
+    assert_eq!(
+        camera_after_start(&p),
+        ["denied 2 settings_only=false", "opened 3"],
+        "{:?}",
+        p.log
+    );
+    let forever = run_paired(&format!("frames 8\ncamera-deny-forever\n{again}")).unwrap();
+    assert_eq!(
+        camera_after_start(&forever),
+        ["denied 2 settings_only=true"]
+    );
+    assert!(
+        forever.shows("Camera is off for flankr, and Android won't ask again"),
+        "{:?}",
+        forever.texts
+    );
+    assert!(forever.shows("Open Settings") && forever.shows("Paste a link"));
 }

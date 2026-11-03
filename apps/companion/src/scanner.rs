@@ -3,10 +3,11 @@
 //! ask the camera to do, as pure state with no camera, clock or context of
 //! its own, so it is tested without either.
 //!
-//! - The window opens on a placeholder: [`State::Idle`], and nothing is
-//!   started or asked for. A tap in the area gives [`Action::Start`]
-//!   (`start_qr` with [`qr_options`]); libmobile asks for CAMERA then, the
-//!   first time.
+//! - The window opens on a placeholder: [`State::Idle`]. The app starts
+//!   the scan as the window opens (the 2026-11-02 22:46 EST amendment), and
+//!   a tap in the area does after that: [`Scanner::tap`] gives
+//!   [`Action::Start`] (`start_qr` with [`qr_options`]); libmobile asks for
+//!   CAMERA then, whenever it is not granted.
 //! - A scanned code ([`Cam::Qr`]) that is not a pairing link
 //!   ([`crate::remotes::is_pairing_link`]) is ignored, with a note for 3 s;
 //!   one `flankr_companion::scan::read` refuses keeps the scan going with
@@ -37,6 +38,9 @@ use libmorph::camera::{
 use crate::remotes::{is_pairing_link, md_escape};
 use crate::settings::copy;
 use crate::theme::Role;
+
+/// The camera's runtime permission.
+pub const CAMERA: &str = "android.permission.CAMERA";
 
 /// How long the note for a code that is not a pairing link shows.
 pub const IGNORED_FOR: Duration = Duration::from_secs(3);
@@ -294,12 +298,15 @@ impl<Id: Copy + PartialEq> Scanner<Id> {
         }
     }
 
-    /// The app resumed: after a refusal only Settings could undo, the
-    /// placeholder is plain again once CAMERA is granted there.
-    pub fn resumed(&mut self, camera_granted: bool) {
+    /// The app resumed: after a refusal, the placeholder is plain again
+    /// once CAMERA is granted (in Settings). Whether it was: the app then
+    /// starts the scan.
+    pub fn resumed(&mut self, camera_granted: bool) -> bool {
         if camera_granted && matches!(self.state, State::Denied { .. }) {
             self.state = State::Idle;
+            return true;
         }
+        false
     }
 
     fn forget_touches(&mut self) {
@@ -312,7 +319,12 @@ impl<Id: Copy + PartialEq> Scanner<Id> {
     pub fn on_event(&mut self, event: Cam<Id>, now: Instant) -> Vec<Action<Id>> {
         let current = self.scan();
         match event {
-            Cam::Opened(scan) if current == Some(scan) => self.state = State::Running(scan),
+            Cam::Opened(scan) if current == Some(scan) => {
+                if self.running().is_none() {
+                    log::info!("pairing: camera opened: scanner started");
+                }
+                self.state = State::Running(scan);
+            }
             Cam::Suspended(scan) if current == Some(scan) => self.forget_touches(),
             Cam::Closed(scan, reason) if current == Some(scan) => {
                 self.forget_touches();
@@ -321,6 +333,14 @@ impl<Id: Copy + PartialEq> Scanner<Id> {
                 self.state = match reason {
                     None => State::Idle,
                     Some(CameraError::PermissionDenied { settings_only }) => {
+                        log::info!(
+                            "pairing: camera permission refused ({})",
+                            if settings_only {
+                                "Android won't ask again: Open Settings"
+                            } else {
+                                "Android will ask again on a tap"
+                            }
+                        );
                         State::Denied { settings_only }
                     }
                     Some(CameraError::Unsupported(why)) => {
@@ -698,7 +718,7 @@ mod tests {
             s.line(now)
                 .unwrap()
                 .0
-                .starts_with("Camera permission was refused")
+                .starts_with("Camera is off for flankr. Tap to scan")
         );
         // A tap asks again.
         assert_eq!(s.tap(), Some(Action::Start));
@@ -714,11 +734,13 @@ mod tests {
         assert_eq!(s.tap(), Some(Action::Start));
         s.started(3);
         s.on_event(Cam::Closed(3, denied(true)), now);
-        // Granted in Settings meanwhile: back to plain Tap to scan.
-        s.resumed(false);
+        // Granted in Settings meanwhile: back to plain Tap to scan, and
+        // the app starts the scan.
+        assert!(!s.resumed(false));
         assert!(s.settings_button());
-        s.resumed(true);
+        assert!(s.resumed(true));
         assert_eq!(s.state, State::Idle);
+        assert!(!s.resumed(true), "only once");
         assert!(!s.settings_button());
     }
 
