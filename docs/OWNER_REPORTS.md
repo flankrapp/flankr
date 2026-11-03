@@ -350,3 +350,20 @@ just showed a blank screen".
 *Tap to scan* placeholder, no paste field. The log has no drawing errors.
 Handed to a subagent in its own worktree; 0.7.2 changes what opening does
 (it starts the camera) and may hide or change this.
+
+## 2026-11-02 23:14 EST — Owner: the pairing window was blank, done
+
+This follows the entry "the pairing window was blank" and its evidence on
+0.7.2 ("blank after giving permission": the camera opened and read the QR
+code in 6 s with nothing on screen).
+
+**Cause.** When the drawer's **+** was tapped over a session's view, the
+app chose the pairing screen to draw but never laid it out: its layout
+returned early at the open session view, before the pairing screen's
+content was built. With no content there were no texts, no paste field and
+no camera area to draw the picture into, so only the background showed.
+From the overview it worked, which is why first pairing had shown the
+camera before.
+
+**Done.** App 0.7.3 (`607c66d`): the pairing screen is laid out over a
+session's view too.
