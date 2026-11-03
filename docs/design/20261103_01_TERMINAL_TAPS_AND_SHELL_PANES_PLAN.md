@@ -330,3 +330,33 @@ to decisions 1 and 6:
 4. **Versions,** in their series: the app's next patch with its
    `apps/UPDATES.md` entry; the daemon's next patch with its `UPDATES.md`
    entry for item 3.
+
+## Amendment — 2026-11-03 17:35 EST: only Finished cards over the terminal; every other card a bar that opens the list view
+
+On the owner's instruction (Rule 1.5), 2026-11-03: "It looks like input
+cards are interfering on the terminal view. I think only finished cards
+should be shown on the terminal view. Or input cards like question cards
+should return to the list view when tapped"; then, offered the items
+below, "Yes, write that amendment and build it". This replaces what the
+terminal view draws of the session's cards (a live question's pinned card
+drawn in full over the terminal) and adds to the 15:38 EST amendment's item
+2:
+
+1. **Finished cards** over the terminal stay as they are: folded to their
+   one-line bar.
+2. **Every other card** over the terminal (an approval, a question, a plan
+   question, Something broke, *While you spoke*, a confirmation, and the
+   message and Gemini input cards) is drawn only as a one-line bar: its
+   title and the start of its text, cut with "…", and a "›" at its right,
+   for example "Claude is asking: Which colour? ›". The bar is the height
+   of a Finished card's bar and takes no taps but its own.
+3. **A tap on such a bar** switches the session to the list view, scrolled
+   to that card, with the card as it is drawn there (answered there, not
+   over the terminal). The terminal stays open, as the view toggle leaves
+   it today.
+4. **The bottom bar's record and Gemini buttons** in terminal view (a tap
+   or the 500 ms hold) switch to the list view first and open their input
+   card there, so dictation and typing never open over the terminal.
+5. **With ⛶ hiding flankr's UI** (the 15:38 EST amendment), no bar shows,
+   and a waiting card still draws the dot on ⛶.
+6. **Versions:** the app's next patch with its `apps/UPDATES.md` entry.
