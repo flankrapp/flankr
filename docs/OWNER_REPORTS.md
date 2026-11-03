@@ -666,3 +666,21 @@ down and fold the card while a question is open in terminal view".
 **Decided.** No change: the keyboard rises only for a tap on the input
 line, as the terminal taps plan's decision 4 already says, and the
 question card is drawn as it is.
+
+## 2026-11-03 17:34 EST — Owner: a tap on the input line does not raise the keyboard
+
+Device: Galaxy S23 Ultra (app 0.7.16, daemon 0.7.9).
+
+**Report.** "The keyboard should still be shown when the input line is
+tapped"; asked whether tapping the input line had failed to bring the
+keyboard up, "Yes".
+
+**Seen** (the phone's log). The keys row's ⌨ raises the keyboard
+(17:25:03) and ⏎ sends Enter (17:25:11); at 17:31:17 a ⌨ tap raised it
+and it went down 200 ms later. Taps on the input line are not logged, so
+the log does not show what they did.
+
+**In hand.** Handed to a subagent: why a tap on the input line raises no
+keyboard (the daemon's input-row recognisers on a real Claude Code screen,
+the rows reaching the app, the tap's row mapping), the 200 ms drop, and a
+log line for each terminal tap's outcome.
