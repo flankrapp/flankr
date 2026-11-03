@@ -4105,3 +4105,16 @@ instruction (2026-11-03): "keep the same version series, we don't need to
 bump it that much while we work this out", it is 0.7.1 instead (0.8.0 was
 never pushed or tagged). While this work settles, changes take patch
 numbers in their current series.
+
+## 2026-11-03 00:10 EST — the link VPN plan, decision 2: more places to find `tailscale`
+
+Plan `docs/design/20261102_03_LINK_VPN_PLAN.md`, decision 2, finds the CLI
+on `PATH`, else in `/Applications/Tailscale.app`. On the MacBook Tailscale
+is a Homebrew install (`/opt/homebrew/bin/tailscale`), which a daemon
+started from an SSH command does not have on its `PATH`, so it would have
+reported Tailscale as not running. On the owner's instruction (2026-11-03,
+"it should also support the .app version if possible", after the Homebrew
+locations were proposed), the order is now: `PATH`, `/opt/homebrew/bin`,
+`/usr/local/bin`, `/Applications/Tailscale.app`, `~/Applications/
+Tailscale.app`. flankr 0.7.2, in the 0.7 series on the owner's
+instruction of the same day.
