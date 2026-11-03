@@ -327,3 +327,8 @@ These changes came before the app had version numbers.
 **Fixed**
 - More and Less are always at the card's bottom right, on its last line, folded or open. On a card with buttons they now sit below the buttons, with room of their own, so tapping them no longer answers or starts a voice reply by mistake.
 - Less on an open Finished card with spoken text is at the card's bottom right again, not in the middle beside "spoken", and the replay button stays where it was.
+
+## 0.7.13 — 2026-11-03
+
+**Fixed**
+- A passing test run no longer shows as Something broke.
