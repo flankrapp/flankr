@@ -15,7 +15,9 @@
 //! amendment, item 1); and `last_session`: under `last`, the last open
 //! session's pane and when it was last shown ([`LastSession`]), deleted
 //! when the agent view is closed back to the overview (plan 20261024_02,
-//! the 2026-10-30 15:20 EDT amendment, item 3).
+//! the 2026-10-30 15:20 EDT amendment, item 3). Since 0.8.4, `drawer`:
+//! under `collapsed`, the ids of the workspaces whose groups are collapsed
+//! in the drawer, as a JSON list (plan 20261103_02, decision 3.4).
 //!
 //! The directories are made 0700 and a new file 0600 as they are created,
 //! never loosened and then tightened (plan 20261028_01, the 14:37 EDT
@@ -56,6 +58,9 @@ const VIEW: TableDefinition<&str, &str> = TableDefinition::new("view");
 
 /// The `last_session` table: `last`, the last open session as JSON.
 const LAST_SESSION: TableDefinition<&str, &str> = TableDefinition::new("last_session");
+
+/// The `drawer` table: `collapsed`, the collapsed workspaces' ids as JSON.
+const DRAWER: TableDefinition<&str, &str> = TableDefinition::new("drawer");
 
 /// The layout of `state.redb` this crate writes.
 pub const STATE_SCHEMA: u32 = 1;
@@ -305,6 +310,21 @@ impl RemoteState {
         self.write_json(LAST_SESSION, "last", last)
     }
 
+    /// The ids of the workspaces whose drawer groups are collapsed; none
+    /// if none were kept (plan 20261103_02, decision 3.4). Added in 0.8.4.
+    pub fn collapsed_workspaces(&self) -> Result<Vec<String>, String> {
+        Ok(self
+            .read_json(DRAWER, "collapsed", "the collapsed workspaces")?
+            .unwrap_or_default())
+    }
+
+    /// Keeps `workspaces` as the collapsed groups, replacing those before;
+    /// an empty list deletes the entry. Added in 0.8.4.
+    pub fn set_collapsed_workspaces(&self, workspaces: &[String]) -> Result<(), String> {
+        let value = (!workspaces.is_empty()).then_some(workspaces);
+        self.write_json(DRAWER, "collapsed", value.as_ref())
+    }
+
     fn read_json<T: serde::de::DeserializeOwned>(
         &self,
         table: TableDefinition<&str, &str>,
@@ -520,6 +540,26 @@ mod tests {
         assert!(again.view().unwrap().is_some());
         // Nothing to delete: not an error.
         again.set_last_session(None).unwrap();
+    }
+
+    #[test]
+    fn the_collapsed_workspaces_are_kept_and_read_back_after_reopening() {
+        let data = tempfile::tempdir().unwrap();
+        let r = remote(1);
+        let state = RemoteState::open(data.path(), &r).unwrap();
+        assert!(state.collapsed_workspaces().unwrap().is_empty());
+        state
+            .set_collapsed_workspaces(&["w2".into(), "w5".into()])
+            .unwrap();
+        drop(state);
+        let again = RemoteState::open(data.path(), &r).unwrap();
+        assert_eq!(again.collapsed_workspaces().unwrap(), ["w2", "w5"]);
+        // Replaced, and none deletes it.
+        again.set_collapsed_workspaces(&["w5".into()]).unwrap();
+        assert_eq!(again.collapsed_workspaces().unwrap(), ["w5"]);
+        again.set_collapsed_workspaces(&[]).unwrap();
+        assert!(again.collapsed_workspaces().unwrap().is_empty());
+        again.set_collapsed_workspaces(&[]).unwrap();
     }
 
     #[test]

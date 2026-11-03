@@ -1938,6 +1938,60 @@ fn kept_agents(pane: &str) -> Vec<libflankr_proto::common::AgentInfo> {
 }
 
 #[test]
+fn the_collapsed_workspaces_come_from_state_redb_and_are_kept_there() {
+    // Plan 20261103_02, decision 3.4: per remote, by workspace id, across
+    // restarts. Neither remote is reachable: all of it is from the files.
+    let (a, b) = (Server::start(), Server::start());
+    let dir = tempfile::tempdir().unwrap();
+    let mut keys = FileKeyStore::new(keys_dir(&dir));
+    let ra = remote(&mut keys, &a, vec![closed_addr()], Some(10), true);
+    let rb = remote(&mut keys, &b, vec![closed_addr()], Some(20), true);
+    keys.set_remotes(&Remotes {
+        active: Some(ra.id),
+        list: vec![ra.clone(), rb.clone()],
+    })
+    .unwrap();
+    let data = data_dir(&dir);
+    RemoteState::open(&data, &ra)
+        .unwrap()
+        .set_collapsed_workspaces(&["w2".into()])
+        .unwrap();
+    let c = companion(&dir);
+    let rows = expect_remotes(&c, "the kept groups", |rows| rows.len() == 2);
+    assert_eq!(rows[0].collapsed_workspaces, ["w2"]);
+    assert!(rows[1].collapsed_workspaces.is_empty());
+    // b's change is b's alone.
+    c.send(Input::SetCollapsedWorkspaces {
+        id: rb.id,
+        workspaces: vec!["w1".into(), "w3".into()],
+    });
+    let rows = expect_remotes(&c, "b's groups", |rows| {
+        !rows[1].collapsed_workspaces.is_empty()
+    });
+    assert_eq!(rows[1].collapsed_workspaces, ["w1", "w3"]);
+    assert_eq!(rows[0].collapsed_workspaces, ["w2"]);
+    c.send(Input::SetCollapsedWorkspaces {
+        id: ra.id,
+        workspaces: Vec::new(),
+    });
+    expect_remotes(&c, "a's cleared", |rows| {
+        rows[0].collapsed_workspaces.is_empty()
+    });
+    drop(c);
+    eventually("the states closed", || {
+        RemoteState::open(&data, &ra).is_ok() && RemoteState::open(&data, &rb).is_ok()
+    });
+    let kept = |r| {
+        RemoteState::open(&data, r)
+            .unwrap()
+            .collapsed_workspaces()
+            .unwrap()
+    };
+    assert!(kept(&ra).is_empty());
+    assert_eq!(kept(&rb), ["w1", "w3"]);
+}
+
+#[test]
 fn the_last_session_and_its_view_come_from_state_redb_at_start() {
     // Plan 20261024_02 and plan 20261023_03, their 2026-10-30 15:20 EDT
     // amendments: a's last session is listed, b's is not; neither is

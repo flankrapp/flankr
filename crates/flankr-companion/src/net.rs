@@ -303,6 +303,9 @@ struct LinkSlot {
     /// The session last open on it, as kept there (plan 20261024_02, the
     /// 2026-10-30 15:20 EDT amendment, item 3).
     last_session: Option<LastSession>,
+    /// The workspaces collapsed in its drawer, as kept there (plan
+    /// 20261103_02, decision 3.4).
+    collapsed: Vec<String>,
     backoff: Backoff,
     /// Bumped with each attempt and each end: what an older attempt or
     /// connection reports is dropped.
@@ -736,6 +739,15 @@ impl Net {
                     None
                 }
             });
+            let collapsed = remote_state
+                .as_ref()
+                .map(|r| {
+                    r.collapsed_workspaces().unwrap_or_else(|e| {
+                        log::warn!("state: reading the collapsed workspaces: {e}");
+                        Vec::new()
+                    })
+                })
+                .unwrap_or_default();
             log::info!(
                 "links: {}",
                 match key {
@@ -755,6 +767,7 @@ impl Net {
                 state,
                 remote_state,
                 last_session,
+                collapsed,
                 backoff: Backoff::new(self.config.backoff_initial, self.config.backoff_max),
                 generation: 0,
                 conn: LinkConn::Waiting(tokio::time::Instant::now()),
@@ -917,8 +930,14 @@ impl Net {
                 .iter()
                 .any(|l| l.key == LinkKey::Remote(id) && l.state.online())
         });
-        // Each remote's last session, while its pane is listed.
+        // Each remote's last session, while its pane is listed, and its
+        // collapsed drawer groups.
         for row in &mut rows {
+            row.collapsed_workspaces = links
+                .iter()
+                .find(|l| l.key == LinkKey::Remote(row.id))
+                .map(|l| l.collapsed.clone())
+                .unwrap_or_default();
             row.last_session = links
                 .iter()
                 .find(|l| l.key == LinkKey::Remote(row.id))
@@ -1046,6 +1065,10 @@ impl Net {
                 self.set_nickname(id, nickname.as_deref());
                 None
             }
+            Input::SetCollapsedWorkspaces { id, workspaces } => {
+                self.set_collapsed(id, workspaces);
+                None
+            }
             input => Some(input),
         }
     }
@@ -1069,6 +1092,25 @@ impl Net {
         if self.write_remotes() {
             self.show_remotes();
         }
+    }
+
+    /// Keeps `workspaces` as `id`'s collapsed drawer groups in its
+    /// `state.redb`; [`Event::Remotes`] follows when they changed.
+    fn set_collapsed(&mut self, id: RemoteId, workspaces: Vec<String>) {
+        let Some(slot) = self.slot_mut(LinkKey::Remote(id)) else {
+            log::info!("no link for {id}'s collapsed workspaces");
+            return;
+        };
+        if slot.collapsed == workspaces {
+            return;
+        }
+        if let Some(r) = &slot.remote_state
+            && let Err(e) = r.set_collapsed_workspaces(&workspaces)
+        {
+            log::warn!("state: keeping the collapsed workspaces: {e}");
+        }
+        slot.collapsed = workspaces;
+        self.show_remotes();
     }
 
     /// Starts removing `id`: the active remote's `link.unpair` goes to the

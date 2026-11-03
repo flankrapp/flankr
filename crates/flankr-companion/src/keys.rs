@@ -346,6 +346,11 @@ pub struct RemoteInfo {
     /// item 3). `None` from [`Remotes::info_with`], which does not read
     /// the state; the `net` thread fills it in. Added in 0.7.3.
     pub last_session: Option<crate::remote_state::LastSession>,
+    /// The workspaces whose groups are collapsed in the drawer, by
+    /// workspace id, from its `state.redb` (plan 20261103_02, decision
+    /// 3.4); set with [`crate::Input::SetCollapsedWorkspaces`]. Empty from
+    /// [`Remotes::info_with`]; the `net` thread fills it in. Added in 0.8.4.
+    pub collapsed_workspaces: Vec<String>,
 }
 
 impl Remotes {
@@ -378,6 +383,7 @@ impl Remotes {
                     nickname: r.nickname.clone(),
                     display_name,
                     last_session: None,
+                    collapsed_workspaces: Vec::new(),
                 }
             })
             .collect()

@@ -65,6 +65,16 @@ pub enum Input {
         id: RemoteId,
         nickname: Option<String>,
     },
+    /// The workspaces whose groups are collapsed in the drawer, on remote
+    /// `id`, by workspace id (plan 20261103_02, decision 3.4): the `net`
+    /// thread keeps them in the remote's `state.redb`, replacing those
+    /// before, and gives [`Event::Remotes`] with
+    /// [`RemoteInfo::collapsed_workspaces`](crate::RemoteInfo::collapsed_workspaces).
+    /// Ignored for a remote with no link. Added in 0.8.4.
+    SetCollapsedWorkspaces {
+        id: RemoteId,
+        workspaces: Vec<String>,
+    },
     /// A tap on a remote's card in the drawer that is not in use (plan
     /// 20261028_03, 3.7 and the 18:51 EDT amendment): the `net` thread
     /// writes `active` first, puts the old remote's link in the background
@@ -2979,6 +2989,7 @@ impl State {
             Input::Unpair
             | Input::CancelPairing
             | Input::SetNickname { .. }
+            | Input::SetCollapsedWorkspaces { .. }
             | Input::SwitchRemote(_)
             | Input::ToRemote { .. } => {
                 log::debug!("{input:?}: handled by the net thread");

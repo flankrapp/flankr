@@ -1249,3 +1249,20 @@ struct is additive; plan 20261103_02, decision 1):
 - **Added:** `AgentInfo::workspace_number: Option<u32>` (appended,
   default `None`, not written when `None`): herdr's workspace number, its
   place in herdr's sidebar. An older daemon sends neither.
+
+## flankr-companion 0.8.4 — 2026-11-03 (the commit tagged `flankr-companion-v0.8.4`)
+
+Additive (a variant of the non-exhaustive `Input`, an appended field and
+new methods; plan 20261103_02, decision 3.4). It takes libflankr_proto
+0.5.12, additive.
+
+- **Added:** `Input::SetCollapsedWorkspaces { id, workspaces }`: the
+  workspaces whose drawer groups are collapsed on remote `id`, by
+  workspace id; the `net` thread keeps them in the remote's `state.redb`
+  and gives `Event::Remotes`. Ignored for a remote with no link.
+- **Added:** `RemoteInfo::collapsed_workspaces: Vec<String>` (appended):
+  those workspaces as kept, read from `state.redb` when the remote's link
+  is made; empty from `Remotes::info_with`.
+- **Added:** `RemoteState::collapsed_workspaces()` and
+  `RemoteState::set_collapsed_workspaces(&[String])`: the `drawer`
+  table's `collapsed` entry, a JSON list; an empty list deletes it.
