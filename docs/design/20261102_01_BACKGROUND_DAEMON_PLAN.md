@@ -199,3 +199,14 @@ foreground form for development and for the test rig, and keep its log.
 1. **The flag's name:** `--foreground` (recommended), or `--skip-service`.
 2. **Bare `flankr`:** keep it as `serve` in the background (recommended,
    as today it is `serve`), or make it print the usage.
+
+## Amendment — 2026-11-02 21:58 EST: the open questions answered
+
+The owner (2026-11-02) agreed to the recommended answers to section 6:
+"yes, those are fine".
+
+1. **The flag** is `--foreground`; there is no `--skip-service`.
+2. **Bare `flankr`** stays `serve`, now in the background.
+
+Section 6 has no open questions left; the rest of the plan is unchanged.
+The status stays `Draft` until the owner approves it.
