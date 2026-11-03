@@ -234,3 +234,9 @@ These changes came before the program had version numbers.
 
 **Fixed**
 - The daemon finds Tailscale's command when it is not on `PATH`: it also looks in `/opt/homebrew/bin`, `/usr/local/bin`, and the Tailscale app in `/Applications` or `~/Applications`. Before, a daemon started over SSH or in the background could miss a Homebrew install and report Tailscale as not running.
+
+## 0.7.3 — 2026-11-03
+
+**Changed**
+- Pairing a device under a name that is already paired no longer fails and needs a second `flankr pair --replace` run. After you type `yes` to the six words, `flankr pair` asks `'<name>' is already paired (paired <date>). Replace it with this device? [y/N]`. `y` replaces the old entry (keeping its `agents` and `approve` settings) and disconnects the old key; anything else keeps it, prints `Not paired: '<name>' was kept.` and exits 1. The phone waits while you answer, within the same offer time. With `--name`, the name asked about is that one.
+- `--replace` still works and skips the question.

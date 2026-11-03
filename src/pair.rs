@@ -14,6 +14,10 @@
 //! * The run makes one attempt: once a request is held, any answer but
 //!   `yes`, the phone's Cancel, or the offer expiring ends it with a
 //!   non-zero status and nothing added.
+//! * When the name being paired is already in `auth.toml` and `--replace`
+//!   was not given, a `yes` to the words is followed by a second question,
+//!   whether to replace that entry; only `y` or `yes` replaces it (plan
+//!   20261022_02, the 2026-11-03 11:40 EST amendment).
 //! * When the offer expires (60 s by default, `--timeout` 1 to 300), the
 //!   run just exits non-zero, ending an open prompt line and printing
 //!   nothing else.
@@ -41,12 +45,35 @@ use tokio_util::codec::{FramedRead, LinesCodec};
 use crate::server::conn::MAX_LINE;
 use crate::server::link::ONLY_THIS_MACHINE;
 use crate::server::link::pair_mode::{
-    PairAnswerParams, PairAnswerResult, PairBeginExtra, PairBeginParams, PairCodeParams, PairEnded,
-    PairRequestInfo, methods as pair_methods,
+    AlreadyPaired, PairAnswerParams, PairAnswerResult, PairBeginExtra, PairBeginParams,
+    PairCodeParams, PairEnded, PairRequestInfo, methods as pair_methods,
 };
 
 /// What `flankr pair` asks once a request is held.
 pub const PROMPT: &str = "Do the six words on the phone match? Type yes to pair: ";
+
+/// The question asked after a `yes` when the name is already paired and
+/// `--replace` was not given (plan 20261022_02, the 2026-11-03 11:40 EST
+/// amendment).
+pub fn replace_prompt(already: &AlreadyPaired) -> String {
+    match already.paired_on() {
+        Some(day) => format!(
+            "'{}' is already paired (paired {day}). Replace it with this device? [y/N] ",
+            already.name
+        ),
+        None => format!(
+            "'{}' is already paired. Replace it with this device? [y/N] ",
+            already.name
+        ),
+    }
+}
+
+/// Whether the answer to the replace question is yes: `y` or `yes`, in
+/// any case, with surrounding space.
+pub fn is_replace_yes(line: &str) -> bool {
+    let line = line.trim();
+    line.eq_ignore_ascii_case("y") || line.eq_ignore_ascii_case("yes")
+}
 
 /// What `flankr pair` says of a pasted server address.
 pub const NOT_A_DEVICE_CODE: &str =
@@ -106,7 +133,7 @@ pub struct PairOptions {
     pub name: Option<String>,
     /// `companion`, `harness`; the daemon defaults to `companion`.
     pub protocols: Option<Vec<String>>,
-    /// Replace an entry of the same name.
+    /// Replace an entry of the same name without asking.
     pub replace: bool,
     /// The device code, instead of prompting for it.
     pub code: Option<String>,
@@ -310,6 +337,7 @@ pub async fn run_with<W: Write + Send>(
     let mut daemon = Daemon::connect(socket).await?;
     let params = PairBeginParams {
         timeout_secs: options.timeout_secs,
+        name: options.name.clone(),
     };
     let begun = match daemon.call(methods::LINK_PAIR_BEGIN, params).await? {
         Ok(result) => result,
@@ -404,30 +432,32 @@ pub async fn run_with<W: Write + Send>(
             request.name, request.words
         ),
     )?;
-    let answer = loop {
-        tokio::select! {
-            note = daemon.note() => match pair_note(note?) {
-                Some(Wait::Ended(ended)) => {
-                    say(&mut out, "\n")?;
-                    if ended.reason == "cancelled" {
-                        eprintln!("The phone cancelled the pairing; nothing was added.");
-                    }
-                    return Ok(1);
-                }
-                _ => continue,
-            },
-            line = input.recv() => break line.as_deref().is_some_and(is_yes),
-            _ = tokio::time::sleep_until(deadline) => {
-                say(&mut out, "\n")?;
-                return Ok(1);
-            }
-        }
+    let Some(line) = ask(&mut daemon, &mut input, &mut out, deadline).await? else {
+        return Ok(1);
     };
+    let mut answer = is_yes(&line);
+    let mut replace = options.replace;
+    let mut kept = None;
+    if answer
+        && !replace
+        && let Some(already) = &request.already_paired
+    {
+        say(&mut out, &replace_prompt(already))?;
+        let Some(line) = ask(&mut daemon, &mut input, &mut out, deadline).await? else {
+            return Ok(1);
+        };
+        if is_replace_yes(&line) {
+            replace = true;
+        } else {
+            answer = false;
+            kept = Some(already.name.clone());
+        }
+    }
     let params = PairAnswerParams {
         yes: answer,
         name: options.name.clone(),
         protocols: options.protocols.clone(),
-        replace: options.replace,
+        replace,
     };
     let answered = match daemon.call(pair_methods::LINK_PAIR_ANSWER, params).await? {
         Ok(result) => serde_json::from_value::<PairAnswerResult>(result)
@@ -444,8 +474,42 @@ pub async fn run_with<W: Write + Send>(
             Ok(0)
         }
         _ => {
-            say(&mut out, "Not paired: the answer was not yes.\n")?;
+            match kept {
+                Some(name) => say(&mut out, &format!("Not paired: '{name}' was kept.\n"))?,
+                None => say(&mut out, "Not paired: the answer was not yes.\n")?,
+            }
             Ok(1)
+        }
+    }
+}
+
+/// Waits for the owner's answer to the question just printed. `None`
+/// when the run ends first (the offer expired or the phone cancelled):
+/// the prompt line is ended and the caller exits 1. End of input is an
+/// empty answer.
+async fn ask<W: Write + Send>(
+    daemon: &mut Daemon,
+    input: &mut mpsc::UnboundedReceiver<String>,
+    out: &mut W,
+    deadline: tokio::time::Instant,
+) -> Result<Option<String>, String> {
+    loop {
+        tokio::select! {
+            note = daemon.note() => match pair_note(note?) {
+                Some(Wait::Ended(ended)) => {
+                    say(out, "\n")?;
+                    if ended.reason == "cancelled" {
+                        eprintln!("The phone cancelled the pairing; nothing was added.");
+                    }
+                    return Ok(None);
+                }
+                _ => continue,
+            },
+            line = input.recv() => return Ok(Some(line.unwrap_or_default())),
+            _ = tokio::time::sleep_until(deadline) => {
+                say(out, "\n")?;
+                return Ok(None);
+            }
         }
     }
 }
@@ -580,6 +644,32 @@ mod tests {
         for bad in ["0", "-1", "1.5", "", "a minute"] {
             let err = parse_timeout(bad).unwrap_err();
             assert!(err.contains("1 to 300"), "{bad}: {err}");
+        }
+    }
+
+    #[test]
+    fn the_replace_question_names_the_entry_and_its_day() {
+        let already = AlreadyPaired {
+            name: "s23".to_string(),
+            paired: "2026-10-22T11:30:00-04:00".to_string(),
+        };
+        assert_eq!(
+            replace_prompt(&already),
+            "'s23' is already paired (paired 2026-10-22). Replace it with this device? [y/N] "
+        );
+        let undated = AlreadyPaired {
+            paired: String::new(),
+            ..already
+        };
+        assert_eq!(
+            replace_prompt(&undated),
+            "'s23' is already paired. Replace it with this device? [y/N] "
+        );
+        for yes in ["y", "Y", " yes \n", "YES"] {
+            assert!(is_replace_yes(yes), "{yes:?}");
+        }
+        for no in ["", "\n", "n", "no", "yep", "replace"] {
+            assert!(!is_replace_yes(no), "{no:?}");
         }
     }
 

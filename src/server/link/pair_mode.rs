@@ -20,6 +20,11 @@
 //!   is held (`Busy`). With no run in pair mode, a request gets no reply.
 //! * `link.pair_code` holds a pasted device code instead (the fallback),
 //!   with the same words from the code's key and the run's offer.
+//! * When the name a held request would be added as (`link.pair_begin`'s
+//!   `name`, else the device's) is already in `auth.toml`, its
+//!   `link.pair_request` (or `link.pair_code` result) carries
+//!   `already_paired`, so `flankr pair` can ask whether to replace it
+//!   (plan 20261022_02, the 2026-11-03 11:40 EST amendment).
 //! * `link.pair_answer` answers the held request: on `yes` the key is
 //!   added to `auth.toml` and the phone told `Added`; otherwise nothing is
 //!   added and the phone is told `Refused`. Either way the run is over.
@@ -62,11 +67,15 @@ pub mod methods {
 const TELL_PHONE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// `link.pair_begin`'s params. `{}` is the default timeout.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct PairBeginParams {
     /// How long the offer lasts, 1 to 300 seconds; 60 by default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u16>,
+    /// The name the run will pair as (`flankr pair --name`), so that a
+    /// held request can say whether it is already paired.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 /// What `link.pair_begin` adds to `libflankr_proto`'s
@@ -88,6 +97,29 @@ pub struct PairRequestInfo {
     pub via: String,
     /// The seconds left on the offer.
     pub expires_in_secs: u16,
+    /// The entry already in `auth.toml` under the name this request would
+    /// be added as, if any: `flankr pair` then asks whether to replace it
+    /// (plan 20261022_02, the 2026-11-03 11:40 EST amendment).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub already_paired: Option<AlreadyPaired>,
+}
+
+/// An entry of `auth.toml` that a held request's name would replace.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AlreadyPaired {
+    /// Its name.
+    pub name: String,
+    /// When it was paired, RFC 3339; may be empty.
+    #[serde(default)]
+    pub paired: String,
+}
+
+impl AlreadyPaired {
+    /// The day it was paired, `YYYY-MM-DD`, or `None` when unknown.
+    pub fn paired_on(&self) -> Option<&str> {
+        let day = self.paired.trim().split('T').next().unwrap_or("").trim();
+        (!day.is_empty()).then_some(day)
+    }
 }
 
 /// `link.pair_code`'s params.
@@ -168,6 +200,8 @@ pub(super) struct PairRun {
     /// The daemon-socket connection that began it.
     owner: u64,
     offer: [u8; OFFER_LEN],
+    /// The name the run will pair as, from `link.pair_begin`.
+    name: Option<String>,
     expires: Instant,
     state: RunState,
     events: mpsc::UnboundedSender<PairEvent>,
@@ -215,6 +249,8 @@ enum Decision {
     Drop,
     Refuse(PairRefusal),
     Hold {
+        /// The name the request would be added as.
+        pairs_as: String,
         run: u64,
         info: PairRequestInfo,
         told: oneshot::Receiver<(PairResult, oneshot::Sender<()>)>,
@@ -224,14 +260,17 @@ enum Decision {
 
 impl Link {
     /// Starts a run for the connection `owner`, replacing any other, with
-    /// a fresh `offer` lasting `secs`. Returns the receiver of the run's
-    /// events; it ends when the run does.
+    /// a fresh `offer` lasting `secs`, pairing as `name` when given.
+    /// Returns the receiver of the run's events; it ends when the run
+    /// does.
     pub(super) fn start_run(
         self: &Arc<Self>,
         owner: u64,
         offer: [u8; OFFER_LEN],
         secs: u16,
+        name: Option<String>,
     ) -> mpsc::UnboundedReceiver<PairEvent> {
+        let name = name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
         let (events, rx) = mpsc::unbounded_channel();
         let id = self
             .next_conn
@@ -249,6 +288,7 @@ impl Link {
             id,
             owner,
             offer,
+            name,
             expires,
             state: RunState::Waiting,
             events,
@@ -309,6 +349,7 @@ impl Link {
             Ok(request) => request,
             Err(_) => return Decision::Refuse(PairRefusal::Malformed),
         };
+        let pairs_as = run.name.clone().unwrap_or_else(|| request.name.clone());
         if request.offer != run.offer {
             return Decision::Refuse(PairRefusal::WrongOffer);
         }
@@ -327,16 +368,28 @@ impl Link {
         });
         let expires_in_secs = run.expires_in_secs(now);
         Decision::Hold {
+            pairs_as,
             run: run.id,
             info: PairRequestInfo {
                 name: request.name.clone(),
                 words: pairing_words_text(&self.keypair.public, &run.offer, &request.device_key),
                 via: "link".to_string(),
                 expires_in_secs,
+                already_paired: None,
             },
             told,
             expires_in_secs,
         }
+    }
+
+    /// The entry of `auth.toml` named `name`, if any. A file that cannot
+    /// be read reports none; adding the key then fails as it would have.
+    fn already_paired(&self, name: &str) -> Option<AlreadyPaired> {
+        let file = super::auth::AuthFile::load(&self.settings.auth_path).ok()?;
+        file.find_name(name).map(|entry| AlreadyPaired {
+            name: entry.name.clone(),
+            paired: entry.paired.clone(),
+        })
     }
 
     /// Tells the run's connection of its held request.
@@ -387,11 +440,13 @@ impl Link {
                 .await;
             }
             Decision::Hold {
+                pairs_as,
                 run,
-                info,
+                mut info,
                 told,
                 expires_in_secs,
             } => {
+                info.already_paired = self.already_paired(&pairs_as);
                 log::info!("Holding a pairing request from '{}' ({peer})", info.name);
                 let ack = PairAck::Accepted { expires_in_secs };
                 match tokio::time::timeout(super::HANDSHAKE_TIMEOUT, incoming.respond(ack)).await {
@@ -423,11 +478,13 @@ impl Link {
         }
         let code = libflankr_proto::link::DeviceCode::decode(code, &self.keypair.public)
             .map_err(super::code_error)?;
+        let pairs_as = run.name.clone().unwrap_or_else(|| code.name.clone());
         let info = PairRequestInfo {
             name: code.name.clone(),
             words: pairing_words_text(&self.keypair.public, &run.offer, &code.key),
             via: "code".to_string(),
             expires_in_secs: run.expires_in_secs(now),
+            already_paired: self.already_paired(&pairs_as),
         };
         run.state = RunState::Held(Held {
             key: code.key,

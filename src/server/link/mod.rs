@@ -592,7 +592,7 @@ impl Link {
         };
         let pairing = payload.encode().map_err(|e| e.to_string())?;
         let url = payload.url().map_err(|e| e.to_string())?;
-        let events = self.start_run(owner, offer, secs);
+        let events = self.start_run(owner, offer, secs, params.name);
         Ok(Begun {
             result: LinkPairBeginResult {
                 url,
@@ -1148,7 +1148,7 @@ mod tests {
     }
 
     async fn begin(link: &Arc<Link>) -> Result<Vec<String>, String> {
-        link.pair_begin(1, PairBeginParams { timeout_secs: None })
+        link.pair_begin(1, PairBeginParams::default())
             .await
             .map(|b| b.result.addresses)
     }

@@ -1226,4 +1226,220 @@ mod pair_mode {
         assert_eq!(exit_code(run).await, 1);
         assert!(!env.auth_path().exists());
     }
+
+    // Re-pairing a name already in auth.toml asks, in the same run (plan
+    // 20261022_02, the 2026-11-03 11:40 EST amendment).
+
+    const REPLACE: &str = "Replace it with this device? [y/N] ";
+
+    /// `s23` already paired, with its open connection.
+    async fn s23_paired(env: &Env) -> (LinkStream<TcpStream>, StaticKeypair) {
+        let mut local = Local::connect(&env.socket).await;
+        let (_first, old_key) = pair_device(env, &mut local, "s23", &["harness"]).await;
+        let mut old = reconnect_with(env, &old_key.private, &hello_bytes())
+            .await
+            .unwrap();
+        recv(&mut old).await;
+        (old, old_key)
+    }
+
+    /// The day `name` was paired, as the question shows it.
+    fn paired_on(env: &Env, name: &str) -> String {
+        let paired = env.auth().find_name(name).unwrap().paired.clone();
+        paired.split('T').next().unwrap().to_string()
+    }
+
+    #[tokio::test]
+    async fn a_held_request_says_when_its_name_is_already_paired() {
+        let env = start().await;
+        let _s23 = s23_paired(&env).await;
+        let paired = env.auth().find_name("s23").unwrap().paired.clone();
+        assert!(!paired.is_empty());
+
+        // The device's own name is taken.
+        let mut local = Local::connect(&env.socket).await;
+        let (payload, _) = begin(&mut local, json!({})).await;
+        let (_, _response) = request(&env, "s23", payload.offer.unwrap()).await;
+        let note = local.note("link.pair_request").await;
+        assert_eq!(
+            note["params"]["already_paired"],
+            json!({"name": "s23", "paired": paired}),
+            "{note}"
+        );
+        drop(local);
+
+        // A free name carries no already_paired.
+        let mut local = Local::connect(&env.socket).await;
+        let (payload, _) = begin(&mut local, json!({})).await;
+        let (_, _response) = request(&env, "t3", payload.offer.unwrap()).await;
+        let note = local.note("link.pair_request").await;
+        assert!(note["params"].get("already_paired").is_none(), "{note}");
+        drop(local);
+
+        // begin's name is the one looked up, not the device's.
+        let mut local = Local::connect(&env.socket).await;
+        let (payload, _) = begin(&mut local, json!({"name": " s23 "})).await;
+        let (_, _response) = request(&env, "t3", payload.offer.unwrap()).await;
+        let note = local.note("link.pair_request").await;
+        assert_eq!(note["params"]["name"], "t3", "{note}");
+        assert_eq!(note["params"]["already_paired"]["name"], "s23", "{note}");
+        drop(local);
+
+        // A pasted device code says the same.
+        let mut local = Local::connect(&env.socket).await;
+        begin(&mut local, json!({})).await;
+        let (_, code) = device(&env.link.public_key(), "s23");
+        let r = local.call("link.pair_code", json!({"code": code})).await;
+        assert_eq!(r["result"]["already_paired"]["name"], "s23", "{r}");
+        let (_, code) = device(&env.link.public_key(), "t3");
+        let mut other = Local::connect(&env.socket).await;
+        begin(&mut other, json!({})).await;
+        let r = other.call("link.pair_code", json!({"code": code})).await;
+        assert!(r["result"].get("already_paired").is_none(), "{r}");
+    }
+
+    #[tokio::test]
+    async fn flankr_pair_asks_and_y_replaces_the_paired_name() {
+        let env = start().await;
+        let (mut old, old_key) = s23_paired(&env).await;
+        let day = paired_on(&env, "s23");
+        let run = flankr_pair(&env, flankr::pair::PairOptions::default()).await;
+        let offer = run.payload.offer.unwrap();
+        let (phone, response) = request(&env, "s23", offer).await;
+        let words = pairing_words_text(&env.link.public_key(), &offer, &phone.public);
+        run.out.until_ends_with(PROMPT).await;
+        run.input.send("yes\n".to_string()).unwrap();
+        let text = run.out.until_ends_with(REPLACE).await;
+        assert!(
+            text.ends_with(&format!(
+                "Pairing request from s23\nPairing words: {words}\n{PROMPT}\
+                 's23' is already paired (paired {day}). {REPLACE}"
+            )),
+            "{text}"
+        );
+        // Still held: nothing changed while the owner reads the question.
+        assert!(!has_key(&env, &phone.public));
+        run.input.send(" Y \n".to_string()).unwrap();
+        let out = run.out.clone();
+        assert_eq!(exit_code(run).await, 0);
+        assert!(
+            out.text()
+                .ends_with(&format!("{REPLACE}Added s23 (companion)\n")),
+            "{}",
+            out.text()
+        );
+        assert_eq!(result_of(response).await, PairResult::Added);
+        // The new key replaced the old one, whose connection closed.
+        assert!(closes(&mut old, Duration::from_secs(1)).await);
+        let file = env.auth();
+        assert_eq!(file.clients.len(), 1);
+        assert_eq!(
+            file.find_name("s23").unwrap().key,
+            format_key(&phone.public)
+        );
+        assert!(!has_key(&env, &old_key.public));
+    }
+
+    #[tokio::test]
+    async fn flankr_pair_keeps_the_paired_name_unless_the_answer_is_y() {
+        let env = start().await;
+        let (mut old, old_key) = s23_paired(&env).await;
+        let before = std::fs::read_to_string(env.auth_path()).unwrap();
+        // --name is the name asked about, whatever the device calls itself.
+        let options = flankr::pair::PairOptions {
+            name: Some("s23".to_string()),
+            ..Default::default()
+        };
+        let run = flankr_pair(&env, options).await;
+        let (phone, response) = request(&env, "t3", run.payload.offer.unwrap()).await;
+        run.out.until_ends_with(PROMPT).await;
+        run.input.send("yes\n".to_string()).unwrap();
+        run.out.until_ends_with(REPLACE).await;
+        run.input.send("no\n".to_string()).unwrap();
+        let out = run.out.clone();
+        assert_eq!(exit_code(run).await, 1);
+        assert!(
+            out.text()
+                .ends_with(&format!("{REPLACE}Not paired: 's23' was kept.\n")),
+            "{}",
+            out.text()
+        );
+        assert_eq!(result_of(response).await, PairResult::Refused);
+        assert_eq!(std::fs::read_to_string(env.auth_path()).unwrap(), before);
+        assert!(!has_key(&env, &phone.public));
+        assert!(has_key(&env, &old_key.public));
+        assert!(!closes(&mut old, Duration::from_millis(300)).await);
+    }
+
+    #[tokio::test]
+    async fn flankr_pair_replace_skips_the_question() {
+        let env = start().await;
+        let (mut old, _) = s23_paired(&env).await;
+        let options = flankr::pair::PairOptions {
+            replace: true,
+            ..Default::default()
+        };
+        let run = flankr_pair(&env, options).await;
+        let (phone, response) = request(&env, "s23", run.payload.offer.unwrap()).await;
+        run.out.until_ends_with(PROMPT).await;
+        run.input.send("yes\n".to_string()).unwrap();
+        let out = run.out.clone();
+        assert_eq!(exit_code(run).await, 0);
+        assert!(
+            out.text()
+                .ends_with(&format!("{PROMPT}Added s23 (companion)\n")),
+            "{}",
+            out.text()
+        );
+        assert!(!out.text().contains(REPLACE));
+        assert_eq!(result_of(response).await, PairResult::Added);
+        assert!(closes(&mut old, Duration::from_secs(1)).await);
+        assert_eq!(
+            env.auth().find_name("s23").unwrap().key,
+            format_key(&phone.public)
+        );
+    }
+
+    #[tokio::test]
+    async fn the_offer_expiring_at_the_replace_question_just_exits() {
+        let env = start().await;
+        let _s23 = s23_paired(&env).await;
+        let before = std::fs::read_to_string(env.auth_path()).unwrap();
+        let options = flankr::pair::PairOptions {
+            timeout_secs: Some(2),
+            ..Default::default()
+        };
+        let run = flankr_pair(&env, options).await;
+        let (_, response) = request(&env, "s23", run.payload.offer.unwrap()).await;
+        run.out.until_ends_with(PROMPT).await;
+        run.input.send("yes\n".to_string()).unwrap();
+        run.out.until_ends_with(REPLACE).await;
+        let out = run.out.clone();
+        assert_eq!(exit_code(run).await, 1);
+        assert!(
+            out.text().ends_with(&format!("{REPLACE}\n")),
+            "{}",
+            out.text()
+        );
+        assert_eq!(result_of(response).await, PairResult::Expired);
+        assert_eq!(std::fs::read_to_string(env.auth_path()).unwrap(), before);
+    }
+
+    #[tokio::test]
+    async fn a_free_name_is_not_asked_about() {
+        let env = start().await;
+        let _s23 = s23_paired(&env).await;
+        let run = flankr_pair(&env, flankr::pair::PairOptions::default()).await;
+        let (phone, _response) = request(&env, "t3", run.payload.offer.unwrap()).await;
+        run.out.until_ends_with(PROMPT).await;
+        run.input.send("yes\n".to_string()).unwrap();
+        let out = run.out.clone();
+        assert_eq!(exit_code(run).await, 0);
+        assert!(
+            out.text()
+                .ends_with(&format!("{PROMPT}Added t3 (companion)\n"))
+        );
+        assert!(has_key(&env, &phone.public));
+        assert_eq!(env.auth().clients.len(), 2);
+    }
 }
