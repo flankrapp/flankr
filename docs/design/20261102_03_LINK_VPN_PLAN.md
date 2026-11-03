@@ -150,3 +150,9 @@ follow, or with no VPN on a local port or an explicit address.
 - A binding to `0.0.0.0` exposes the link on every network the machine
   joins; the link's own encryption and pairing still guard it, and the
   start log names each bound address.
+
+## Amendment — 2026-11-02 23:51 EST: approved
+
+The owner approved the plan as it stands at `6e69460` (2026-11-02: "yes,
+approve and build it"). It is built now; the first implementing commit sets
+`In implementation`.
