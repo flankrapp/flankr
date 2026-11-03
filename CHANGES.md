@@ -4182,3 +4182,25 @@ the new build, with its Tailscale forward and key file as before. On the
 Mac mini, a plain install left the running daemon (pid 58981) on 0.7.3,
 and `flankr serve` said: "It runs an older copy of
 /Users/tmeade/.local/bin/flankr; run flankr serve --restart to restart it."
+
+## 2026-11-03 12:26 EST — Holds at 500 ms with no progress bar, the volume menu's Stop, one details screen for a remote; the app stays in its 0.7 series
+
+Plans: the session drawer plan (20261028_03), the bottom bar plan
+(20261028_06), the plugins plan (20261028_04) and the pairing QR scan plan
+(20261028_02), each by its 2026-11-03 12:13 EST amendment, from the
+owner's reports of 12:06 EST and after in `docs/OWNER_REPORTS.md`. These
+are new features and behaviour a user would notice, which FLANKR RULE 1
+would make a minor bump (0.8.0); on the owner's instruction "keep the same
+version series", as for 0.7.3 and 0.7.4, the app is 0.7.5 instead.
+flankr-companion does not change.
+
+Two readings, within the amendments:
+
+1. The volume menu's Stop shows while the app's `speaking` is set (the
+   client's `Input::Speaking`), as Skip does; the lead's "being spoken
+   (or queued)" is read as that flag, which the client keeps on while its
+   queue plays.
+2. The overview's pinned plugin cards also go to 500 ms (the plugins
+   plan's amendment): the owner's "make them all 500ms" answered a
+   proposal that every press-and-hold in the app fire at 500 ms, and that
+   card's Unpin was the one hold the proposal did not list by name.
