@@ -11,6 +11,7 @@
 //! resolved against the key's model list as [`gemini::Catalogs`] holds it.
 
 pub mod gemini;
+pub mod keys;
 pub mod planning;
 pub mod service;
 
@@ -22,6 +23,9 @@ pub use service::{
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+pub use keys::{FileKeySource, KeySource, Lookup};
 
 use crate::config::{AppConfig, GeminiConfig, LlmBackendConfig, LlmConfig, SummaryConfig};
 
@@ -91,13 +95,6 @@ impl Kind {
             Kind::Gemini => gemini::default_choice(use_),
         }
     }
-
-    /// The key file a backend of this kind reads when it names none.
-    pub fn default_key_file(self) -> &'static str {
-        match self {
-            Kind::Gemini => gemini::KEY_FILE,
-        }
-    }
 }
 
 /// An API key. Its `Debug` never shows it.
@@ -105,6 +102,10 @@ impl Kind {
 pub struct ApiKey(String);
 
 impl ApiKey {
+    pub fn new(key: impl Into<String>) -> Self {
+        ApiKey(key.into())
+    }
+
     pub fn expose(&self) -> &str {
         &self.0
     }
@@ -116,19 +117,32 @@ impl std::fmt::Debug for ApiKey {
     }
 }
 
-/// Where keys are looked for: the daemon's working folder, against which
-/// relative key files are read, and `GEMINI_API_KEY`.
-#[derive(Clone, PartialEq, Eq)]
+/// Where keys are looked for (plan 20261102_02, decision 1): the folder a
+/// relative `api_key_file` is read against (its config file's, never the
+/// working folder), the Keychain when it is used, flankr's config-folder
+/// key file, and `GEMINI_API_KEY`.
+#[derive(Clone)]
 pub struct KeyEnv {
-    pub cwd: PathBuf,
+    pub config_dir: PathBuf,
+    /// Only the daemon's and `flankr key`'s own setup sets it
+    /// ([`KeyEnv::with_keychain`]); tests use a fake or none.
+    pub keychain: Option<Arc<dyn KeySource>>,
+    pub secrets_file: Option<PathBuf>,
     pub gemini_api_key: Option<ApiKey>,
 }
 
 impl KeyEnv {
-    /// The process's working folder and environment.
-    pub fn from_process() -> Self {
+    /// For the config file `config_path`: its folder, flankr's config
+    /// folder and the environment, without the Keychain.
+    pub fn from_process(config_path: &Path) -> Self {
+        let config_dir = crate::daemon::absolute(config_path)
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("/"));
         KeyEnv {
-            cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            config_dir,
+            keychain: None,
+            secrets_file: keys::secrets_file(),
             gemini_api_key: std::env::var(gemini::KEY_ENV)
                 .ok()
                 .map(|k| k.trim().to_string())
@@ -137,10 +151,31 @@ impl KeyEnv {
         }
     }
 
-    /// `dir` as the working folder, and no environment key (tests).
+    /// With the login keychain, unless [`keys::keychain_skipped`] says why
+    /// not (another system, `FLANKR_KEY_STORE=file`, a test's `HOME`).
+    pub fn with_keychain(mut self) -> Self {
+        self.keychain = keys::keychain();
+        self
+    }
+
+    /// `dir` as flankr's config folder, holding the config file and
+    /// `secrets/gemini_api_key`; no Keychain and no environment key (tests).
     pub fn in_dir(dir: impl Into<PathBuf>) -> Self {
+        let dir = dir.into();
         KeyEnv {
-            cwd: dir.into(),
+            secrets_file: Some(dir.join(gemini::KEY_FILE)),
+            config_dir: dir,
+            keychain: None,
+            gemini_api_key: None,
+        }
+    }
+
+    /// No source at all.
+    pub fn none() -> Self {
+        KeyEnv {
+            config_dir: PathBuf::from("/"),
+            keychain: None,
+            secrets_file: None,
             gemini_api_key: None,
         }
     }
@@ -148,17 +183,103 @@ impl KeyEnv {
     fn path(&self, file: &str) -> PathBuf {
         let path = PathBuf::from(file);
         if path.is_relative() {
-            self.cwd.join(path)
+            self.config_dir.join(path)
         } else {
             path
         }
     }
+
+    /// Each source for a backend whose `api_key_file` is `file`, in
+    /// decision 1's order, with what it holds; all of them when `all`, else
+    /// up to the first found or refused.
+    pub fn lookups(&self, file: Option<&str>, all: bool) -> Vec<(String, Lookup)> {
+        let mut out = Vec::new();
+        let mut push = |name: String, lookup: Lookup| {
+            let stop = matches!(lookup, Lookup::Found(_) | Lookup::Refused(_));
+            out.push((name, lookup));
+            stop && !all
+        };
+        if let Some(file) = file {
+            let source = FileKeySource {
+                path: self.path(file),
+            };
+            if push(
+                format!("api_key_file {}", keys::tilde(&source.path)),
+                source.get(),
+            ) {
+                return out;
+            }
+        }
+        if let Some(keychain) = &self.keychain
+            && push(keychain.name(), keychain.get())
+        {
+            return out;
+        }
+        if let Some(path) = &self.secrets_file {
+            let source = FileKeySource { path: path.clone() };
+            if push(source.name(), source.get()) {
+                return out;
+            }
+        }
+        let env = match &self.gemini_api_key {
+            Some(key) => Lookup::Found(key.clone()),
+            None => Lookup::None,
+        };
+        push(gemini::KEY_ENV.to_string(), env);
+        out
+    }
+
+    /// The key for a backend whose `api_key_file` is `file`, and the name
+    /// of the source it came from; or why there is none. Never the key's
+    /// text.
+    pub fn find(&self, file: Option<&str>) -> Result<(ApiKey, String), NoKey> {
+        let looked = self.lookups(file, false);
+        match looked.last() {
+            Some((name, Lookup::Found(key))) => Ok((key.clone(), name.clone())),
+            Some((_, Lookup::Refused(why))) => Err(NoKey::Refused(why.clone())),
+            _ => {
+                let places: Vec<String> = looked
+                    .iter()
+                    .map(|(name, lookup)| match lookup {
+                        Lookup::Locked => format!("{name} (locked)"),
+                        _ => name.clone(),
+                    })
+                    .collect();
+                Err(NoKey::Missing(format!(
+                    "looked in {}; run `flankr key set gemini`",
+                    places.join(", ")
+                )))
+            }
+        }
+    }
 }
+
+/// Why [`KeyEnv::find`] has no key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NoKey {
+    /// A source holds one that is not to be read: why, and the fix.
+    Refused(String),
+    /// None anywhere: the places looked in, and the fix.
+    Missing(String),
+}
+
+impl PartialEq for KeyEnv {
+    fn eq(&self, other: &Self) -> bool {
+        self.config_dir == other.config_dir
+            && self.secrets_file == other.secrets_file
+            && self.gemini_api_key == other.gemini_api_key
+            && self.keychain.as_ref().map(|k| k.name()) == other.keychain.as_ref().map(|k| k.name())
+    }
+}
+
+impl Eq for KeyEnv {}
 
 impl std::fmt::Debug for KeyEnv {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("KeyEnv")
-            .field("cwd", &self.cwd)
+            .field("config_dir", &self.config_dir)
+            .field("keychain", &self.keychain.as_ref().map(|k| k.name()))
+            .field("secrets_file", &self.secrets_file)
             .field("gemini_api_key", &self.gemini_api_key.is_some())
             .finish()
     }
@@ -178,25 +299,19 @@ pub fn read_key_file(path: &Path) -> Result<Option<String>, String> {
     if mode & 0o077 != 0 {
         return Err(format!(
             "the Gemini key file {} has mode {mode:04o}; only its owner may have access \
-             (chmod 600)",
+             (chmod 600 {}); it is not read",
+            path.display(),
             path.display()
         ));
     }
     let text = std::fs::read_to_string(path)
         .map_err(|e| format!("the Gemini key file {}: {e}", path.display()))?;
-    let key = text.trim();
     // An API key is one short token. Anything else (a service-account JSON,
     // several lines) is refused here, so it never reaches a request header.
-    let looks_like_key =
-        !key.contains(char::is_whitespace) && !key.starts_with(['{', '[']) && key.len() <= 256;
-    if !key.is_empty() && !looks_like_key {
-        return Err(format!(
-            "the Gemini key file {} does not hold an API key (a service-account \
-             file is not an API key)",
-            path.display()
-        ));
+    match keys::parse_key(&text) {
+        Ok(key) => Ok(key.map(|k| k.0)),
+        Err(why) => Err(format!("the Gemini key file {} {why}", path.display())),
     }
-    Ok((!key.is_empty()).then(|| key.to_string()))
 }
 
 /// What a use runs on.
@@ -271,12 +386,15 @@ pub struct LlmSettings {
     /// `[llm.uses.planning]`'s `agents_prompt` and valid `read` patterns,
     /// used while [`Use::Planning`] is available.
     pub planning: PlanningConfig,
+    /// Each backend with a key: where the key came from (plan 20261102_02,
+    /// decision 7), never the key.
+    pub key_sources: BTreeMap<String, String>,
 }
 
 impl LlmSettings {
     /// Nothing available: the master switch is off.
     pub fn off() -> Self {
-        resolve(&AppConfig::default(), &KeyEnv::in_dir("."))
+        resolve(&AppConfig::default(), &KeyEnv::none())
     }
 
     pub fn state(&self, use_: Use) -> &UseState {
@@ -331,6 +449,16 @@ impl LlmSettings {
             })
             .collect()
     }
+
+    /// The start log's key lines (plan 20261102_02, decision 7):
+    /// `[llm] gemini key: Keychain (dev.flankr/gemini)`, one per backend
+    /// with a key. A backend without one is a problem, logged as such.
+    pub fn key_lines(&self) -> Vec<String> {
+        self.key_sources
+            .iter()
+            .map(|(name, source)| format!("[llm] {name} key: {source}"))
+            .collect()
+    }
 }
 
 /// The parts of the config `[llm]` is resolved from: the section and the
@@ -370,7 +498,11 @@ pub fn catalog_keys(sources: &LlmSources, env: &KeyEnv) -> Vec<(String, ApiKey)>
     declared
         .iter()
         .filter_map(|(name, b)| match backend(name, b, env, discovered) {
-            Ok((Kind::Gemini, _, key)) => Some((name.clone(), key)),
+            Ok(BackendKey {
+                kind: Kind::Gemini,
+                key,
+                ..
+            }) => Some((name.clone(), key)),
             Err(_) => None,
         })
         .collect()
@@ -382,8 +514,17 @@ pub async fn fetch_catalogs(config: &AppConfig, env: &KeyEnv) -> gemini::Catalog
     gemini::Catalogs::fetch(catalog_keys(&LlmSources::of(config), env)).await
 }
 
-/// A backend as resolved: its kind and key, or why it cannot be used.
-type BackendState = Result<(Kind, Option<String>, ApiKey), String>;
+/// A backend with a key.
+struct BackendKey {
+    kind: Kind,
+    model: Option<String>,
+    key: ApiKey,
+    /// Where the key came from, as the start log names it (decision 7).
+    source: String,
+}
+
+/// A backend as resolved, or why it cannot be used.
+type BackendState = Result<BackendKey, String>;
 
 /// The `[llm]` in force: the section, or the deprecated ones read as it
 /// (decision 5), with the notes about them.
@@ -531,6 +672,7 @@ pub fn resolve_sources(
             notes,
             problems,
             planning,
+            key_sources: BTreeMap::new(),
         };
     }
 
@@ -545,6 +687,10 @@ pub fn resolve_sources(
             }
             (name.clone(), state)
         })
+        .collect();
+    let key_sources = backends
+        .iter()
+        .filter_map(|(name, state)| Some((name.clone(), state.as_ref().ok()?.source.clone())))
         .collect();
 
     // `default`: as named, or the only backend, or `gemini`.
@@ -586,7 +732,9 @@ pub fn resolve_sources(
             Err(e) => UseState::off(e),
             Ok(name) => match &backends[&name] {
                 Err(e) => UseState::off(e.clone()),
-                Ok((kind, model, key)) => {
+                Ok(BackendKey {
+                    kind, model, key, ..
+                }) => {
                     // Item 2: a `model` in either form; else the default
                     // rule (item 1).
                     let choice = nonempty(own.model.as_deref())
@@ -629,6 +777,7 @@ pub fn resolve_sources(
         notes,
         problems,
         planning,
+        key_sources,
     }
 }
 
@@ -678,11 +827,28 @@ fn resolve_planning(
     (state, planning)
 }
 
-/// The key files `sources` read keys from: the default key file and each
-/// backend's `api_key_file`, `[gemini]`'s included (plan 20261027_05,
-/// 12:37 EDT amendment, item 3: the file watcher follows them).
+/// Each `gemini` backend `sources` declare or discover, by name, with its
+/// `api_key_file` when set (`flankr key status`). Empty while the master
+/// switch is off and no backend is declared.
+pub fn gemini_backends(sources: &LlmSources) -> Vec<(String, Option<String>)> {
+    let llm = effective(sources, &mut Vec::new());
+    let (declared, _) = declared(&llm);
+    declared
+        .into_iter()
+        .filter(|(_, b)| nonempty(b.kind.as_deref()) == Some(Kind::Gemini.name()))
+        .map(|(name, b)| {
+            let file = nonempty(b.api_key_file.as_deref()).map(str::to_string);
+            (name, file)
+        })
+        .collect()
+}
+
+/// The key files `sources` read keys from: flankr's config-folder key
+/// file and each backend's `api_key_file`, `[gemini]`'s included (plan
+/// 20261027_05, 12:37 EDT amendment, item 3: the file watcher follows
+/// them). A change in the Keychain is not watched.
 pub fn key_files(sources: &LlmSources, env: &KeyEnv) -> Vec<PathBuf> {
-    let mut files = vec![env.path(Kind::Gemini.default_key_file())];
+    let mut files: Vec<PathBuf> = env.secrets_file.iter().cloned().collect();
     let named = sources
         .llm
         .iter()
@@ -707,7 +873,8 @@ fn nonempty(s: Option<&str>) -> Option<&str> {
     s.map(str::trim).filter(|s| !s.is_empty())
 }
 
-/// One backend: its kind, its model and its key, or why it cannot be used.
+/// One backend: its kind, its model, its key and where the key came
+/// from, or why it cannot be used.
 fn backend(name: &str, b: &LlmBackendConfig, env: &KeyEnv, discovered: bool) -> BackendState {
     let kind = match nonempty(b.kind.as_deref()) {
         None => return Err(format!("[llm.backends.{name}] has no kind")),
@@ -715,30 +882,18 @@ fn backend(name: &str, b: &LlmBackendConfig, env: &KeyEnv, discovered: bool) -> 
             format!("[llm.backends.{name}]: unknown kind `{k}` (only \"gemini\" for now)")
         })?,
     };
-    let file = nonempty(b.api_key_file.as_deref()).unwrap_or(kind.default_key_file());
-    let path = env.path(file);
-    let key = match read_key_file(&path) {
-        Err(e) => return Err(format!("[llm.backends.{name}]: {e}")),
-        Ok(Some(key)) => ApiKey(key),
-        Ok(None) => match &env.gemini_api_key {
-            Some(key) => key.clone(),
-            None if discovered => {
-                return Err(format!(
-                    "no Gemini key: neither {} nor {} is set",
-                    path.display(),
-                    gemini::KEY_ENV
-                ));
-            }
-            None => {
-                return Err(format!(
-                    "[llm.backends.{name}] has no key: neither {} nor {} is set",
-                    path.display(),
-                    gemini::KEY_ENV
-                ));
-            }
-        },
+    let (key, source) = match env.find(nonempty(b.api_key_file.as_deref())) {
+        Ok(found) => found,
+        Err(NoKey::Refused(why)) => return Err(format!("[llm.backends.{name}]: {why}")),
+        Err(NoKey::Missing(why)) if discovered => return Err(format!("no Gemini key: {why}")),
+        Err(NoKey::Missing(why)) => return Err(format!("[llm.backends.{name}] has no key: {why}")),
     };
-    Ok((kind, nonempty(b.model.as_deref()).map(str::to_string), key))
+    Ok(BackendKey {
+        kind,
+        model: nonempty(b.model.as_deref()).map(str::to_string),
+        key,
+        source,
+    })
 }
 
 #[cfg(test)]
@@ -749,7 +904,8 @@ mod tests {
         toml::from_str(text).unwrap()
     }
 
-    /// A folder with `.private/gemini_api_key` holding `key`, mode 0600.
+    /// A config folder with `secrets/gemini_api_key` holding `key`, mode
+    /// 0600.
     fn with_key(key: &str) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         write_key(&dir.path().join(gemini::KEY_FILE), key);
@@ -1107,7 +1263,12 @@ enabled = false
                  [llm.backends.b]\nkind = \"gemini\"\napi_key_file = \"missing\"\n\
                  [llm.backends.c]\nkind = \"llama\"\n"
             ),
-            [("a".to_string(), "k".to_string())]
+            // b's missing file falls through to the config folder's key
+            // (plan 20261102_02, decision 1).
+            [
+                ("a".to_string(), "k".to_string()),
+                ("b".to_string(), "k".to_string())
+            ]
         );
     }
 
@@ -1399,5 +1560,178 @@ read = ["*.md", "docs/**/*.md", "a?"]
         );
         let reason = s.state(Use::GeneralAgent).reason().unwrap();
         assert!(reason.contains("chmod 600"), "{reason}");
+    }
+
+    /// The Keychain stand-in (decision 8): what it holds, or locked.
+    struct FakeKeychain(Lookup);
+
+    impl KeySource for FakeKeychain {
+        fn name(&self) -> String {
+            keys::keychain_name()
+        }
+        fn get(&self) -> Lookup {
+            self.0.clone()
+        }
+        fn set(&self, _: &ApiKey) -> Result<(), String> {
+            Err("read-only".to_string())
+        }
+    }
+
+    fn key_and_line(text: &str, env: &KeyEnv) -> (Option<String>, Vec<String>, Vec<String>) {
+        let s = resolve(&parse(text), env);
+        let key = s
+            .target(Use::GeneralAgent)
+            .map(|t| t.key.expose().to_string());
+        (key, s.key_lines(), s.problems.clone())
+    }
+
+    /// Decision 1: api_key_file, the Keychain, the config folder's file,
+    /// then GEMINI_API_KEY; the first found wins, and the start log names
+    /// it (decision 7).
+    #[test]
+    fn the_sources_are_read_in_order_and_the_log_names_the_one_used() {
+        let dir = with_key("test-key-file");
+        write_key(&dir.path().join("own_key"), "test-key-own");
+        let full = |keychain: Lookup, env_key: bool| KeyEnv {
+            keychain: Some(Arc::new(FakeKeychain(keychain))),
+            gemini_api_key: env_key.then(|| ApiKey::new("test-key-env")),
+            ..KeyEnv::in_dir(dir.path())
+        };
+        let found = || Lookup::Found(ApiKey::new("test-key-chain"));
+        let named = "[llm]\nenabled = true\n[llm.backends.gemini]\nkind = \"gemini\"\n\
+                     api_key_file = \"own_key\"\n";
+        let plain = "[llm]\nenabled = true\n";
+        let own = dir.path().join("own_key");
+        let (key, lines, _) = key_and_line(named, &full(found(), true));
+        assert_eq!(key.as_deref(), Some("test-key-own"));
+        assert_eq!(
+            lines,
+            [format!("[llm] gemini key: api_key_file {}", own.display())]
+        );
+
+        let (key, lines, _) = key_and_line(plain, &full(found(), true));
+        assert_eq!(key.as_deref(), Some("test-key-chain"));
+        assert_eq!(lines, ["[llm] gemini key: Keychain (dev.flankr/gemini)"]);
+
+        // A locked Keychain is passed over.
+        let secrets = dir.path().join(gemini::KEY_FILE);
+        for keychain in [Lookup::None, Lookup::Locked] {
+            let (key, lines, _) = key_and_line(plain, &full(keychain, true));
+            assert_eq!(key.as_deref(), Some("test-key-file"));
+            assert_eq!(
+                lines,
+                [format!("[llm] gemini key: file {}", secrets.display())]
+            );
+        }
+
+        std::fs::remove_file(&secrets).unwrap();
+        let (key, lines, _) = key_and_line(plain, &full(Lookup::Locked, true));
+        assert_eq!(key.as_deref(), Some("test-key-env"));
+        assert_eq!(lines, ["[llm] gemini key: GEMINI_API_KEY"]);
+
+        // None: the places looked in, the locked one marked, and the fix.
+        let (key, lines, problems) = key_and_line(plain, &full(Lookup::Locked, false));
+        assert!(key.is_none() && lines.is_empty());
+        assert_eq!(
+            problems,
+            [format!(
+                "no Gemini key: looked in Keychain (dev.flankr/gemini) (locked), file {}, \
+                 GEMINI_API_KEY; run `flankr key set gemini`",
+                secrets.display()
+            )]
+        );
+    }
+
+    /// Decision 1.1: a relative api_key_file is read against its config
+    /// file's folder, never the working folder.
+    #[test]
+    fn a_relative_key_file_is_next_to_its_config_file() {
+        let config = tempfile::tempdir().unwrap();
+        let cwd = std::env::current_dir().unwrap();
+        assert_ne!(cwd, config.path());
+        write_key(&config.path().join("k"), "test-key-here");
+        let env = KeyEnv {
+            secrets_file: None,
+            ..KeyEnv::from_process(&config.path().join("config.toml"))
+        };
+        assert_eq!(env.config_dir, config.path());
+        let (key, _, _) = key_and_line(
+            "[llm]\nenabled = true\n[llm.backends.gemini]\nkind = \"gemini\"\napi_key_file = \"k\"\n",
+            &KeyEnv {
+                gemini_api_key: None,
+                ..env
+            },
+        );
+        assert_eq!(key.as_deref(), Some("test-key-here"));
+        // The working folder's `.private` is no longer among the files.
+        assert!(
+            key_files(&LlmSources::default(), &KeyEnv::in_dir(config.path()))
+                .iter()
+                .all(|p| !p.to_string_lossy().contains(".private"))
+        );
+    }
+
+    /// Decision 2: a key file group or others may read is refused, not
+    /// read, with the path and the fix; no key text in any line.
+    #[test]
+    fn a_key_file_others_may_read_is_refused_and_no_line_has_the_key() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = with_key("test-key-secret");
+        let path = dir.path().join(gemini::KEY_FILE);
+        for mode in [0o640, 0o604] {
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+            let env = KeyEnv {
+                gemini_api_key: Some(ApiKey::new("test-key-env")),
+                ..KeyEnv::in_dir(dir.path())
+            };
+            let s = resolve(&parse("[llm]\nenabled = true\n"), &env);
+            assert!(
+                s.target(Use::GeneralAgent).is_none(),
+                "not read, not passed over"
+            );
+            let reason = s.state(Use::GeneralAgent).reason().unwrap();
+            assert!(reason.contains(&path.display().to_string()), "{reason}");
+            assert!(reason.contains("chmod 600"), "{reason}");
+            let all: Vec<String> = s
+                .notes
+                .iter()
+                .chain(&s.problems)
+                .cloned()
+                .chain(s.describe())
+                .chain(s.key_lines())
+                .chain([format!("{s:?}"), format!("{env:?}")])
+                .collect();
+            assert!(all.iter().all(|l| !l.contains("test-key")), "{all:?}");
+        }
+        // Text that is not a key is refused without being repeated.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::write(&path, "test-key not one token").unwrap();
+        let err = read_key_file(&path).unwrap_err();
+        assert!(!err.contains("test-key"), "{err}");
+    }
+
+    #[test]
+    fn the_config_folder_follows_xdg_config_home_else_home() {
+        // Read-only: the paths these give for the process's own variables.
+        let dir = keys::flankr_config_dir();
+        match std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
+            Some(xdg) if Path::new(&xdg).is_absolute() => {
+                assert_eq!(dir, Some(PathBuf::from(xdg).join("flankr")))
+            }
+            _ => {
+                if let Some(home) = std::env::var_os("HOME") {
+                    assert_eq!(dir, Some(PathBuf::from(home).join(".config/flankr")));
+                }
+            }
+        }
+        if let Some(home) = std::env::var_os("HOME").filter(|h| !h.is_empty()) {
+            let path = PathBuf::from(home)
+                .join(".config/flankr")
+                .join(gemini::KEY_FILE);
+            assert_eq!(
+                keys::tilde(&path),
+                "~/.config/flankr/secrets/gemini_api_key"
+            );
+        }
     }
 }

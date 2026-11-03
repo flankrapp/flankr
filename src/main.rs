@@ -18,6 +18,7 @@
 //! flankr prompt [--use general_agent] [--agent <name>] [--prompts <ADDITIONAL_PROMPTS.md>]
 //!               [--config <file>] [--transport <name> | --remote <user@host> |
 //!                --socket <herdr.sock> | --mock]
+//! flankr key set gemini [--file] | import gemini <file> [--file] | status [--config <file>]
 //! ```
 //!
 //! herdr's API socket is `--socket`, else `HERDR_SOCKET_PATH` (herdr's own
@@ -281,9 +282,11 @@ async fn serve(args: AppArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     // Each `gemini` backend's model list, fetched once before any use is
     // made (plan 20261027_02, the 2026-10-30 13:54 EDT amendment, item 3).
-    let catalogs = std::sync::Arc::new(
-        flankr::llm::fetch_catalogs(&config, &flankr::llm::KeyEnv::from_process()).await,
-    );
+    // Keys: the config file's folder, the Keychain, flankr's config folder,
+    // then GEMINI_API_KEY (plan 20261102_02, decision 1).
+    let config_path = config_path(&args);
+    let key_env = flankr::llm::KeyEnv::from_process(&config_path).with_keychain();
+    let catalogs = std::sync::Arc::new(flankr::llm::fetch_catalogs(&config, &key_env).await);
 
     let socket = daemon_socket(&args, &config);
     let listener = flankr::server::bind(&socket).await?;
@@ -316,12 +319,8 @@ async fn serve(args: AppArgs) -> Result<(), Box<dyn std::error::Error>> {
         // `[llm]` is read again from this file while the daemon runs
         // (plan 20261027_02, decision 6).
         llm: flankr::llm::LlmOptions {
-            config_path: Some(
-                args.config
-                    .as_deref()
-                    .map(PathBuf::from)
-                    .unwrap_or_else(flankr::config::AppConfig::default_config_path),
-            ),
+            config_path: Some(config_path),
+            key_env: Some(key_env),
             // The `planning` prompt comes from the same file
             // (plan 20261027_04, decision 6).
             prompts_file: args.prompts.as_ref().map(expand_tilde),
@@ -350,6 +349,14 @@ async fn serve(args: AppArgs) -> Result<(), Box<dyn std::error::Error>> {
     std::process::exit(0)
 }
 
+/// `--config`, else `~/.config/flankr/config.toml`.
+fn config_path(args: &AppArgs) -> PathBuf {
+    args.config
+        .as_deref()
+        .map(PathBuf::from)
+        .unwrap_or_else(flankr::config::AppConfig::default_config_path)
+}
+
 /// The log and pid files for the listen socket `socket`, under
 /// `~/.local/state/flankr` (plan 20261102_01, decision 4).
 fn daemon_files(socket: &Path) -> Option<flankr::daemon::DaemonFiles> {
@@ -375,14 +382,20 @@ async fn serve_background(
         return Ok(flankr::daemon::stop(&socket, &files).await);
     }
     let working_dir = std::env::current_dir()?;
-    let key_env = std::env::var_os(flankr::llm::gemini::KEY_ENV).is_some_and(|v| !v.is_empty());
-    if key_env && !working_dir.join(flankr::llm::gemini::KEY_FILE).exists() {
-        eprintln!(
-            "flankr: {} in this shell is not passed to the background daemon; it reads {} or .env in {} (or run `flankr serve --foreground`)",
-            flankr::llm::gemini::KEY_ENV,
-            flankr::llm::gemini::KEY_FILE,
-            working_dir.display()
-        );
+    // The key in this shell, and none where the background daemon looks
+    // (plan 20261102_02, decision 1).
+    let key_env = flankr::llm::KeyEnv::from_process(&config_path(args)).with_keychain();
+    if key_env.gemini_api_key.is_some() {
+        let stored = flankr::llm::KeyEnv {
+            gemini_api_key: None,
+            ..key_env
+        };
+        if stored.find(None).is_err() {
+            eprintln!(
+                "flankr: {} in this shell is not passed to the background daemon; store the key with `flankr key set gemini` (or run `flankr serve --foreground`)",
+                flankr::llm::gemini::KEY_ENV,
+            );
+        }
     }
     let background = flankr::daemon::Background {
         socket,
@@ -547,7 +560,7 @@ async fn prompt(args: AppArgs) -> Result<i32, Box<dyn std::error::Error>> {
         agent: args.agent.as_deref(),
         prompts_file: prompts_file.as_deref(),
     };
-    let env = flankr::llm::KeyEnv::from_process();
+    let env = flankr::llm::KeyEnv::from_process(&config_path(&args)).with_keychain();
     let out = flankr::prompt_cmd::report(&config, &env, &client, &options).await?;
     print!("{out}");
     Ok(0)
@@ -573,6 +586,11 @@ flankr session tail [--listen <flankr.sock>] [--pane <id or name>] [--follow]
 flankr prompt [--use general_agent] [--agent <name>] [--prompts <ADDITIONAL_PROMPTS.md>]
               [--config <file>] [--transport <name> | --remote <user@host> |
                --socket <herdr.sock> | --mock]
+flankr key set gemini [--file]
+flankr key import gemini <file> [--file]
+flankr key status [--config <file>]
+  the Gemini key: in the macOS Keychain (dev.flankr/gemini), or with --file
+  in ~/.config/flankr/secrets/gemini_api_key; never printed.
 herdr's socket: --socket, else HERDR_SOCKET_PATH, else config.toml, else ~/.config/herdr/herdr.sock";
 
 /// `flankr --version`'s line: the version and the commit built from (the
@@ -585,6 +603,60 @@ fn version_line() -> String {
     )
 }
 
+/// `.env` in the working folder, for its other settings (`RUST_LOG`,
+/// `HERDR_SOCKET_PATH`, …), never over the environment, and never the
+/// Gemini key (plan 20261102_02, decision 1): a `GEMINI_API_KEY` there is
+/// skipped with a note.
+fn load_dotenv() {
+    let Ok(iter) = dotenvy::dotenv_iter() else {
+        return;
+    };
+    for item in iter {
+        let Ok((name, value)) = item else {
+            continue;
+        };
+        if name == flankr::llm::gemini::KEY_ENV {
+            eprintln!(
+                "flankr: {name} in .env is no longer read; store the key with `flankr key set gemini`"
+            );
+        } else if std::env::var_os(&name).is_none() {
+            // SAFETY: called at the start of `main`, before any thread.
+            unsafe { std::env::set_var(name, value) };
+        }
+    }
+}
+
+/// `flankr key …` (plan 20261102_02, decisions 3 to 5).
+fn key(argv: &[String]) -> i32 {
+    if argv
+        .iter()
+        .any(|a| a == "--help" || a == "-h" || a == "help")
+    {
+        println!("{}", flankr::key_cmd::USAGE);
+        return 0;
+    }
+    let parsed = match flankr::key_cmd::parse(argv) {
+        Ok(parsed) => parsed,
+        Err(e) => {
+            eprintln!("flankr key: {e}\n{}", flankr::key_cmd::USAGE);
+            return 2;
+        }
+    };
+    let config_path = parsed
+        .config
+        .unwrap_or_else(flankr::config::AppConfig::default_config_path);
+    let config = flankr::config::AppConfig::load_or_default(Some(&config_path));
+    let env = flankr::llm::KeyEnv::from_process(&config_path).with_keychain();
+    flankr::key_cmd::run(
+        argv,
+        &env,
+        &flankr::llm::LlmSources::of(&config),
+        &mut flankr::key_cmd::read_key_line,
+        &mut std::io::stdout(),
+        &mut std::io::stderr(),
+    )
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut argv: Vec<String> = std::env::args().skip(1).collect();
     if argv.first().map(String::as_str) == Some("version")
@@ -592,6 +664,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         println!("{}", version_line());
         return Ok(());
+    }
+    if argv.first().map(String::as_str) == Some("key") {
+        load_dotenv();
+        std::process::exit(key(&argv[1..]));
     }
     let command = match argv.first().map(String::as_str) {
         Some("serve") | Some("server") | Some("ctl") | Some("pair") | Some("session")
@@ -621,7 +697,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The background server loads `.env` itself, from the same folder;
     // `serve` reads only this shell's environment (decision 3).
     if !background {
-        dotenvy::dotenv().ok();
+        load_dotenv();
     }
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     tokio::runtime::Builder::new_multi_thread()

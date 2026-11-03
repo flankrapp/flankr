@@ -109,9 +109,10 @@ pub struct LlmConfig {
 pub struct LlmBackendConfig {
     /// The client type; only `gemini` for now. Required.
     pub kind: Option<String>,
-    /// The file holding the API key, alone, with mode 0600 (default for
-    /// `gemini`: `.private/gemini_api_key`, against the daemon's working
-    /// folder; without the file, `GEMINI_API_KEY`).
+    /// The file holding the API key, alone, with mode 0600: absolute, or
+    /// against this config file's folder. Looked in first; then the
+    /// Keychain, `~/.config/flankr/secrets/gemini_api_key` and
+    /// `GEMINI_API_KEY` (plan 20261102_02, decision 1).
     pub api_key_file: Option<String>,
     /// This backend's model for every use, over the defaults: a rule
     /// (`flash-lite:oldest`, `flash:newest`, `pro:newest`) or an exact name
@@ -433,10 +434,9 @@ impl AgentConfig {
 /// `[llm.backends.gemini]`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GeminiConfig {
-    /// The file holding the Gemini API key, alone, with mode 0600 (default:
-    /// `.private/gemini_api_key`, from the daemon's working directory;
-    /// `.private` is gitignored). Without the file, `GEMINI_API_KEY` is
-    /// used. The key itself is never put in this file.
+    /// The file holding the Gemini API key, alone, with mode 0600, as
+    /// `[llm.backends.<name>] api_key_file` reads it (plan 20261102_02,
+    /// decision 1). The key itself is never put in this file.
     pub api_key_file: Option<String>,
     /// The model for every use (default: each use's tier model).
     pub model: Option<String>,

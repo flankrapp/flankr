@@ -2495,7 +2495,7 @@ fn catalogs() -> Catalogs {
 async fn start_llm(text: &str, key: bool) -> LlmEnv {
     let folder = tempfile::tempdir().unwrap();
     if key {
-        write_key(&folder.path().join(".private/gemini_api_key"));
+        write_key(&folder.path().join("secrets/gemini_api_key"));
     }
     let config_path = folder.path().join("config.toml");
     std::fs::write(&config_path, text).unwrap();
@@ -2745,7 +2745,7 @@ async fn a_key_file_appearing_makes_the_uses_available() {
     );
     let r = c.call("turn.start", turn(1, "hello")).await;
     assert_eq!(r["error"]["code"], -32016, "{r}");
-    write_key(&e.folder.path().join(".private/gemini_api_key"));
+    write_key(&e.folder.path().join("secrets/gemini_api_key"));
     let caps = c.note("server.capabilities").await;
     assert_eq!(
         caps["params"]["llm"],

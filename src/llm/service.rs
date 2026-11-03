@@ -146,8 +146,8 @@ impl ClientFactory for GeminiFactory {
 pub struct LlmOptions {
     /// The config file to watch; without it, nothing is re-read.
     pub config_path: Option<PathBuf>,
-    /// Where keys are looked for, instead of the process's working folder
-    /// and environment.
+    /// Where keys are looked for, instead of the config file's folder,
+    /// flankr's config folder and the environment (no Keychain).
     pub key_env: Option<KeyEnv>,
     /// The clients' builder, instead of [`GeminiFactory`].
     pub factory: Option<Arc<dyn ClientFactory>>,
@@ -221,7 +221,17 @@ pub struct LlmService {
 impl LlmService {
     /// The service for `config`, as loaded at start.
     pub fn new(config: &AppConfig, options: LlmOptions, overrides: Overrides) -> Arc<Self> {
-        let env = options.key_env.unwrap_or_else(KeyEnv::from_process);
+        // Without one given, the config file's folder, flankr's config
+        // folder and the environment; never the Keychain, which only the
+        // daemon's own setup adds (plan 20261102_02, decision 8).
+        let env = options.key_env.unwrap_or_else(|| {
+            KeyEnv::from_process(
+                &options
+                    .config_path
+                    .clone()
+                    .unwrap_or_else(AppConfig::default_config_path),
+            )
+        });
         let planning_prompt = PlanningPrompt::load(options.prompts_file.as_deref());
         let catalogs = options
             .catalogs
@@ -641,8 +651,10 @@ fn log_settings(old: Option<&LlmSettings>, new: &LlmSettings) {
             log::warn!("[llm] {problem}");
         }
     }
-    let old_lines = old.map(LlmSettings::describe).unwrap_or_default();
-    for line in new.describe() {
+    let old_lines: Vec<String> = old
+        .map(|o| o.key_lines().into_iter().chain(o.describe()).collect())
+        .unwrap_or_default();
+    for line in new.key_lines().into_iter().chain(new.describe()) {
         if !old_lines.contains(&line) {
             log::info!("{line}");
         }
@@ -994,7 +1006,12 @@ backend = "cheap"
             .await
         );
         let target = || s.service.settings().target(Use::GeneralAgent).cloned();
-        assert!(target().is_none(), "b has no key yet");
+        // Until its own file is there, b falls through to the config
+        // folder's key (plan 20261102_02, decision 1).
+        assert!(
+            target().is_some_and(|t| t.key.expose() == "k"),
+            "b has no key file of its own yet"
+        );
         tokio::time::sleep(Duration::from_millis(400)).await;
         write_key(&key, "own");
         assert!(

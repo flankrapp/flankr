@@ -1,6 +1,6 @@
 [package]
 name = "flankr"
-version = "0.6.2"
+version = "0.7.0"
 edition = "2024"
 
 [dependencies]
@@ -63,6 +63,11 @@ libflankr_blob = { path = "crates/libflankr_blob" }
 rustix = { version = "1", features = ["fs"] }
 # `flankr serve` starts `flankr server` detached (plan 20261102_01).
 flankr-daemon = { path = "crates/flankr-daemon" }
+
+# The Gemini key in the login keychain (src/llm/keys.rs, plan 20261102_02,
+# decision 6): generic passwords only, no TLS features.
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = { version = "3.7", default-features = false }
 
 [dev-dependencies]
 # Paused time for the confirmation broker's timers.

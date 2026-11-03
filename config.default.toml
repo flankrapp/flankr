@@ -71,9 +71,10 @@ terminal_input = false
 # Every LLM flankr uses itself: the general agent's turns, card summaries
 # and spoken summaries; never the coding agents in the panes. Off unless
 # `enabled = true`: without it, nothing calls any model. Turned on, the rest
-# is automatic: a `gemini` backend is found from `.private/gemini_api_key`
-# (in the daemon's working folder, mode 0600) or GEMINI_API_KEY, every use
-# is on, and each use's model is chosen by tier and age from the models the
+# is automatic: a `gemini` backend is found from a key stored with
+# `flankr key set gemini` (the macOS Keychain, else
+# ~/.config/flankr/secrets/gemini_api_key, mode 0600) or GEMINI_API_KEY in
+# a foreground run; `flankr key status` says which. Every use is on, and each use's model is chosen by tier and age from the models the
 # key can use, listed once when the daemon starts: "flash:newest" for the
 # general agent, "flash-lite:oldest" (the cheapest) for summaries. A
 # `model` is such a rule ("flash-lite", "flash" or "pro", then ":newest" or
@@ -92,7 +93,7 @@ terminal_input = false
 # model. A backend's `model` is its model for every use.
 # [llm.backends.gemini]
 # kind = "gemini"
-# api_key_file = ".private/gemini_api_key"
+# api_key_file = "gemini_key"     # looked in first: absolute, or next to this file
 # model = "flash:newest"
 #
 # Uses, each optional: general_agent, card_summaries, spoken_summaries.
@@ -121,7 +122,7 @@ terminal_input = false
 # [llm.backends.gemini] (its `api_key_file` and `model`), until [llm] enabled is
 # set; [llm.uses.*] or [llm.backends.*] tables alone do not count.
 # [gemini]
-# api_key_file = ".private/gemini_api_key"
+# api_key_file = "gemini_key"
 # model = "gemini-3.8-flash"
 
 # How agents are named aloud and on screen. Uncomment to change the defaults.

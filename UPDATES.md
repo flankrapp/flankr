@@ -204,3 +204,16 @@ These changes came before the program had version numbers.
 
 **Changed**
 - An unknown argument is now an error (`flankr: unknown argument '…'; see flankr --help`, exit 2) instead of a warning: before, `flankr --anything` went on to start the daemon. Bare `flankr` with nothing after it still starts it.
+
+## 0.7.0 — 2026-11-02
+
+**Changed**
+- The daemon no longer reads the Gemini key from `.private/gemini_api_key` in the folder you start it from, nor from `.env`, so it finds the key whatever folder it starts in. It looks, in this order: the `api_key_file` a backend names in `config.toml` (a relative path is now taken next to `config.toml`, not in the working folder), the macOS Keychain (item `dev.flankr`, account `gemini`), `~/.config/flankr/secrets/gemini_api_key` (under `$XDG_CONFIG_HOME/flankr/` when that is set), then `GEMINI_API_KEY` when you run `flankr serve --foreground` from a shell that has it.
+- To move a key you already have, run `flankr key import gemini .private/gemini_api_key` in the folder that has it, or `flankr key set gemini` and paste it. The old file can be deleted afterwards. `.env` is still read for its other settings; a `GEMINI_API_KEY` line in it is skipped, with a note saying so.
+- The log names where the key came from when the daemon starts, e.g. `[llm] gemini key: Keychain (dev.flankr/gemini)`; with no key, it lists the places it looked and says to run `flankr key set gemini`.
+- A key file that others can read (group or world permissions) is refused, not read, with the fix: `chmod 600 <file>`.
+
+**Added**
+- `flankr key set gemini` asks for the key without showing it (or reads one line from stdin when it is piped) and stores it in the macOS Keychain; elsewhere, or with `--file`, in `~/.config/flankr/secrets/gemini_api_key`, created only readable by you. It prints where it stored it, never the key. An empty key is refused.
+- `flankr key import gemini <file>` stores the key from a file the same way and leaves the file for you to delete.
+- `flankr key status` lists each place in the order above with `found`, `none`, `locked` or `refused: <why>`, and which one the daemon would use.

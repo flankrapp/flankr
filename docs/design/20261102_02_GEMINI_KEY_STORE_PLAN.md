@@ -1,7 +1,7 @@
 ---
 title: The Gemini key in the Keychain or flankr's config folder, never the working folder
 date: 2026-11-02
-status: Draft
+status: In implementation
 covers:
   - "Where the daemon finds the Gemini key: the macOS Keychain first, then a
     file in flankr's config folder, then an explicit `api_key_file`; no
@@ -137,3 +137,10 @@ folder: the Keychain on macOS, or flankr's config folder.
 The owner approved the plan with the instruction that asked for it
 (2026-11-02: "plan and implement"). It is built now; the first
 implementing commit sets `In implementation`.
+
+## Amendment — 2026-11-02 23:02 EST: implementation started
+
+Steps 1 and 2 are implemented in the `flankr` crate, which this commit
+moves to 0.7.0. The status is `In implementation`, and this document is
+now immutable. It changes only on the owner's explicit instruction
+(AGENTS.md, Rule 1.5). Step 3, the check on the Mac, is still to do.

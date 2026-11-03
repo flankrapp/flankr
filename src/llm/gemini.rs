@@ -12,10 +12,11 @@ pub use libinfer_gemini::{Age, How, ModelCatalog, ModelChoice, Resolved, Tier};
 
 use super::{ApiKey, Use};
 
-/// The discovered backend's key file, against the daemon's working folder
-/// (`.private` is gitignored).
-pub const KEY_FILE: &str = ".private/gemini_api_key";
-/// The environment variable read when the key file is not there.
+/// The key file in flankr's config folder (`~/.config/flankr/`, or
+/// `$XDG_CONFIG_HOME/flankr/`), made 0700/0600 by `flankr key set`
+/// (plan 20261102_02, decisions 1.3 and 2).
+pub const KEY_FILE: &str = "secrets/gemini_api_key";
+/// The environment variable read last, when it reaches the process.
 pub const KEY_ENV: &str = "GEMINI_API_KEY";
 /// How long the model list may take at start (item 3), all pages.
 pub const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
