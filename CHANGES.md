@@ -4037,3 +4037,24 @@ Plan: `docs/design/20261102_02_GEMINI_KEY_STORE_PLAN.md`, steps 1 and 2
    note.
 5. **Steps 1 and 2 in one commit**, so the daemon's version moves once
    (0.6.2 to 0.7.0, FLANKR RULE 2).
+
+## 2026-11-02 23:10 EST — the Gemini key store plan, step 3 on the Mac mini (partly)
+
+Plan `docs/design/20261102_02_GEMINI_KEY_STORE_PLAN.md`, step 3, with the
+release build of flankr 0.7.0 (`94262fb`):
+
+- `flankr key import gemini .private/gemini_api_key` over this SSH session
+  failed at the Keychain: `the Keychain item Keychain (dev.flankr/gemini):
+  User interaction is not allowed.`, exit 1, nothing stored (risk 1 of the
+  plan: the login keychain is not usable from an SSH session).
+- `flankr key import gemini .private/gemini_api_key --file` stored it in
+  `~/.config/flankr/secrets/gemini_api_key` (folder 0700, file 0600);
+  `flankr key status` from `/tmp` says `The daemon would use: file
+  ~/.config/flankr/secrets/gemini_api_key`.
+- Both daemons restarted on 0.7.0 with `serve --foreground`, the test
+  daemon from `/tmp`: each logged `[llm] gemini key: file
+  ~/.config/flankr/secrets/gemini_api_key` and resolved their models.
+
+Not yet checked: the Keychain path itself, which needs `flankr key import`
+(or `set`) run from a terminal in the logged-in desktop session; the step
+stays open for that.
