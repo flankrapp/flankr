@@ -4408,3 +4408,21 @@ the counts.
 Plan 20261103_02, step 3. With app 0.7.11 or later and daemon 0.7.6 or
 later on both Macs, the owner checked the drawer on the Galaxy S23 Ultra
 and reported (2026-11-03): "grouping works".
+
+## 2026-11-03 15:38 EST — The terminal's action key as Enter and a local blinking underline cursor; app 0.7.14
+
+Plan: the terminal taps and shell panes plan (20261103_01), by its
+2026-11-03 15:36 EST amendment, from the owner's report of 15:27 EST in
+`docs/OWNER_REPORTS.md` (also amending the herdr terminal crate plan's
+step 9). The cursor is user-visible, so app 0.7.14, a patch in the 0.7
+series. flankr-companion and the daemon do not change.
+
+Why the Enter did nothing: the app already sent `enter` for the
+keyboard's action, but on Android none arrives. libmorph's runner drops
+`TextInputOptions`, and libmobile's hidden field is single-line with
+Android's default Done action and no editor-action listener, so Done only
+hides the keyboard. The app's half is built (any action is `enter`, the
+keyboard kept; the terminal asks for one line, no action, no
+autocorrect); the keyboard's half needs libmobile's text input options
+plan and libmorph passing them on, and the app moving onto those
+releases.
