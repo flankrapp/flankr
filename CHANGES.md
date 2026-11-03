@@ -4118,3 +4118,15 @@ locations were proposed), the order is now: `PATH`, `/opt/homebrew/bin`,
 `/usr/local/bin`, `/Applications/Tailscale.app`, `~/Applications/
 Tailscale.app`. flankr 0.7.2, in the 0.7 series on the owner's
 instruction of the same day.
+
+## 2026-11-03 00:08 EST — No pairing from loopback addresses; the client stays in 0.8
+
+Plan: `docs/design/20261028_01_MULTIPLE_REMOTES_PLAN.md`, the 2026-11-03
+00:07 EST amendment. Departure from Critical Rule 5.4, on the owner's
+instruction (2026-11-03): "keep the same version series, we don't need to
+bump it that much while we work this out". flankr-companion's change is
+observable behaviour (a loopback-only link is refused, an unreachable
+daemon no longer offers the device code), which Rule 5.4 would make
+0.9.0; it is released as 0.8.1 instead, its `VERSIONS.md` entry saying
+so, and flankr-audio is not bumped (Rule 5.5 does not apply to a patch).
+The app goes 0.7.3 to 0.7.4.
