@@ -4533,3 +4533,25 @@ The keyboard that went down 200 ms after it rose is not explained by the
 code alone: the app now asks for it once more when it falls, or Android
 reports it dismissed, within 600 ms of its start, and logs why the
 keyboard goes down in the terminal, with a line for each terminal tap.
+
+## 2026-11-03 17:59 EST — The agent's own screen is the interface in terminal view; app 0.7.19
+
+Plan: the terminal taps and shell panes plan (20261103_01), by its
+2026-11-03 17:37 EST amendment (items 1 to 5; the 17:35 EST amendment's
+items 5 and 6 stand). A change the app's user sees, so app 0.7.19, a
+patch in the 0.7 series as the owner asked. The daemon, flankr-companion
+and libflankr_term do not change.
+
+How the app tells the two kinds of input apart: an Approval card is
+always one of flankr's own confirmations (the approval journal, plan
+20261023_03), which the agent's screen does not show, so it stays a
+working card over the terminal; a live Question card is Claude Code's own
+pending question or prompt, read from the session, which its screen shows,
+so it is the notice. Two readings, within the amendment:
+
+1. Other sessions' cards are not the stream's cards of this session, and
+   stay as they are over the terminal.
+2. Item 5's message needed no change: `agents.send` with a message
+   already types its text and Enter into the pane, and the view stays on
+   the terminal; only the typed-response box, which the terminal now
+   shows for itself, is left out over it.
