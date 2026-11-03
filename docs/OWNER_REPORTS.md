@@ -547,3 +547,18 @@ text input".
 **In hand.** All three handed to a subagent; the bottom bar's hold in the
 earlier entry is not the report, though its keyboard not rising at
 12:59:22 is passed on with it.
+
+## 2026-11-03 14:07 EST — Owner: the approval card's record, a hold for typing
+
+This follows the entry "the record on the approval card; a new card
+dismissed input; a keyboard on voice cards", item 1.
+
+**Report.** Offered a tap that stays the voice reply and a 500 ms hold that
+opens the reply typed, or a tap that types instead, the owner chose the
+hold: "Yes, make a 500 ms hold on the approval card's record button open
+the reply typed".
+
+**Done so far** (app 0.7.7): items 2 and 3, a card arriving no longer
+dismisses a typed card, and the voice cards carry the keyboard glyph.
+
+**In hand.** The hold, given to the same subagent, for app 0.7.9.
