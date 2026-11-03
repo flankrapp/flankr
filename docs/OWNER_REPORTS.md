@@ -318,3 +318,21 @@ Device: Galaxy S23 Ultra (app 0.7.1).
   listens on 127.0.0.1:7347 and Tailscale did not forward the port.
 
 Handed to a subagent in its own worktree.
+
+## 2026-11-02 22:57 EST — Owner: adding a remote and the camera, done
+
+This follows the entry "adding a remote does not open the camera".
+
+**Cause.** The camera started only from a tap on *Tap to scan*, as the
+pairing QR scan plan said (its 16:40 EDT amendment: "Tap to scan every
+time", no permission request at launch); opening the window started
+nothing and asked nothing, and a revoked "only this time" permission had
+no visible state.
+
+**Done.** App 0.7.2, installed 22:57 EST: opening the pairing window
+(first pairing or the drawer's **+**) starts the camera, and Android asks
+for the Camera permission each time it opens while not granted. Refused,
+the window says *Camera is off for flankr*; refused for good, it adds
+**Open Settings**. Pasting a link works throughout. This reverses the
+16:40 EDT choice for first pairing too (the pairing QR scan plan's
+2026-11-02 22:46 EST amendment).
