@@ -1,7 +1,7 @@
 ---
 title: Workspace groups in the drawer
 date: 2026-11-03
-status: In implementation
+status: Implemented
 covers:
   - "A setting, *Drawer sessions*: **Grouped by workspace** or **Not
     grouped**, with libcontrols' `SelectableLabel`, saved on the phone"
@@ -151,3 +151,15 @@ implementation`.
 Step 1 has begun: libflankr_proto 0.5.12 appends `workspace_label` and
 `workspace_number` to `AgentInfo`, and `status` is `In implementation`.
 From here the document changes only on the owner's explicit instruction.
+
+## Amendment — 2026-11-03 15:26 EST: implemented
+
+Every step is done and its **Done when:** holds; `status` is
+`Implemented`.
+
+- **Step 1** (the fields): `0e2884e` (libflankr_proto 0.5.12), `b0ea208`
+  (flankr 0.7.6), `af080e9` (flankr-companion test fixtures).
+- **Step 2** (the setting and the grouped drawer): `98f18ab`
+  (flankr-companion 0.8.4), `05d46f1` (app 0.7.11).
+- **Step 3** (on the S23): `5d0e53b`, the CHANGES.md record of the owner's
+  "grouping works".
