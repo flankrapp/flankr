@@ -480,3 +480,16 @@ remote's card in the drawer (2 s), the overview's and the agent view's
 **In hand.** Given to the same subagent: every hold's bar removed, the
 drawer card's hold made 1 s, and the other holds' times kept for the owner
 to decide.
+
+## 2026-11-03 12:10 EST — Owner: every hold 500 ms
+
+This adds to the entry "no progress bars on holds".
+
+**Report.** Asked "should they all be 500ms?", then, offered every hold at
+500 ms with the volume button's hold opening its menu (with a **Stop** item
+while something is being spoken, in place of the 1 s stop), "yes, tell it
+to make them all 500ms".
+
+**In hand.** Given to the same subagent: the drawer card, the text input's
+**+**, the centre and right buttons and the volume button all fire at
+500 ms; the drawer card's 1 s from the first entry is replaced.
