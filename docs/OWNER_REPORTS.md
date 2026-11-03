@@ -454,3 +454,13 @@ connecting are a different screen.
 
 **In hand.** Handed to a subagent: an amendment to the covering plan, one
 details screen for both, and a 1 s hold with no progress bar.
+
+## 2026-11-03 12:07 EST — Owner: the key and fingerprint expands, the same in both
+
+This adds to the entry "one details screen for a remote; a 1 s hold on its
+card".
+
+**Report.** "the key and fingerprint expands should work the same in both
+modals".
+
+**In hand.** Given to the same subagent, for the same amendment.
