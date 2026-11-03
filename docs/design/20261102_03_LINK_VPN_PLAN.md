@@ -1,7 +1,7 @@
 ---
 title: The link's reach through a VPN (Tailscale by default) or an explicit address
 date: 2026-11-02
-status: Draft
+status: In implementation
 covers:
   - "A `Vpn` trait the daemon reaches its link through, with `Tailscale` as
     the first implementation and the default, and no VPN as the other"
@@ -183,3 +183,9 @@ decision 5's last item, and adds to decision 5:
 3. **The daemon's log** says the same at start when the link is reachable
    only from the machine itself, so `flankr serve`'s log shows it before any
    `pair`.
+
+## Amendment — 2026-11-02 23:57 EST: implementation started; the document is now immutable
+
+Step 1 is built (the `Vpn` trait and `Tailscale` in
+`src/server/link/vpn/`), and `status` is `In implementation`. From here
+the document changes only on the owner's explicit instruction.

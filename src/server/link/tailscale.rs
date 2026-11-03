@@ -3,11 +3,14 @@
 //!
 //! flankr never changes Tailscale's configuration. It reads `tailscale
 //! status --json` and `tailscale serve status --json`, and when Tailscale
-//! is running without the forward, logs the command that adds it.
+//! is running without the forward, logs the command that adds it. Its
+//! JSON is read by `vpn::tailscale` (plan 20261102_03, step 1).
 
 use std::time::Duration;
 
 use serde_json::Value;
+
+use super::vpn::tailscale::{forward_present as forwards_port, is_running, self_dns_name};
 
 /// The command that forwards the tailnet's port 7347 to the link.
 pub const FORWARD_COMMAND: &str = "tailscale serve --bg --tcp 7347 tcp://127.0.0.1:7347";
@@ -57,12 +60,12 @@ pub async fn detect() -> Tailscale {
     let Some(status) = run_json(&["status", "--json"]).await else {
         return Tailscale::NotRunning;
     };
-    if status.get("BackendState").and_then(Value::as_str) != Some("Running") {
+    if !is_running(&status) {
         return Tailscale::NotRunning;
     }
     let dns_name = self_dns_name(&status);
     let serve = run_json(&["serve", "status", "--json"]).await;
-    if serve.as_ref().is_some_and(forward_present) {
+    if serve.as_ref().is_some_and(|s| forwards_port(s, 7347)) {
         Tailscale::Forwarded { dns_name }
     } else {
         Tailscale::NoForward { dns_name }
@@ -94,71 +97,9 @@ async fn run_json(args: &[&str]) -> Option<Value> {
     serde_json::from_slice(&output.stdout).ok()
 }
 
-/// `Self.DNSName` from `tailscale status --json`, without the final dot.
-pub fn self_dns_name(status: &Value) -> Option<String> {
-    let name = status.get("Self")?.get("DNSName")?.as_str()?;
-    let name = name.trim_end_matches('.');
-    (!name.is_empty()).then(|| name.to_string())
-}
-
-/// Whether `tailscale serve status --json` forwards TCP port 7347 to the
-/// link. Looks at every `TCP` map, wherever it is nested (foreground
-/// sessions and services nest their own).
-pub fn forward_present(serve: &Value) -> bool {
-    match serve {
-        Value::Object(map) => map.iter().any(|(key, value)| {
-            (key == "TCP" && tcp_map_forwards(value)) || forward_present(value)
-        }),
-        Value::Array(items) => items.iter().any(forward_present),
-        _ => false,
-    }
-}
-
-fn tcp_map_forwards(tcp: &Value) -> bool {
-    let Some(handler) = tcp.get(PORT) else {
-        return false;
-    };
-    handler
-        .get("TCPForward")
-        .and_then(Value::as_str)
-        .map(|target| {
-            let target = target.strip_prefix("tcp://").unwrap_or(target);
-            target == TARGET || target == "localhost:7347"
-        })
-        .unwrap_or(false)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn the_forward_is_found() {
-        assert!(!forward_present(&json!({})));
-        assert!(!forward_present(&json!({
-            "TCP": {"443": {"HTTPS": true}},
-            "Web": {"host:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8787"}}}}
-        })));
-        assert!(forward_present(&json!({
-            "TCP": {"443": {"HTTPS": true}, "7347": {"TCPForward": "127.0.0.1:7347"}}
-        })));
-        // Nested, as a foreground session is.
-        assert!(forward_present(&json!({
-            "Foreground": {"abc": {"TCP": {"7347": {"TCPForward": "tcp://127.0.0.1:7347"}}}}
-        })));
-        // A forward elsewhere is not the link's.
-        assert!(!forward_present(&json!({
-            "TCP": {"7347": {"TCPForward": "127.0.0.1:9999"}}
-        })));
-    }
-
-    #[test]
-    fn the_dns_name_loses_its_dot() {
-        let status = json!({"BackendState": "Running", "Self": {"DNSName": "mini.tail1.ts.net."}});
-        assert_eq!(self_dns_name(&status).as_deref(), Some("mini.tail1.ts.net"));
-        assert_eq!(self_dns_name(&json!({})), None);
-    }
 
     #[test]
     fn addresses_and_warnings() {

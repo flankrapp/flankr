@@ -36,6 +36,7 @@ pub mod auth;
 pub mod keyfile;
 pub mod pair_mode;
 pub mod tailscale;
+pub mod vpn;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
