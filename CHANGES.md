@@ -4143,3 +4143,15 @@ connected to and the pairing ends as `PairUnreachable` for
 `box.invalid:7347` alone, named `box`. That the remaining addresses are
 then paired as any link's are is covered by `scan`'s unit test
 (`a_link_drops_its_loopback_addresses`) and the unchanged pairing path.
+
+## 2026-11-03 11:44 EST — `flankr pair` asks whether to replace a paired name; the daemon stays in its 0.7 series
+
+Plan: `docs/design/20261022_02_LINK_AND_COMPANION_PLAN.md`, the 2026-11-03
+11:40 EST amendment (from the owner's report of 11:38 EST in
+`docs/OWNER_REPORTS.md`). It changes what the person running `flankr pair`
+sees, which FLANKR RULE 2 would make a minor bump (0.8.0). On the owner's
+instruction (2026-11-03): "keep the same version series, we don't need to
+bump it that much while we work this out", it is 0.7.3 instead, as for
+0.7.1. Only the daemon's own pair-mode messages gain optional fields
+(`link.pair_begin`'s `name`, `link.pair_request`'s `already_paired`);
+`libflankr_proto`, flankr-companion and the app do not change.
