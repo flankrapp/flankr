@@ -4293,3 +4293,19 @@ Small departures needed to make the plan work:
    choice tap and holds it until the arm is answered; image uploads for a
    paste still need the pane's agent to have an `[[agents]]` entry, as
    before.
+
+## 2026-11-03 14:11 EST — A hold on a question card's record opens the reply typed; the app stays in its 0.7 series
+
+Plan: the harness protocol plan (20261022_03), living section L3, by its
+2026-11-03 14:09 EST amendment, from the owner's answer of 14:07 EST in
+`docs/OWNER_REPORTS.md`. A new gesture, which FLANKR RULE 1 would make a
+minor bump; on the owner's instruction "keep the same version series", the
+app is 0.7.9. flankr-companion does not change: the hold sends
+`Input::StartTextPrompt` after `begin_reply`, as the bar's hold does.
+
+Two readings, within the amendments:
+
+1. The record's hold, like the bar's, needs only text input, not the
+   microphone; its tap still needs the microphone.
+2. The expanded (overlay) card taking voice now carries the keyboard glyph
+   too, at its header's right, closing the gap 0.7.7's addendum noted.
