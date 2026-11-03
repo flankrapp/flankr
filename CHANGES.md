@@ -4309,3 +4309,15 @@ Two readings, within the amendments:
    microphone; its tap still needs the microphone.
 2. The expanded (overlay) card taking voice now carries the keyboard glyph
    too, at its header's right, closing the gap 0.7.7's addendum noted.
+
+## 2026-11-03 14:23 EST — A drag from a question card's record scrolls; the app stays in its 0.7 series
+
+Plan: the harness protocol plan (20261022_03), living section L3, by its
+2026-11-03 14:22 EST amendment, on the owner's "Yes, hand a drag that
+starts on the record button back to scrolling". A fix, so app 0.7.10, a
+patch. flankr-companion does not change.
+
+One reading, within the amendment: the drag handed back is the
+conversation's vertical scroll, with the press's start as its start; a
+pinned card's sideways drag that would take the card away is not started
+from it.
