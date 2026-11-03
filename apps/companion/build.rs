@@ -18,8 +18,11 @@ fn main() {
     themes();
     // Writes target/aarch64-linux-android/<profile>/gradle/companion/, the
     // whole Gradle project that scripts/android.sh packages.
+    let (code, name) = apk_version();
     libmorph_build::gradle_project("dev.flankr.companion")
         .label("flankr")
+        // The app's version (FLANKR RULE 1, item 7).
+        .version(code, &name)
         // `flankr://<host>:<port>/pair#<pairing string>` links open the app
         // and pair it (libmorph-build 0.2.2).
         .url_scheme("flankr")
@@ -120,4 +123,21 @@ fn rust_files(dir: &Path, out: &mut Vec<String>) {
             out.push(text);
         }
     }
+}
+
+/// The APK's `versionCode` and `versionName` from the app's version in
+/// Cargo.toml (FLANKR RULE 1, item 7): the name is the version, and the
+/// code `major * 1000000 + minor * 1000 + patch`.
+fn apk_version() -> (u32, String) {
+    let name = std::env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION");
+    let part = |key: &str| -> u32 {
+        std::env::var(key)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or_else(|| panic!("{key} is not a number"))
+    };
+    let code = part("CARGO_PKG_VERSION_MAJOR") * 1_000_000
+        + part("CARGO_PKG_VERSION_MINOR") * 1_000
+        + part("CARGO_PKG_VERSION_PATCH");
+    (code, name)
 }
