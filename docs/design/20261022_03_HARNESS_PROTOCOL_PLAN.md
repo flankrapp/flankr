@@ -1940,3 +1940,35 @@ amendment; the rest of both stands.
    card) and when it shows.
 4. **The app's version** is the next patch, a fix, in the same 0.7
    series. flankr-companion does not change.
+
+## Amendment — 2026-11-03 14:57 EST: More and Less on the card's last line, below the buttons (living section L3)
+
+On the owner's explicit instruction (Rule 1.5), 2026-11-03: first the
+report, "Small thing, but the more or less link should always be at the
+bottom right of the card"; then, asked where it goes on a card with
+buttons, "Yes, on cards with buttons, put More Less at the text's bottom
+right, above the buttons"; then "actually should be below the buttons but
+they don't really work on cards with buttons". The last statement wins.
+This replaces item 1 of the 2026-11-03 14:49 EST amendment ("just above
+the button row when it has one") and its item 3's "the link's tap area
+... unchanged"; its items 2 and 4 stand, as do its replacements of the
+2026-10-30 15:20 EDT and 2026-10-24 12:08 EDT wording.
+
+1. **Where.** A pinned card's *More* and *Less*, and a summary card's dim
+   "more", folded or open, pinned or in the conversation, sit at the
+   card's bottom right on every card: right-aligned to the card's inner
+   right edge, on the card's last line, its bottom at the card's inner
+   bottom. On a card with buttons (Approve and Deny, Yes and No, the
+   daemon's answers, approve, discuss and implement, the record) that
+   line is below the button row; the buttons do not move.
+2. **Tap areas apart.** On a card with buttons, the link's tap area runs
+   from the button row's bottom to the card's bottom, 40 pt tall and at
+   least 40 pt wide, and shares no pixel with any button: the gap between
+   the row and the link's line is what makes it 40 pt. Before, the
+   link's area, centred on a line 6 pt above the row, reached about 5 pt
+   into the buttons; there the buttons, the record among them, took the
+   touch, so a press low on *More* answered or started the voice reply
+   instead. The record's tap, 500 ms hold and drag to scroll are
+   unchanged. Without buttons the tap area is as before.
+3. **The app's version** is the next patch, a fix, in the same 0.7
+   series. flankr-companion does not change.
