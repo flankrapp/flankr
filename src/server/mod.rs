@@ -9,6 +9,7 @@ mod choice;
 pub mod companion;
 pub mod conn;
 pub mod herdr_attach;
+pub mod input_bar;
 pub mod link;
 pub mod speech;
 mod subscriptions;

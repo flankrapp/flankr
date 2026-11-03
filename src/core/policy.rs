@@ -3,7 +3,7 @@
 use std::fmt;
 
 use crate::commands::{check_paths, validate_arbitrary_command, validate_message};
-use crate::config::AgentConfig;
+use crate::config::{AgentConfig, SHELL_AGENT};
 use crate::core::principal::Principal;
 
 /// A command that passed the permission check.
@@ -98,8 +98,8 @@ fn entry<'a>(
 
 /// The `[[agents]]` entry of the agent named `agent` (lowercased) in
 /// `pane_id`, when it is configured and `principal` may reach it: the
-/// check every send starts with, and all a terminal needs to open (plan
-/// 20261027_07, decision 6).
+/// check every send starts with. A terminal opens by [`terminal_gate`]
+/// instead (plan 20261103_01).
 pub fn reach<'a>(
     principal: &Principal,
     agents: &'a [AgentConfig],
@@ -107,6 +107,52 @@ pub fn reach<'a>(
     pane_id: &str,
 ) -> Result<&'a AgentConfig, Denied> {
     entry(principal, agents, agent, pane_id)
+}
+
+/// What a terminal on a pane may take, beside `[terminal] input`, a
+/// principal that may approve and the arm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TerminalGate {
+    /// Typing (`terminal.input` and the other input methods).
+    pub input: bool,
+    /// The signal keys (`ctrl+c`, `ctrl+d`, `ctrl+z`, `ctrl+\`).
+    pub signals: bool,
+}
+
+/// The terminal gate of a pane whose agent is `agent`
+/// (lowercased; `shell` with no known agent), for `principal`
+/// (docs/design/20261103_01_TERMINAL_TAPS_AND_SHELL_PANES_PLAN.md, the
+/// 12:34 EST amendment in place of decision 6): any pane opens, outside
+/// the `[[agents]]` filter, unless the principal's own agent list leaves
+/// the agent out (`OutOfReach`). An agent with an entry types by its
+/// `terminal_input` and sends signals by its `terminal_signals`; one with
+/// no entry types (the default of `terminal_input`) without signals (the
+/// default of `terminal_signals`); a pane with no agent types by the
+/// `shell` entry's `terminal_input` when there is one, and always takes
+/// the signal keys.
+pub fn terminal_gate(
+    principal: &Principal,
+    agents: &[AgentConfig],
+    agent: &str,
+) -> Result<TerminalGate, Denied> {
+    if !principal.may_reach(agent) {
+        return Err(Denied::OutOfReach {
+            agent: agent.to_string(),
+            principal: principal.id.clone(),
+        });
+    }
+    let shell = agent == SHELL_AGENT;
+    let entry = agents.iter().find(|a| a.name.to_lowercase() == agent);
+    Ok(match entry {
+        Some(cfg) => TerminalGate {
+            input: cfg.terminal_input,
+            signals: shell || cfg.terminal_signals,
+        },
+        None => TerminalGate {
+            input: true,
+            signals: shell,
+        },
+    })
 }
 
 /// Check `command` for the agent named `agent` (lowercased) in `pane_id`,
@@ -511,5 +557,49 @@ mod tests {
             check_parts(&p, &agents(), "codex", "p3", &[img("a")], None),
             Err(Denied::UnconfiguredAgent { .. })
         ));
+    }
+
+    #[test]
+    fn any_pane_has_a_terminal_gate() {
+        // Plan 20261103_01, the 12:34 EST amendment.
+        let p = Principal::local("t");
+        let gate = |agents: &[AgentConfig], agent: &str| terminal_gate(&p, agents, agent).unwrap();
+        // An entry: its terminal_input (on by default) and terminal_signals.
+        let on = TerminalGate {
+            input: true,
+            signals: false,
+        };
+        assert_eq!(gate(&agents(), "claude"), on);
+        let off = vec![AgentConfig::new("claude", vec![], true).with_terminal_input(false, false)];
+        assert!(!gate(&off, "claude").input);
+        let signals =
+            vec![AgentConfig::new("claude", vec![], true).with_terminal_input(true, true)];
+        assert!(gate(&signals, "claude").signals);
+        // No entry: typing, no signals; a shell takes the signal keys.
+        assert_eq!(gate(&agents(), "codex"), on);
+        let shell = TerminalGate {
+            input: true,
+            signals: true,
+        };
+        assert_eq!(gate(&agents(), "shell"), shell);
+        // A shell entry may turn typing off, never the signals.
+        let quiet = vec![AgentConfig::new("shell", vec![], true).with_terminal_input(false, false)];
+        assert_eq!(
+            gate(&quiet, "shell"),
+            TerminalGate {
+                input: false,
+                signals: true
+            }
+        );
+        // The principal's own list still narrows it.
+        let narrowed = Principal {
+            agents: Some(vec!["omp".to_string()]),
+            ..Principal::local("mcp")
+        };
+        assert!(matches!(
+            terminal_gate(&narrowed, &agents(), "claude"),
+            Err(Denied::OutOfReach { .. })
+        ));
+        assert!(terminal_gate(&narrowed, &agents(), "omp").is_ok());
     }
 }

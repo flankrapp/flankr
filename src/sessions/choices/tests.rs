@@ -493,3 +493,110 @@ async fn the_result_wait_gives_up() {
     .await;
     assert!(some.is_some());
 }
+
+/// Claude Code's question screen as finding 3 of plan 20261029_01 gives its
+/// strings, with each option's description below its label, written by
+/// hand (plan 20261103_01, step 3).
+fn question_frame(multi: bool) -> Vec<String> {
+    let check = if multi { "[ ] " } else { "" };
+    let mut rows = vec![
+        "╭──────────────────────────────────────────╮".to_string(),
+        "│ ← ☐ Colour  ☐ Icons  ✔ Submit →".to_string(),
+        "│".to_string(),
+        "│ Which colour should the badge be on the".to_string(),
+        "│ session rows?".to_string(),
+        "│".to_string(),
+    ];
+    rows.push(format!("│ ❯ 1. {check}Teal"));
+    rows.push("│      Matches the bar and the".to_string());
+    rows.push("│      header".to_string());
+    rows.push(format!("│   2. {check}Amber"));
+    rows.push("│      Stands out".to_string());
+    rows.push(format!("│   3. {check}Type something."));
+    rows.push("│ ────────".to_string());
+    rows.push("│   4. Chat about this".to_string());
+    rows.push("│ Enter to select · Tab/Arrow keys to navigate · Esc to cancel".to_string());
+    rows.push("╰──────────────────────────────────────────╯".to_string());
+    rows
+}
+
+fn badge_question(multi: bool) -> ChoiceQuestion {
+    ChoiceQuestion::new(
+        "Colour",
+        "Which colour should the badge be on the session rows?",
+        multi,
+        true,
+        vec![
+            ChoiceOption::new("Teal", "Matches the bar and the header", None),
+            ChoiceOption::new("Amber", "Stands out", None),
+        ],
+    )
+}
+
+#[test]
+fn a_tap_on_an_option_s_label_or_description_picks_it() {
+    let s = set(vec![
+        badge_question(false),
+        multi("Which rows?", &["A", "B"]),
+    ]);
+    let frame = question_frame(false);
+    // Each option's label row and its description rows.
+    for (row, option) in [(6, 0), (7, 0), (8, 0), (9, 1), (10, 1)] {
+        assert_eq!(tapped(&s, &frame, row), Some((0, option)), "row {row}");
+    }
+    assert_eq!(tap_keys(&s.questions[0], 0), ["1"]);
+    assert_eq!(tap_keys(&s.questions[0], 1), ["2"]);
+    // Rows outside the options: the tabs, the question, a blank row, Other,
+    // the rule, Chat about this, the hint, the frame's edge, past the end.
+    for row in [0, 1, 2, 3, 4, 5, 11, 12, 13, 14, 15, 40] {
+        assert_eq!(tapped(&s, &frame, row), None, "row {row}");
+    }
+}
+
+#[test]
+fn a_tap_picks_by_the_question_s_own_keys() {
+    // Multi-select: the box before the label, and the number toggles it.
+    let s = set(vec![badge_question(true)]);
+    let frame = question_frame(true);
+    assert_eq!(tapped(&s, &frame, 9), Some((0, 1)));
+    assert_eq!(tapped(&s, &frame, 10), Some((0, 1)));
+    assert_eq!(tap_keys(&s.questions[0], 1), ["2"]);
+    // A preview question: the number moves the focus, Enter picks.
+    let p = preview("Which layout?", &["Grid", "List"]);
+    assert_eq!(tap_keys(&p, 0), ["1", "enter"]);
+}
+
+#[test]
+fn a_tap_off_the_question_screen_picks_nothing() {
+    let s = set(vec![badge_question(false)]);
+    let frame = question_frame(false);
+    // Another question's screen, the review, no hint, another driver.
+    let other = set(vec![single("Something else entirely?", &["Teal", "Amber"])]);
+    assert_eq!(tapped(&other, &frame, 6), None);
+    let mut review = frame.clone();
+    review.push("│ Review your answers".to_string());
+    assert_eq!(tapped(&s, &review, 6), None);
+    let no_hint: Vec<String> = frame
+        .iter()
+        .filter(|l| !l.contains("to select"))
+        .cloned()
+        .collect();
+    assert_eq!(tapped(&s, &no_hint, 6), None);
+    let codex = ChoiceSet::new("c1", s.questions.clone(), "codex/ask");
+    assert_eq!(tapped(&codex, &frame, 6), None);
+    // A label that does not match its number's row.
+    let renamed = set(vec![ChoiceQuestion::new(
+        "Colour",
+        "Which colour should the badge be on the session rows?",
+        false,
+        true,
+        vec![
+            ChoiceOption::new("Cyan", "", None),
+            ChoiceOption::new("Amber", "", None),
+        ],
+    )]);
+    assert_eq!(tapped(&renamed, &frame, 6), None);
+    assert_eq!(tapped(&renamed, &frame, 9), Some((0, 1)));
+    // Without a detail, a description row is no option.
+    assert_eq!(tapped(&renamed, &frame, 10), None);
+}

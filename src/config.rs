@@ -61,8 +61,9 @@ pub struct AppConfig {
 #[serde(default)]
 pub struct TerminalConfig {
     /// Whether a paired device may type into a terminal at all
-    /// (`terminal.input_arm`, `terminal.input`; decision 6). Off unless
-    /// set; each agent's `terminal_input` must be on too.
+    /// (`terminal.input_arm`, `terminal.input`; decision 6). On unless set
+    /// (plan 20261103_01, the 12:34 EST amendment, item 2); an agent's
+    /// `terminal_input` set false turns it off for that agent.
     pub input: bool,
     /// Whether the daemon attaches to a local herdr as one of its own
     /// clients and reads terminals from it, with the cursor, the pane's
@@ -75,7 +76,7 @@ pub struct TerminalConfig {
 impl Default for TerminalConfig {
     fn default() -> Self {
         TerminalConfig {
-            input: false,
+            input: true,
             attach: true,
         }
     }
@@ -184,7 +185,7 @@ fn default_agents() -> Vec<AgentConfig> {
             allow_arbitrary_commands: false,
             allow_messages: true,
             interrupt_key: default_interrupt_key(),
-            terminal_input: false,
+            terminal_input: true,
             terminal_signals: false,
         },
         AgentConfig {
@@ -194,7 +195,7 @@ fn default_agents() -> Vec<AgentConfig> {
             allow_arbitrary_commands: false,
             allow_messages: true,
             interrupt_key: default_interrupt_key(),
-            terminal_input: false,
+            terminal_input: true,
             terminal_signals: false,
         },
         AgentConfig {
@@ -204,13 +205,14 @@ fn default_agents() -> Vec<AgentConfig> {
             allow_arbitrary_commands: false,
             allow_messages: true,
             interrupt_key: default_interrupt_key(),
-            terminal_input: false,
+            terminal_input: true,
             terminal_signals: false,
         },
         // A pane that runs no known agent (plan 20261022_03, the
-        // 2026-10-28 00:47 EDT amendment): its terminal only, read-only
-        // until the owner sets `terminal_input`; no commands, messages or
-        // interrupt key.
+        // 2026-10-28 00:47 EDT amendment): its terminal only, which takes
+        // typing (plan 20261103_01, the 12:34 EST amendment) unless the
+        // owner sets `terminal_input = false`, and the signal keys whatever
+        // `terminal_signals` says; no commands, messages or interrupt key.
         AgentConfig {
             name: SHELL_AGENT.to_string(),
             allowed_commands: Vec::new(),
@@ -218,7 +220,7 @@ fn default_agents() -> Vec<AgentConfig> {
             allow_arbitrary_commands: false,
             allow_messages: false,
             interrupt_key: String::new(),
-            terminal_input: false,
+            terminal_input: true,
             terminal_signals: false,
         },
     ]
@@ -306,8 +308,9 @@ pub struct AgentConfig {
     pub interrupt_key: String,
     /// Whether a paired device that may approve can type into this agent's
     /// terminal, once armed, while `[terminal] input` is on (plan
-    /// 20261027_07, decision 6). Default `false`.
-    #[serde(default)]
+    /// 20261027_07, decision 6). Default `true` (plan 20261103_01, the
+    /// 12:34 EST amendment, item 2).
+    #[serde(default = "default_terminal_input")]
     pub terminal_input: bool,
     /// Whether that typing may include `ctrl+c`, `ctrl+d`, `ctrl+z` and
     /// `ctrl+\` (decision 6). Default `false`.
@@ -320,6 +323,10 @@ fn default_require_confirmation() -> bool {
 }
 
 fn default_allow_messages() -> bool {
+    true
+}
+
+fn default_terminal_input() -> bool {
     true
 }
 
@@ -401,7 +408,7 @@ impl AgentConfig {
             allow_arbitrary_commands: false,
             allow_messages: true,
             interrupt_key: default_interrupt_key(),
-            terminal_input: false,
+            terminal_input: true,
             terminal_signals: false,
         }
     }
@@ -740,37 +747,34 @@ allowed_commands = ["continue"]
     }
 
     #[test]
-    fn terminal_input_is_off_unless_set() {
-        // Plan 20261027_07, decision 6: a fresh install cannot type.
+    fn terminal_input_is_on_unless_turned_off() {
+        // Plan 20261103_01, the 12:34 EST amendment, item 2, in place of
+        // plan 20261027_07 decision 6's "a fresh install cannot type".
         let cfg: AppConfig = toml::from_str("[[agents]]\nname = \"claude\"\n").unwrap();
-        assert!(!cfg.terminal.input);
+        assert!(cfg.terminal.input);
         let claude = cfg.find_agent("claude").unwrap();
-        assert!(!claude.terminal_input && !claude.terminal_signals);
-        assert!(
-            AppConfig::default()
-                .agents
-                .iter()
-                .all(|a| !a.terminal_input)
-        );
+        assert!(claude.terminal_input && !claude.terminal_signals);
+        assert!(AppConfig::default().agents.iter().all(|a| a.terminal_input));
+        assert!(AgentConfig::new("x", vec![], true).terminal_input);
         let cfg: AppConfig = toml::from_str(
             r#"
 [terminal]
-input = true
+input = false
 
 [[agents]]
 name = "claude"
-terminal_input = true
+terminal_input = false
 terminal_signals = true
 "#,
         )
         .unwrap();
-        assert!(cfg.terminal.input);
+        assert!(!cfg.terminal.input);
         let claude = cfg.find_agent("claude").unwrap();
-        assert!(claude.terminal_input && claude.terminal_signals);
-        // The shipped template parses, and leaves input off.
+        assert!(!claude.terminal_input && claude.terminal_signals);
+        // The shipped template parses, and leaves input on.
         let shipped: AppConfig = toml::from_str(&AppConfig::default_toml_template()).unwrap();
-        assert!(!shipped.terminal.input);
-        assert!(shipped.agents.iter().all(|a| !a.terminal_input));
+        assert!(shipped.terminal.input);
+        assert!(shipped.agents.iter().all(|a| a.terminal_input));
     }
 
     #[test]
@@ -787,14 +791,15 @@ terminal_signals = true
     }
 
     #[test]
-    fn the_shell_entry_is_a_read_only_terminal() {
-        // Plan 20261022_03, the 2026-10-28 00:47 EDT amendment.
+    fn the_shell_entry_is_a_terminal_only() {
+        // Plan 20261022_03, the 2026-10-28 00:47 EDT amendment; typing on
+        // by default since plan 20261103_01's 12:34 EST amendment.
         let mut cfg = AppConfig::default();
         let shell = cfg.find_agent("shell").unwrap();
         assert!(shell.allowed_commands.is_empty());
         assert!(shell.require_confirmation);
         assert!(!shell.allow_arbitrary_commands && !shell.allow_messages);
-        assert!(!shell.terminal_input && !shell.terminal_signals);
+        assert!(shell.terminal_input);
         assert!(shell.interrupt_key.is_empty());
         // The global switch turns arbitrary commands on for agents, never
         // for the shell; it still turns them off for it.

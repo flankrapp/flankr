@@ -956,6 +956,10 @@ async fn call(
         methods::TERMINAL_MOUSE if conn.is_companion() => super::terminal::mouse(conn, raw).await,
         methods::TERMINAL_RESIZE if conn.is_companion() => super::terminal::resize(conn, raw),
         methods::TERMINAL_PASTE if conn.is_companion() => super::terminal::paste(conn, raw).await,
+        // Plan 20261103_01, decision 5.2.
+        methods::TERMINAL_CHOICE_TAP if conn.is_companion() => {
+            super::terminal::choice_tap(conn, raw).await
+        }
         // Plan 20261029_01, decision 2: for companions; anyone else gets
         // METHOD_NOT_FOUND below.
         methods::CHOICE_ANSWER if conn.is_companion() => super::choice::answer(conn, raw).await,

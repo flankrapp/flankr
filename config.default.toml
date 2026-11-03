@@ -34,10 +34,11 @@ allow_arbitrary_commands = false
 # never typed. Default "esc"; "" turns interrupting off.
 # interrupt_key = "esc"
 # Typing into this agent's pane from the companion's terminal view, once the
-# owner arms it there. Needs [terminal] input = true below and a paired
-# device that may approve. terminal_signals also lets ctrl+c, ctrl+d, ctrl+z
-# and ctrl+\ through. Both default to false.
-# terminal_input = false
+# owner arms it there with a first key. Needs [terminal] input on (the
+# default) and a paired device that may approve. terminal_input defaults to
+# true; false makes this agent's terminal read-only. terminal_signals also
+# lets ctrl+c, ctrl+d, ctrl+z and ctrl+\ through; it defaults to false.
+# terminal_input = true
 # terminal_signals = false
 
 [[agents]]
@@ -53,12 +54,13 @@ require_confirmation = true
 allow_arbitrary_commands = false
 
 # A pane that runs no known agent (a shell, htop, a build): the companion
-# lists it and opens it only in its terminal view. Read-only by default:
-# nothing is typed into it unless terminal_input = true here (and [terminal]
-# input = true below, and the owner arms it on the phone). It takes no
-# commands, messages or interrupt key; the global allow_arbitrary_commands
-# never turns arbitrary commands on for it. Remove this entry to refuse its
-# terminal too.
+# lists it and opens it only in its terminal view, where it takes typing,
+# signal keys included, once the owner arms it on the phone ([terminal]
+# input on, the default). terminal_input = false here makes every such
+# pane read-only. It takes no commands, messages or interrupt key; the
+# global allow_arbitrary_commands never turns arbitrary commands on for it.
+# Any pane opens in the terminal view with or without an entry here, an
+# agent with no [[agents]] entry too.
 [[agents]]
 name = "shell"
 allowed_commands = []
@@ -66,7 +68,6 @@ require_confirmation = true
 allow_arbitrary_commands = false
 allow_messages = false
 interrupt_key = ""
-terminal_input = false
 
 # Every LLM flankr uses itself: the general agent's turns, card summaries
 # and spoken summaries; never the coding agents in the panes. Off unless
@@ -171,11 +172,12 @@ terminal_input = false
 # revoke_check_secs = 60                 # open connections are checked when
 #                                        # auth.toml changes, and this often
 
-# The companion's terminal view of a session, read-only unless `input`.
-# `input = true` lets a paired device that may approve type into the panes of
-# agents with `terminal_input = true`, after arming it in the app; an arm
-# lasts 60 s from the last key. Off unless set. Only for a herdr reached over
-# its local socket, not a remote (SSH) one.
+# The companion's terminal view of any pane. `input` (on unless set) lets a
+# paired device that may approve type into a pane, after its first key arms
+# it in the app, unless that pane's agent has `terminal_input = false`; the
+# arm lasts until the terminal closes. `input = false` makes every terminal
+# read-only. Only for a herdr reached over its local socket, not a remote
+# (SSH) one.
 #
 # `attach = true` (the default, for testing) keeps the daemon attached to the
 # local herdr as one of herdr's own clients: an open terminal shows herdr's
@@ -186,7 +188,7 @@ terminal_input = false
 # With no terminal open the attachment claims nothing. `attach = false`
 # reads terminals with herdr's `pane.read` poll only.
 # [terminal]
-# input = false
+# input = true
 # attach = true
 
 # Links from `docs/…` paths in the companion's agent view to their pages on

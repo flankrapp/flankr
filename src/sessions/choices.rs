@@ -281,6 +281,93 @@ pub fn unmet(step: &Step, screen: &str) -> Option<String> {
     }
 }
 
+/// How many of a label's characters, folded, an option row must start
+/// with: a long label may be cut at the screen's edge.
+pub const TAP_LABEL_NEEDLE: usize = 12;
+
+/// An option row's number and the rest of its text: `❯ 2. [ ] Amber` and
+/// `  2. Amber` are 2 and `Amber`. Folded rows only.
+fn option_row(row: &str) -> Option<(usize, &str)> {
+    let row = row.strip_prefix('❯').unwrap_or(row).trim_start();
+    let digits = row.chars().take_while(char::is_ascii_digit).count();
+    let n: usize = row[..digits].parse().ok()?;
+    let rest = row[digits..].strip_prefix(". ")?.trim_start();
+    // A multi-select row's box, ticked or not.
+    let rest = ["[ ] ", "[✔] ", "[x] ", "[X] ", "☐ ", "☒ ", "✔ "]
+        .iter()
+        .find_map(|b| rest.strip_prefix(b))
+        .unwrap_or(rest);
+    Some((n, rest))
+}
+
+/// What a tap on `row` of the frame `lines` picks while `set` is open
+/// (docs/design/20261103_01_TERMINAL_TAPS_AND_SHELL_PANES_PLAN.md,
+/// decision 5.2): the question on screen and its option, both from 0.
+/// The question is the one whose text (its first [`QUESTION_NEEDLE`]
+/// characters, folded) the frame shows with the hint, the review screen
+/// not; its options are the rows below the question's first row that start
+/// with their number and label (`❯ 1. Teal`, a multi-select's box allowed,
+/// the label's first [`TAP_LABEL_NEEDLE`] characters), and an option's
+/// description lines are the rows that follow it up to a blank row or
+/// the next numbered row, each a piece of the option's detail. `None` for
+/// any other row: the Other and *Chat about this* rows, the hint, the
+/// question, a row of another screen.
+pub fn tapped(set: &ChoiceSet, lines: &[String], row: usize) -> Option<(usize, usize)> {
+    if !supported(&set.source) {
+        return None;
+    }
+    let folded: Vec<String> = lines.iter().map(|l| fold(l)).collect();
+    let screen = folded.join(" ");
+    if !screen.contains(HINT) || REVIEW.iter().any(|r| screen.contains(r)) {
+        return None;
+    }
+    let (index, q) = set
+        .questions
+        .iter()
+        .enumerate()
+        .find(|(_, q)| screen.contains(needle(&q.text).as_str()))?;
+    // The question's first row: where its first words are.
+    let start: String = needle(&q.text).chars().take(QUESTION_NEEDLE / 2).collect();
+    let top = folded.iter().position(|l| l.contains(start.as_str()))?;
+    let mut current: Option<usize> = None;
+    for (i, line) in folded.iter().enumerate().take(row + 1).skip(top + 1) {
+        current = match option_row(line) {
+            // An option's own row, by its number and label.
+            Some((n, rest)) if (1..=q.options.len()).contains(&n) => {
+                let label: String = fold(&q.options[n - 1].label)
+                    .chars()
+                    .take(TAP_LABEL_NEEDLE)
+                    .collect();
+                rest.starts_with(label.as_str()).then_some(n - 1)
+            }
+            // Other, *Chat about this*, or a number of another list.
+            Some(_) => None,
+            None if line.is_empty() || line.contains(HINT) => None,
+            // A description line: a piece of the option's detail.
+            None => current.filter(|&k| {
+                let detail = fold(&q.options[k].detail);
+                !detail.is_empty() && detail.contains(line.as_str())
+            }),
+        };
+        if i == row {
+            return current.map(|k| (index, k));
+        }
+    }
+    None
+}
+
+/// The keys that pick option `k` (from 0) of `q` on its screen, by the
+/// case table above: its number, then `enter` on a preview question,
+/// where the number only moves the focus. On a multi-select question the
+/// number toggles the option in place.
+pub fn tap_keys(q: &ChoiceQuestion, k: usize) -> Vec<String> {
+    let mut keys = vec![(k + 1).to_string()];
+    if is_preview(q) {
+        keys.push("enter".to_string());
+    }
+    keys
+}
+
 /// The pane an answer is driven into.
 #[async_trait]
 pub trait Pane: Send + Sync {

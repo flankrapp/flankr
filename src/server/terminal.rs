@@ -16,18 +16,23 @@
 //!   not have the methods (`METHOD_NOT_FOUND`). Only for a herdr reached
 //!   over its local socket: with a remote (SSH) herdr, `hello` reports no
 //!   terminal and `terminal.open` is `HERDR_UNAVAILABLE`.
-//! * **Who:** opening is gated as reaching an agent is: the pane's agent
-//!   has an `[[agents]]` entry and the principal may reach it
-//!   (`NOT_PERMITTED`); an unknown pane is `UNKNOWN_AGENT`.
+//! * **Who:** any pane opens, outside the `[[agents]]` filter, a shell's
+//!   or an agent's with no entry included
+//!   (docs/design/20261103_01_TERMINAL_TAPS_AND_SHELL_PANES_PLAN.md, the
+//!   12:34 EST amendment); only the principal's own agent list narrows it
+//!   (`NOT_PERMITTED`, [`policy::terminal_gate`]); an unknown pane is
+//!   `UNKNOWN_AGENT`. The answer's `input` says whether the pane takes
+//!   typing once armed.
 //! * **Typing** (`terminal.input_arm`, `terminal.input`) needs `[terminal]
-//!   input`, the agent's `terminal_input`, a principal that may approve,
-//!   and an arm. The arm has no expiry (the L3 amendment of 2026-10-28
+//!   input` (on unless set), the agent's `terminal_input` when it has an
+//!   entry (on unless set), a principal that may approve, and an arm. The arm has no expiry (the L3 amendment of 2026-10-28
 //!   10:42 EDT of docs/design/20261022_03_HARNESS_PROTOCOL_PLAN.md): once
 //!   `terminal.input_arm` succeeds the terminal stays armed until it is
 //!   closed or its connection ends, and `expires_in_s` is answered 0, no
 //!   expiry. Keys are herdr's `send_keys` syntax (see [`parse_keys`]);
 //!   `ctrl+c`, `ctrl+d`, `ctrl+z` and `ctrl+\` (with or without `alt+`)
-//!   also need the agent's `terminal_signals`. The first accepted batch
+//!   also need the agent's `terminal_signals`; a pane with no agent takes
+//!   them. The first accepted batch
 //!   after each arm is a `notice` of kind `terminal_input` naming the
 //!   agent, never the keys. The confirmation gate is not used for keys.
 //! * **Scrolling** (`terminal.scroll`, the 2026-10-27 21:58 EDT amendment
@@ -40,6 +45,13 @@
 //!   snapshot), when the pane's agent is no longer the one it was opened
 //!   on (`agent_changed`), and after `terminal.close` (`closed`). All of a
 //!   connection's terminals end with it, without a notification.
+//!
+//! **Input rows and choice taps** (plan 20261103_01, decisions 3 and 5.2):
+//! for a phone whose `terminal.open` asked (`input_rows: true`), each grid
+//! gets the rows of the pane's input bar ([`input_bar::find`]), written as
+//! the frames' input rows trailer. `terminal.choice_tap`, gated and armed
+//! as `terminal.input` is, picks the option of the pane's open choice
+//! question on the tapped row of the frame last sent, by its keys.
 //!
 //! **Attached terminals** (docs/design/20261027_08_HERDR_TERMINAL_CRATE_PLAN.md,
 //! steps 7 and 8, and its amendments of 23:24, 23:32 and 23:42 EDT). With
@@ -84,9 +96,12 @@ use tokio::time::Instant;
 
 use super::conn::{Conn, ok, resolve_target, snapshot};
 use super::herdr_attach::{HerdrAttach, Published, ViewerId};
+use super::input_bar;
 use super::{CoreEvent, Daemon};
+use crate::config::SHELL_AGENT;
 use crate::core::agents::{self, extract_agent_name_for_pane};
 use crate::core::policy;
+use crate::sessions::choices;
 use crate::watch::pane_ids_match;
 
 /// How often an open terminal is read without a `pane.scroll_changed`.
@@ -239,6 +254,9 @@ struct Terminal {
     agent: String,
     /// The phone reads the cursor trailer (`terminal.open`'s `cursor`).
     cursor: AtomicBool,
+    /// The phone reads the input rows trailer (`terminal.open`'s
+    /// `input_rows`): each grid gets its input bar ([`input_bar::find`]).
+    input_rows: AtomicBool,
     /// The herdr attachment this terminal may read from, set at open.
     attach: Mutex<Option<Arc<HerdrAttach>>>,
     state: Mutex<State>,
@@ -280,6 +298,19 @@ impl Terminal {
         self.cursor.load(Ordering::Relaxed)
     }
 
+    fn input_rows(&self) -> bool {
+        self.input_rows.load(Ordering::Relaxed)
+    }
+
+    /// `grid` with its input bar found, for a phone that reads it (plan
+    /// 20261103_01, decision 3).
+    fn with_input_rows(&self, mut grid: Grid) -> Grid {
+        if self.input_rows() {
+            grid.input_rows = input_bar::find(&self.agent, &grid);
+        }
+        grid
+    }
+
     /// The attachment this terminal may use.
     fn attach(&self) -> Option<Arc<HerdrAttach>> {
         self.attach.lock().unwrap().clone()
@@ -300,9 +331,10 @@ impl Terminal {
         }
     }
 
-    /// One frame's bytes, with the cursor trailer when the phone asked.
+    /// One frame's bytes, with the cursor and input rows trailers when the
+    /// phone asked.
     fn encode(&self, frame: &Frame) -> Vec<u8> {
-        frame.encode_with(self.cursor())
+        frame.encode_for(self.cursor(), self.input_rows())
     }
 }
 
@@ -366,6 +398,7 @@ impl Terminals {
             pane_id: pane_id.to_string(),
             agent: agent.to_string(),
             cursor: AtomicBool::new(false),
+            input_rows: AtomicBool::new(false),
             attach: Mutex::new(None),
             state: Mutex::new(State {
                 mirror: Mirror::new(id),
@@ -445,11 +478,16 @@ pub(super) async fn open(
         ));
     }
     let agent = extract_agent_name_for_pane(&snap, &pane_id);
-    policy::reach(conn.principal(), &daemon.agents, &agent, &pane_id)
+    // Any pane opens, outside the `[[agents]]` filter (plan 20261103_01,
+    // the 12:34 EST amendment); the principal's own agent list still
+    // narrows it.
+    let gate = policy::terminal_gate(conn.principal(), &daemon.agents, &agent)
         .map_err(|denied| not_permitted(denied.to_string()))?;
+    let typing = daemon.terminal_input && gate.input && conn.principal().can_approve;
 
     let (term, new) = conn.terminals.get_or_insert(conn.id(), &pane_id, &agent);
     term.cursor.store(p.cursor, Ordering::Relaxed);
+    term.input_rows.store(p.input_rows, Ordering::Relaxed);
 
     // The attachment, unless the phone's tab_follows_focus is off and the
     // pane is on another tab than herdr's active one (decision 5).
@@ -513,7 +551,7 @@ pub(super) async fn open(
         state.mirror.reset();
         state.last_text = text;
         state.last_marked = false;
-        state.mirror.update(grid)
+        state.mirror.update(term.with_input_rows(grid))
     };
     let Some(first) = first else {
         // A new or reset mirror always sends.
@@ -538,17 +576,28 @@ pub(super) async fn open(
     } else {
         TerminalSource::Poll
     };
-    log::info!(
-        "Terminal {} open on pane '{pane_id}' ({agent}) for {}, {source:?}",
-        term.id,
-        conn.principal().id
-    );
+    if agent == SHELL_AGENT {
+        // Decision 8: a shell pane's terminal is logged as one.
+        log::info!(
+            "Terminal {} open on shell pane '{pane_id}' for {}, {source:?}, typing {}",
+            term.id,
+            conn.principal().id,
+            if typing { "allowed" } else { "off" }
+        );
+    } else {
+        log::info!(
+            "Terminal {} open on pane '{pane_id}' ({agent}) for {}, {source:?}",
+            term.id,
+            conn.principal().id
+        );
+    }
     ok(common::TerminalOpenResult {
         terminal_id: term.id,
         cols: first.cols,
         rows: first.rows,
         cursor: p.cursor && attached,
         source,
+        input: Some(typing),
     })
 }
 
@@ -614,9 +663,9 @@ fn input_allowed(conn: &Conn, terminal_id: u32) -> Result<(Arc<Terminal>, bool),
         ));
     }
     let principal = conn.principal();
-    let cfg = policy::reach(principal, &daemon.agents, &term.agent, &term.pane_id)
+    let gate = policy::terminal_gate(principal, &daemon.agents, &term.agent)
         .map_err(|denied| not_permitted(denied.to_string()))?;
-    if !cfg.terminal_input {
+    if !gate.input {
         return Err(not_permitted(format!(
             "typing into {}'s terminal is off ([[agents]] terminal_input)",
             term.agent
@@ -628,7 +677,7 @@ fn input_allowed(conn: &Conn, terminal_id: u32) -> Result<(Arc<Terminal>, bool),
             principal.id
         )));
     }
-    Ok((term, cfg.terminal_signals))
+    Ok((term, gate.signals))
 }
 
 /// `terminal.input_arm`.
@@ -838,29 +887,7 @@ pub(super) async fn input(conn: &Arc<Conn>, raw: Value) -> Result<Value, ErrorOb
         KeyError::Signal(_) => not_permitted(e.to_string()),
         _ => ErrorObject::new(codes::INVALID_PARAMS, e.to_string()),
     })?;
-    let daemon = &conn.daemon;
-    let mut sent = false;
-    if let Some(attach) = term.attached() {
-        // herdr's own key events (decision 8), after parse_keys' refusals.
-        let events = key_events(&keys).map_err(|key| {
-            ErrorObject::new(
-                codes::INVALID_PARAMS,
-                format!("the key {key:?} is not sent to a terminal"),
-            )
-        })?;
-        match send_attached(&attach, &term, events).await {
-            Ok(()) => sent = true,
-            Err(AttachError::Closed) => {}
-            Err(e) => return Err(herdr_unavailable(e)),
-        }
-    }
-    if !sent {
-        daemon
-            .client
-            .send_keys(&term.pane_id, &keys.join(" "))
-            .await
-            .map_err(herdr_unavailable)?;
-    }
+    deliver(conn, &term, &keys).await?;
     let first = {
         let mut state = term.state.lock().unwrap();
         !std::mem::replace(&mut state.keys_noticed, true)
@@ -880,6 +907,103 @@ pub(super) async fn input(conn: &Arc<Conn>, raw: Value) -> Result<Value, ErrorOb
         .await;
     }
     ok(common::Empty {})
+}
+
+/// `keys`, as [`parse_keys`] gave them, into `term`'s pane: over the
+/// attachment as herdr's own key events (decision 8), else herdr's
+/// `send_keys`.
+async fn deliver(conn: &Conn, term: &Terminal, keys: &[String]) -> Result<(), ErrorObject> {
+    if let Some(attach) = term.attached() {
+        let events = key_events(keys).map_err(|key| {
+            ErrorObject::new(
+                codes::INVALID_PARAMS,
+                format!("the key {key:?} is not sent to a terminal"),
+            )
+        })?;
+        match send_attached(&attach, term, events).await {
+            Ok(()) => return Ok(()),
+            Err(AttachError::Closed) => {}
+            Err(e) => return Err(herdr_unavailable(e)),
+        }
+    }
+    conn.daemon
+        .client
+        .send_keys(&term.pane_id, &keys.join(" "))
+        .await
+        .map(drop)
+        .map_err(herdr_unavailable)
+}
+
+/// `terminal.choice_tap` (plan 20261103_01, decision 5.2 and step 3):
+/// gated and armed as `terminal.input` is. The tapped row of the frame
+/// last sent is matched to an option of the choice question open for the
+/// pane ([`choices::tapped`]), and the keys that pick it on its screen
+/// ([`choices::tap_keys`]) are sent, [`choices::STEP_GAP`] apart.
+/// `NOT_PERMITTED` when no question is open or the row is no option.
+pub(super) async fn choice_tap(conn: &Arc<Conn>, raw: Value) -> Result<Value, ErrorObject> {
+    let p: common::TerminalChoiceTapParams = super::conn::params(raw)?;
+    let (term, signals) = input_allowed(conn, p.terminal_id)?;
+    require_armed(&term)?;
+    let snap = snapshot(conn).await?;
+    let no_question = || not_permitted("no choice question is open for this pane");
+    let pane = agents::agents(&snap)
+        .into_iter()
+        .find(|a| pane_ids_match(&a.pane_id, &term.pane_id))
+        .ok_or_else(no_question)?;
+    let open = conn
+        .daemon
+        .sessions
+        .open_choice(&pane)
+        .ok_or_else(no_question)?;
+    let lines = term
+        .state
+        .lock()
+        .unwrap()
+        .mirror
+        .last_sent()
+        .map(Grid::text_lines)
+        .unwrap_or_default();
+    let (q, k) = choices::tapped(&open.set, &lines, p.row as usize).ok_or_else(|| {
+        not_permitted(format!(
+            "row {} is no option of the question on screen",
+            p.row
+        ))
+    })?;
+    let question = &open.set.questions[q];
+    for (i, key) in choices::tap_keys(question, k).iter().enumerate() {
+        if i > 0 {
+            tokio::time::sleep(choices::STEP_GAP).await;
+        }
+        let keys = parse_keys(key, signals)
+            .map_err(|e| ErrorObject::new(codes::INTERNAL_ERROR, e.to_string()))?;
+        deliver(conn, &term, &keys).await?;
+    }
+    let label = question.options[k].label.clone();
+    log::info!(
+        "{} picked option {} of question {} of choice question {} in terminal {} on pane '{}' ({}) by a tap",
+        conn.principal().id,
+        k + 1,
+        q + 1,
+        open.set.id,
+        term.id,
+        term.pane_id,
+        term.agent
+    );
+    let first = {
+        let mut state = term.state.lock().unwrap();
+        !std::mem::replace(&mut state.keys_noticed, true)
+    };
+    if first {
+        notice(conn, &term, |name| {
+            format!("Typing into {name}'s terminal.")
+        })
+        .await;
+    }
+    ok(common::TerminalChoiceTapResult {
+        question: q as u32,
+        option: k as u32,
+        label,
+    })
 }
 
 /// Text for `terminal.paste` (plan 20261028_05, the 23:43 EDT amendment,
@@ -1278,6 +1402,7 @@ async fn poll(conn: Arc<Conn>, term: Arc<Terminal>, ready: oneshot::Receiver<()>
                     Some(grid) => {
                         shown = true;
                         last_read = Instant::now();
+                        let grid = term.with_input_rows(grid);
                         let frame = term.state.lock().unwrap().mirror.update(grid);
                         if let Some(frame) = frame {
                             conn.send_terminal(term.encode(&frame));
@@ -1326,7 +1451,7 @@ async fn poll(conn: Arc<Conn>, term: Arc<Terminal>, ready: oneshot::Receiver<()>
                 }
                 state.last_text = Some(text);
                 state.last_marked = marked;
-                state.mirror.update(grid)
+                state.mirror.update(term.with_input_rows(grid))
             };
             match frame {
                 Some(frame) => Some(frame),

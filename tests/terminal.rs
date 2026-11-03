@@ -338,20 +338,56 @@ async fn unknown_panes_and_agents_out_of_reach_are_refused() {
         .await;
     assert_eq!(code(&r), codes::UNKNOWN_AGENT, "{r}");
 
+    // The device's own agent list still narrows it.
     let mut narrow = env.device("tablet", Some(&["omp"]), true).await;
     let r = narrow.call("terminal.open", json!({"pane_id": "p1"})).await;
     assert_eq!(code(&r), codes::NOT_PERMITTED, "{r}");
+    assert!(phone.frames.is_empty());
+}
 
-    // A pane whose agent has no [[agents]] entry.
+/// Plan 20261103_01, the 12:34 EST amendment, item 3: an agent with no
+/// `[[agents]]` entry opens in terminal view and takes typing, without the
+/// signal keys.
+#[tokio::test]
+async fn an_agent_without_an_entry_opens_and_types() {
+    let env = start(config(true, true, false)).await;
     env.mock(|m| {
         m.snapshot.workspaces[0].tabs[0].panes[0]
             .extra
             .insert("agent".to_string(), json!("codex"));
     })
     .await;
-    let r = phone.call("terminal.open", json!({"pane_id": "p1"})).await;
+    let mut phone = env.device("s23", None, true).await;
+    let opened = phone.open("p1").await;
+    assert_eq!(opened["input"], true, "{opened}");
+    let r = phone
+        .call("terminal.input_arm", json!({"terminal_id": 1}))
+        .await;
+    assert_eq!(r["result"], json!({"expires_in_s": 0}), "{r}");
+    let r = phone
+        .call(
+            "terminal.input",
+            json!({"terminal_id": 1, "keys": "y enter"}),
+        )
+        .await;
+    assert_eq!(r["result"], json!({}), "{r}");
+    let r = phone
+        .call(
+            "terminal.input",
+            json!({"terminal_id": 1, "keys": "ctrl+c"}),
+        )
+        .await;
     assert_eq!(code(&r), codes::NOT_PERMITTED, "{r}");
-    assert!(phone.frames.is_empty());
+    let keys = env.mock(|m| m.keystroke_log.clone()).await;
+    assert_eq!(keys, [("p1".to_string(), "y enter".to_string())]);
+    // The voice side's filter still holds: no command to an unlisted agent.
+    let r = phone
+        .call(
+            "agents.send",
+            json!({"pane_id": "p1", "command": "continue", "confirmed": true}),
+        )
+        .await;
+    assert_eq!(code(&r), codes::NOT_PERMITTED, "{r}");
 }
 
 /// A companion on the daemon socket has no terminal: frames need the link.
@@ -858,17 +894,286 @@ async fn a_shell_types_only_with_its_entrys_terminal_input() {
     assert_eq!(keys, [("p1".to_string(), "q".to_string())]);
 }
 
-/// Without a `shell` entry the pane is still listed, and its terminal is
-/// refused with the daemon's message.
+/// Plan 20261103_01, the 12:34 EST amendment, items 1 and 2: without a
+/// `shell` entry a shell pane is listed, opens, and takes typing and the
+/// signal keys once armed; with `[terminal] input` off it opens read-only.
 #[tokio::test]
-async fn without_a_shell_entry_a_shell_is_listed_but_its_terminal_refused() {
-    let env = start(config(false, false, false)).await;
+async fn without_a_shell_entry_a_shell_opens_and_types() {
+    let env = start(config(true, false, false)).await;
     make_shell(&env).await;
     let mut phone = env.device("s23", None, true).await;
     let list = phone.call("agents.list", json!({})).await;
     assert_eq!(list["result"]["agents"][0]["agent"], "shell", "{list}");
-    let r = phone.call("terminal.open", json!({"pane_id": "p1"})).await;
+    let opened = phone.open("p1").await;
+    assert_eq!(opened["input"], true, "{opened}");
+    phone.frame().await;
+    let r = phone
+        .call("terminal.input_arm", json!({"terminal_id": 1}))
+        .await;
+    assert_eq!(r["result"], json!({"expires_in_s": 0}), "{r}");
+    for keys in ["l s enter", "ctrl+c"] {
+        let r = phone
+            .call("terminal.input", json!({"terminal_id": 1, "keys": keys}))
+            .await;
+        assert_eq!(r["result"], json!({}), "{keys}: {r}");
+    }
+    let keys = env.mock(|m| m.keystroke_log.clone()).await;
+    assert_eq!(
+        keys,
+        [
+            ("p1".to_string(), "l s enter".to_string()),
+            ("p1".to_string(), "ctrl+c".to_string())
+        ]
+    );
+
+    // [terminal] input off: it opens, read-only, and says so.
+    let env = start(config(false, true, true)).await;
+    make_shell(&env).await;
+    let mut phone = env.device("s23", None, true).await;
+    let opened = phone.open("p1").await;
+    assert_eq!(opened["input"], false, "{opened}");
+    let r = phone
+        .call("terminal.input_arm", json!({"terminal_id": 1}))
+        .await;
+    assert_eq!(code(&r), codes::NOT_PERMITTED, "{r}");
+    // A device that may not approve: open, read-only.
+    let env = start(config(true, true, true)).await;
+    make_shell(&env).await;
+    let mut viewer = env.device("viewer", None, false).await;
+    let opened = viewer.open("p1").await;
+    assert_eq!(opened["input"], false, "{opened}");
+    assert!(env.mock(|m| m.keystroke_log.is_empty()).await);
+}
+
+/// The agent's `terminal_input = false` refuses typing in its open
+/// terminal, which says so (plan 20261103_01, decision 1).
+#[tokio::test]
+async fn an_agent_s_terminal_input_off_is_read_only() {
+    let env = start(config(true, false, false)).await;
+    let mut phone = env.device("s23", None, true).await;
+    let opened = phone.open("p1").await;
+    assert_eq!(opened["input"], false, "{opened}");
+    let r = phone
+        .call("terminal.input_arm", json!({"terminal_id": 1}))
+        .await;
     assert_eq!(code(&r), codes::NOT_PERMITTED, "{r}");
     let message = r["error"]["message"].as_str().unwrap();
-    assert!(message.contains("shell"), "{r}");
+    assert!(message.contains("terminal_input"), "{r}");
+}
+
+/// Every log line of this test binary, for the checks that keys are never
+/// logged (plan 20261103_01, decision 8).
+static LOGGED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+struct Capture;
+
+impl log::Log for Capture {
+    fn enabled(&self, _: &log::Metadata) -> bool {
+        true
+    }
+    fn log(&self, record: &log::Record) {
+        LOGGED.lock().unwrap().push(record.args().to_string());
+    }
+    fn flush(&self) {}
+}
+
+fn capture_logs() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        log::set_logger(&Capture).unwrap();
+        log::set_max_level(log::LevelFilter::Trace);
+    });
+}
+
+/// Plan 20261103_01, decision 8: a shell pane's terminal and the batches
+/// typed into it are logged, never the keys.
+#[tokio::test]
+async fn a_shell_s_terminal_is_logged_but_never_its_keys() {
+    capture_logs();
+    let env = start(config(true, true, false)).await;
+    make_shell(&env).await;
+    let mut phone = env.device("s23", None, true).await;
+    phone.open("p1").await;
+    phone
+        .call("terminal.input_arm", json!({"terminal_id": 1}))
+        .await;
+    let secret = "z q x j v k w";
+    let r = phone
+        .call("terminal.input", json!({"terminal_id": 1, "keys": secret}))
+        .await;
+    assert_eq!(r["result"], json!({}), "{r}");
+    let logged = LOGGED.lock().unwrap().clone();
+    assert!(
+        logged.iter().any(|l| l.contains("open on shell pane 'p1'")),
+        "{logged:?}"
+    );
+    assert!(
+        logged
+            .iter()
+            .any(|l| l.contains("typed 7 key(s)") && l.contains("(shell)")),
+        "{logged:?}"
+    );
+    assert!(!logged.iter().any(|l| l.contains(secret)), "{logged:?}");
+}
+
+/// A Claude Code screen with its prompt between two rules.
+const PROMPT_SCREEN: [&str; 5] = [
+    "● Done.",
+    "────────────────────────────────────────",
+    "> fix the test",
+    "────────────────────────────────────────",
+    "  ? for shortcuts",
+];
+
+/// Plan 20261103_01, decision 3: a phone that asks for input rows gets the
+/// prompt's rows on its frames; one that does not gets the 0.1.1 bytes.
+#[tokio::test]
+async fn frames_carry_the_input_bar_for_a_phone_that_asks() {
+    let env = start(config(true, true, false)).await;
+    env.mock(|m| {
+        m.pane_buffers.insert(
+            "p1".to_string(),
+            PROMPT_SCREEN.iter().map(|s| s.to_string()).collect(),
+        );
+    })
+    .await;
+    let mut phone = env.device("s23", None, true).await;
+    let r = phone
+        .call(
+            "terminal.open",
+            json!({"pane_id": "p1", "input_rows": true}),
+        )
+        .await;
+    assert!(r["result"]["terminal_id"].is_u64(), "{r}");
+    let first = phone.frame().await;
+    assert_eq!(
+        first.input_rows,
+        Some(libflankr_term::RowSpan { first: 2, last: 2 })
+    );
+    let mut screen = Screen::default();
+    assert!(screen.apply(&first));
+    assert_eq!(screen.input_rows(), first.input_rows);
+
+    let mut old = env.device("old", None, true).await;
+    old.open("p1").await;
+    assert_eq!(old.frame().await.input_rows, None);
+}
+
+const SESSION: &str = "00000000-0000-4000-8000-0000000000d1";
+
+/// Claude Code's open AskUserQuestion, in pane p1's session file, and its
+/// question screen as p1's visible frame (plan 20261029_01, finding 3).
+async fn open_question(env: &Env) {
+    let projects = env.dir.path().join("home/.claude/projects/-work-example");
+    std::fs::create_dir_all(&projects).unwrap();
+    let ask = json!({
+        "type": "assistant", "timestamp": "2026-11-03T13:00:00.000Z", "isSidechain": false,
+        "version": "2.1.310",
+        "message": {"role": "assistant", "type": "message", "content": [
+            {"type": "tool_use", "id": "toolu_01TAPTEST", "name": "AskUserQuestion", "input":
+                {"questions": [{"question": "Which colour should the badge be?",
+                    "header": "Colour", "multiSelect": false, "options": [
+                        {"label": "Teal", "description": "Matches the bar"},
+                        {"label": "Amber", "description": "Stands out"}]}]}}
+        ]}
+    });
+    let prompt = json!({"type": "user", "timestamp": "2026-11-03T12:59:00.000Z",
+        "isSidechain": false, "message": {"role": "user", "content": "style the badges"},
+        "origin": {"kind": "human"}});
+    std::fs::write(
+        projects.join(format!("{SESSION}.jsonl")),
+        format!("{prompt}\n{ask}\n"),
+    )
+    .unwrap();
+    let frame = [
+        "╭──────────────────────────────────╮",
+        "│ Which colour should the badge be?",
+        "│",
+        "│ ❯ 1. Teal",
+        "│      Matches the bar",
+        "│   2. Amber",
+        "│      Stands out",
+        "│   3. Type something.",
+        "│ ────────",
+        "│   4. Chat about this",
+        "│ Enter to select · ↑/↓ to navigate · Esc to cancel",
+        "╰──────────────────────────────────╯",
+    ];
+    env.mock(|m| {
+        let pane = &mut m.snapshot.workspaces[0].tabs[0].panes[0];
+        pane.cwd = Some("/work/example".to_string());
+        pane.agent_status = Some(flankr::transport::AgentStatus::Blocked);
+        pane.agent_session = Some(flankr::transport::AgentSession {
+            source: "herdr:claude".to_string(),
+            agent: "claude".to_string(),
+            kind: "id".to_string(),
+            value: SESSION.to_string(),
+        });
+        m.pane_buffers.insert(
+            "p1".to_string(),
+            frame.iter().map(|s| s.to_string()).collect(),
+        );
+    })
+    .await;
+}
+
+/// Plan 20261103_01, decision 5.2 and step 3: a tap on an option's label or
+/// description row sends the keys that pick it; any other row is refused.
+#[tokio::test]
+async fn a_choice_tap_picks_the_option_on_the_tapped_row() {
+    let env = start(config(true, true, false)).await;
+    open_question(&env).await;
+    let mut phone = env.device("s23", None, true).await;
+    phone.open("p1").await;
+    phone.frame().await;
+    let tap = json!({"terminal_id": 1, "row": 6});
+    // Not armed: refused, as terminal.input is.
+    let r = phone.call("terminal.choice_tap", tap.clone()).await;
+    assert_eq!(code(&r), codes::NOT_PERMITTED, "{r}");
+    phone
+        .call("terminal.input_arm", json!({"terminal_id": 1}))
+        .await;
+    // Amber's description row.
+    let r = phone.call("terminal.choice_tap", tap).await;
+    assert_eq!(
+        r["result"],
+        json!({"question": 0, "option": 1, "label": "Amber"}),
+        "{r}"
+    );
+    // Teal's label row.
+    let r = phone
+        .call("terminal.choice_tap", json!({"terminal_id": 1, "row": 3}))
+        .await;
+    assert_eq!(r["result"]["option"], 0, "{r}");
+    // The question, Other and the hint are no options.
+    for row in [1, 7, 10] {
+        let r = phone
+            .call("terminal.choice_tap", json!({"terminal_id": 1, "row": row}))
+            .await;
+        assert_eq!(code(&r), codes::NOT_PERMITTED, "row {row}: {r}");
+    }
+    let keys = env.mock(|m| m.keystroke_log.clone()).await;
+    assert_eq!(
+        keys,
+        [
+            ("p1".to_string(), "2".to_string()),
+            ("p1".to_string(), "1".to_string())
+        ]
+    );
+}
+
+/// With no choice question open, a choice tap is refused and sends nothing.
+#[tokio::test]
+async fn a_choice_tap_without_a_question_is_refused() {
+    let env = start(config(true, true, false)).await;
+    let mut phone = env.device("s23", None, true).await;
+    phone.open("p1").await;
+    phone
+        .call("terminal.input_arm", json!({"terminal_id": 1}))
+        .await;
+    let r = phone
+        .call("terminal.choice_tap", json!({"terminal_id": 1, "row": 0}))
+        .await;
+    assert_eq!(code(&r), codes::NOT_PERMITTED, "{r}");
+    assert!(env.mock(|m| m.keystroke_log.is_empty()).await);
 }
