@@ -1972,3 +1972,28 @@ the button row when it has one") and its item 3's "the link's tap area
    unchanged. Without buttons the tap area is as before.
 3. **The app's version** is the next patch, a fix, in the same 0.7
    series. flankr-companion does not change.
+
+## Amendment — 2026-11-03 15:03 EST: how a test count next to `failed` is read (living section L3)
+
+On the owner's report, 2026-11-03: "reported a passing test as something
+broke". A tool result printing `passed 622 failed 0` showed as *Something
+broke*: the rule read `622 failed` as 622 failures. This replaces "`N failed`
+with N > 0" in item 3 of "The cards as built" in the 2026-10-23 03:11 EDT
+amendment; the rest of that item stands.
+
+1. **A count after `failed`.** When `failed` does not end its clause (no
+   `,`, `;` or `.` after it) and the next word is a number (`failed 0`,
+   `failed: 0`, `failed=0`), that number is the failure count for that
+   occurrence, whatever number comes before `failed`. It is read only where
+   the line reads as a test summary: the number ends the line or its clause,
+   or another number or a count label (`passed`, `skipped`, `ignored`,
+   `errors`, `total` and the like) follows it. So `the build failed 3 times`
+   is not a count.
+2. **A count before `failed`.** Otherwise, the number before `failed` is the
+   count (`2 failed`, pytest and jest; cargo's `0 failed;`), unless that
+   number is itself the value of a count label before it (`ok 3 failed`).
+   A label whose clause has ended (`5 passed; 0 failed`) does not take it.
+3. A line shows failing tests when any of its counts is above 0. cargo's
+   `test result: FAILED` and `FAIL` / `--- FAIL` lines are unchanged.
+4. **Versions.** The daemon's next patch, 0.7.7, and, since the app's user
+   sees the card go, the app's next patch (FLANKR RULE 2 item 4).
