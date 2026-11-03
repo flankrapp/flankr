@@ -309,3 +309,8 @@ These changes came before the app had version numbers.
 
 **Changed**
 - A drag that starts on a question card's record button no longer scrolls the conversation; start the scroll beside it.
+
+## 0.7.10 — 2026-11-03
+
+**Fixed**
+- A drag that starts on a question card's record button scrolls the conversation again, from where your finger is once it moves, with no jump. Holding the button still opens your reply typed, and a quick tap still answers by voice.

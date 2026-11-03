@@ -231,3 +231,79 @@ fn nothing_is_drawn_along_the_record_while_it_is_held() {
     assert_eq!(held.drawer.reply, Some(record), "it does not press in");
     assert!(held.drawer.prompt.is_none(), "nothing opened yet");
 }
+
+/// `view(card)` with forty replies before the card, so the conversation
+/// scrolls.
+fn long_view(card: AgentCard) -> Event {
+    let mut event = view(card);
+    if let Event::AgentView {
+        sections, changed, ..
+    } = &mut event
+    {
+        let card = sections.pop().expect("the card");
+        sections.clear();
+        for i in 0..40u32 {
+            let text = format!("Reply {i}: a line of the conversation, long enough to wrap once.");
+            sections.push(ViewSection {
+                index: u64::from(i),
+                serial: Serial::new(7, 2 * i + 2, 0),
+                shows: Shows::Entries(vec![super::pinned_cards_tests::entry(
+                    libflankr_proto::common::Role::Assistant,
+                    &text,
+                )]),
+            });
+        }
+        let at = sections.len() as u64;
+        sections.push(ViewSection { index: at, ..card });
+        *changed = sections.iter().map(|s| s.serial).collect();
+    }
+    event
+}
+
+#[test]
+fn a_drag_from_a_question_cards_record_scrolls_the_conversation() {
+    let card = live(CardKind::Question, "Claude is asking", "Shall I go on?");
+    let Some((open, _, s)) = open_view(&card) else {
+        return;
+    };
+    let long = || vec![("OpenAgent", long_view(card.clone()))];
+    let settled = format!("{open}frames {SETTLE}\n");
+    let p = run_with(&settled, &card, long()).unwrap();
+    let record = p.drawer.reply.expect("the card's record");
+    let before = p.drawer.agent_offset.expect("the view");
+    assert!(before > 400.0, "it scrolls: {before}");
+    // Down past the 10 pt slop, then 300 px more, held there.
+    let [x, y] = record.center();
+    let past = y + 12.0 * s;
+    let script = format!(
+        "{settled}touch 6 start {x} {y}\nframes 1\ntouch 6 move {x} {past}\nframes 1\n\
+         touch 6 move {x} {}\nframes 3\n",
+        past + 300.0
+    );
+    let p = run_with(&script, &card, long()).unwrap();
+    let after = p.drawer.agent_offset.unwrap();
+    assert!(
+        ((before - after) - 300.0).abs() < 1.0,
+        "scrolled by the drag after the slop: {before} -> {after}"
+    );
+    assert!(!p.drawer.holding, "no longer the record's");
+    // Released: nothing is sent, nothing opens.
+    let p = run_with(
+        &format!(
+            "{script}touch 6 end {x} {}\nframes {SETTLE}\n",
+            past + 300.0
+        ),
+        &card,
+        long(),
+    )
+    .unwrap();
+    for input in ["StartDictation", "StartTextPrompt"] {
+        assert_eq!(inputs_with(&p, input), 0, "{:?}", p.inputs);
+    }
+    assert!(p.drawer.prompt.is_none());
+    // Still, the hold and the tap are as before, on the long view too.
+    let p = run_with(&format!("{settled}{}", press(record, HOLD)), &card, long()).unwrap();
+    assert_eq!(inputs_with(&p, "StartTextPrompt"), 1, "{:?}", p.inputs);
+    let p = run_with(&format!("{settled}{}", press(record, 3)), &card, long()).unwrap();
+    assert_eq!(inputs_with(&p, "StartDictation"), 1, "{:?}", p.inputs);
+}

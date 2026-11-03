@@ -5280,6 +5280,35 @@ impl AgentScreen {
 
     /// A touch at `now` (any monotonic clock). Returns the control tapped,
     /// if the touch was a tap; a drag scrolls and returns nothing.
+    /// A press that started at `start` on a control and has moved past the
+    /// slop to `at`, handed to the flow as its drag (plan 20261022_03, the
+    /// L3 amendment of 2026-11-03 14:22 EST): already moving, so it scrolls
+    /// from `at` on, by the distance after the slop, with no jump.
+    pub fn take_drag(&mut self, id: u64, start: [f32; 2], at: [f32; 2], now: Duration) {
+        if self.term_shown || self.thumb.is_some() || self.drag.is_some() {
+            return;
+        }
+        self.jump = None;
+        self.pin_swipe = None;
+        let carried = std::mem::take(&mut self.fling);
+        self.drag = Some(Drag {
+            fingers: vec![Finger {
+                id,
+                start,
+                y: at[1],
+            }],
+            pos: 0.0,
+            carried,
+            down: now,
+            last_t: now,
+            moved: true,
+            samples: [(now, 0.0); SAMPLES],
+            sampled: 1,
+            multi: false,
+            pair_lifted: None,
+        });
+    }
+
     pub fn touch(
         &mut self,
         id: u64,

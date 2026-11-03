@@ -77,6 +77,16 @@ impl Hold {
     pub fn fired(&self) -> bool {
         self.fired
     }
+
+    /// Whether it moved past the slop before firing: no tap and no hold.
+    pub fn moved_off(&self) -> bool {
+        self.moved && !self.fired
+    }
+
+    /// Where the touch started.
+    pub fn at(&self) -> [f32; 2] {
+        self.at
+    }
 }
 
 #[cfg(test)]

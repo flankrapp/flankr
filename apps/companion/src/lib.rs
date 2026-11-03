@@ -3189,7 +3189,21 @@ impl App {
         };
         match touch.phase {
             TouchPhase::Started => {}
-            TouchPhase::Moved => hold.moved_to([touch.x, touch.y], s),
+            TouchPhase::Moved => {
+                hold.moved_to([touch.x, touch.y], s);
+                // A question card's record dragged past the slop before its
+                // hold: the conversation's scroll from here (plan
+                // 20261022_03, the L3 amendment of 2026-11-03 14:22 EST).
+                if hold.hit == AgentHit::Reply && hold.moved_off() {
+                    let start = hold.at();
+                    self.hold = None;
+                    let now = self.started.elapsed();
+                    if let Some(agent) = &mut self.agent {
+                        log::info!("hold: the record dragged; the conversation scrolls");
+                        agent.take_drag(touch.id, start, [touch.x, touch.y], now);
+                    }
+                }
+            }
             TouchPhase::Cancelled => self.hold = None,
             TouchPhase::Ended => {
                 let hold = self.hold.take().expect("held");
@@ -5478,6 +5492,8 @@ pub(crate) mod probe {
         /// The agent view's first question card record (`AgentHit::Reply`)
         /// on screen, and the card the message replies to, by title.
         pub reply: Option<Rect>,
+        /// The agent view's scroll offset.
+        pub agent_offset: Option<f32>,
         pub replying_to: Option<String>,
         /// The message card's keyboard glyph while it takes voice, and
         /// Gemini's, on the screen shown.
@@ -5661,6 +5677,7 @@ pub(crate) mod probe {
                 .as_ref()
                 .map(|d| (d.general_agent, d.mode, d.text.clone())),
             focused: app.keyboard.focused(),
+            agent_offset: app.agent.as_ref().map(|a| a.offset()),
             reply: app
                 .agent
                 .as_ref()
