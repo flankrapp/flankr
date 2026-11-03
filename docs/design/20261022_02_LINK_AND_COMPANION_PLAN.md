@@ -716,3 +716,78 @@ Where they disagree, this amendment wins.
   refused, and `auth.toml` is unchanged;
 - a name in use is refused without `--replace`, and swapped with it;
 - a `0x01` connection is closed with no reply.
+
+## Amendment — 2026-11-03 11:40 EST: `flankr pair` asks whether to replace a name already paired
+
+The owner (2026-11-03, `docs/OWNER_REPORTS.md`, the 11:38 EST entry):
+"the --replace should be a question when pairing, not requiring a second
+cycle". Today a device whose name is already in `auth.toml` is shown the
+six words, a **yes** then fails with *the name '…' is already paired (use
+--replace to re-pair it)*, the phone is told it was refused, and
+re-pairing takes a second `flankr pair --replace` run and a second scan.
+
+This amendment replaces, where they disagree:
+- the 18:20 EDT amendment's "Without `--replace`, a name already in
+  `auth.toml` is refused, as before." and its step 3 check "pairing a name
+  already in use without `--replace` is refused, and `auth.toml` is left
+  unchanged";
+- the 23:07 EDT amendment's item 5, first bullet ("a name already in use
+  is refused unless `--replace`"), and its step 3 check "a name in use is
+  refused without `--replace`, and swapped with it".
+
+It adds a question to the six-word flow of plan 20261028_01 (its 14:37 EDT
+amendment, items 1.4 and 1.5, and the 14:44 EDT amendment's one attempt
+per run), which is otherwise unchanged. `--replace` keeps its meaning
+(the swap keeps the old entry's `agents` and `approve` and closes the old
+key's connections). A key already paired under a **different** name is
+still refused, with no question.
+
+1. **The daemon says when the name is taken.** `link.pair_begin`'s params
+   gain `name?: string`, the name the run will pair as (`flankr pair
+   --name`); `link.pair_answer`'s `name` still decides it. When a request
+   is held, the name it would be added as (begin's `name` when given and
+   not blank, else the device's own) is looked up in `auth.toml`. If an
+   entry has it, `link.pair_request` (and `link.pair_code`'s result) carry
+   `already_paired: {name, paired}`, with `paired` the entry's RFC 3339
+   time; otherwise the field is absent. Both fields are optional with
+   serde defaults, so an older `flankr pair` or daemon ignores them. These
+   types are the daemon's own (`src/server/link/pair_mode.rs`), so
+   `libflankr_proto` and the companion do not change.
+2. **`flankr pair` asks, after the words.** The words question comes
+   first and is unchanged ("Do the six words on the phone match? Type yes
+   to pair: "). When it is answered **yes**, the request carries
+   `already_paired` and `--replace` was not given, `flankr pair` asks a
+   second question on its own line:
+   `'<name>' is already paired (paired <YYYY-MM-DD>). Replace it with this device? [y/N] `
+   (the parenthesis is left out when the entry's `paired` is empty).
+   - `y` or `yes` (any case, surrounding space ignored) sends
+     `link.pair_answer {yes: true, replace: true}`: the entry is swapped
+     as `--replace` swaps it, and the run ends as a **yes** does.
+   - Anything else, or end of input, sends `{yes: false}`: nothing is
+     added or changed, the phone is told `Refused`, `flankr pair` prints
+     `Not paired: '<name>' was kept.` and exits 1.
+   - The words question decides whether this device is the one being
+     paired; the second decides what happens to the old entry. They are
+     kept apart so that a **yes** to the words never silently replaces an
+     entry.
+3. **Within the same attempt and time.** Both questions are one attempt
+   (14:44 EDT) inside the offer's time (14:40 EDT): the phone stays held on
+   its NK session until the answer, and an offer expiring or the phone
+   cancelling during the second question ends the run as it does during
+   the first (the prompt line is ended and `flankr pair` exits 1, nothing
+   added).
+4. **`--replace` skips the question**, and is sent as `replace: true` with
+   a **yes** to the words, as today. If the name is taken only after the
+   request was held (a race with another writer), the answer fails as it
+   does today.
+5. **Version.** A change the person running `flankr` sees: the daemon's
+   version goes 0.7.2 to 0.7.3, a patch in its 0.7 series on the owner's
+   instruction of 2026-11-03 (see `CHANGES.md`), with its `UPDATES.md`
+   entry.
+6. **Step 3** gains checks. **Done when:** a held request for a name in
+   `auth.toml` carries `already_paired` with that entry's name and time,
+   and one for a free name does not, for the device's name and for begin's
+   `name`; `flankr pair` asks the replace question after a **yes** for a
+   taken name, a `y` swaps the entry and closes the old key's connection,
+   a `n` leaves `auth.toml` as it was and the phone `Refused`, and
+   `--replace` pairs with no second question.
