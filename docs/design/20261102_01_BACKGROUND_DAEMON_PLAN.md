@@ -223,3 +223,25 @@ Step 1 is implemented: `crates/flankr-daemon` 0.1.0, which this commit
 adds to the workspace. The status is `In implementation`, and this
 document is now immutable. It changes only on the owner's explicit
 instruction (AGENTS.md, Rule 1.5).
+
+## Amendment — 2026-11-02 22:26 EST: `flankr pair` starts the daemon when it is not running
+
+On the owner's instruction (Rule 1.5), 2026-11-02: "flankr pair should
+also launch flankr if it's [not] running (and --foreground isn't used)".
+Adds to decision 1:
+
+1. **`flankr pair`** first checks the listen socket as `serve` does
+   (decision 5). If no daemon answers, it starts one in the background
+   exactly as `flankr serve` would, prints the same `flankr is running on
+   <socket>; log: <file>` line, then pairs. If the start fails, `pair`
+   prints `serve`'s failure lines and exits with its code, without
+   pairing.
+2. **Only the server's flags** are passed to the started server:
+   `--config`, `--listen`, `--transport`/`--remote`/`--socket`/`--mock`,
+   `--show-tokens`, `--prompts`, `--suggestions`. Pairing's own flags
+   (`--name`, `--protocols`, `--replace`, `--code`, `--qr-png`,
+   `--timeout`) are not.
+3. **`flankr pair --foreground`** never starts a daemon: with none
+   running it fails as `pair` does today.
+4. **The daemon** takes the next patch with its `UPDATES.md` entry
+   (FLANKR RULE 2).
