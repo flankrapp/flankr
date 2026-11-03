@@ -102,6 +102,18 @@ type Refusal = (Code, String);
 /// `not_permitted` when the agent has no `[[agents]]` entry this principal
 /// may reach.
 pub(super) async fn session(conn: &Conn, session: &str) -> Result<Session, Refusal> {
+    resolve(conn, session, false).await
+}
+
+/// `session` as an image upload's target: as [`session`], and also a pane
+/// this connection has open in terminal view that takes typing, with or
+/// without an `[[agents]]` entry, so its terminal can paste the image's
+/// path (plan 20261103_01, the 2026-11-03 15:38 EST amendment, item 3).
+async fn image_session(conn: &Conn, session: &str) -> Result<Session, Refusal> {
+    resolve(conn, session, true).await
+}
+
+async fn resolve(conn: &Conn, session: &str, terminal: bool) -> Result<Session, Refusal> {
     let daemon = &conn.daemon;
     let snap = daemon
         .client
@@ -111,8 +123,11 @@ pub(super) async fn session(conn: &Conn, session: &str) -> Result<Session, Refus
     let pane_id = super::conn::resolve_target(daemon, &snap, session)
         .map_err(|_| (Code::NO_SESSION, format!("no session '{session}'")))?;
     let agent = extract_agent_name_for_pane(&snap, &pane_id);
-    policy::reach(conn.principal(), &daemon.agents, &agent, &pane_id)
-        .map_err(|denied| (Code::NOT_PERMITTED, denied.to_string()))?;
+    if let Err(denied) = policy::reach(conn.principal(), &daemon.agents, &agent, &pane_id)
+        && !(terminal && super::terminal::takes_typing(conn, &pane_id))
+    {
+        return Err((Code::NOT_PERMITTED, denied.to_string()));
+    }
     let cwd = crate::core::agents::agents(&snap)
         .into_iter()
         .find(|a| crate::watch::pane_ids_match(&a.pane_id, &pane_id))
@@ -507,7 +522,7 @@ async fn accept_upload(conn: &Arc<Conn>, id: TransferId, ns: Namespace, offer: O
     if offer.size < IMAGE_MIN {
         return refuse(Code::BAD_TYPE, "too small to be an image".into());
     }
-    let s = match session(conn, &offer.session).await {
+    let s = match image_session(conn, &offer.session).await {
         Ok(s) => s,
         Err((code, why)) => return refuse(code, why),
     };

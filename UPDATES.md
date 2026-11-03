@@ -262,3 +262,8 @@ These changes came before the program had version numbers.
 
 **Fixed**
 - A test run that prints its totals as `passed 622 failed 0` no longer reads as 622 failing tests, so the agent's view no longer shows it as *Something broke*. The count after `failed` (`failed 0`, `failed: 0`, `failed=0`) is now taken as the number of failures; a count before it (`2 failed`) still counts, unless it belongs to an earlier label such as `passed`. A sentence such as `the build failed 3 times` is not read as a test summary.
+
+## 0.7.8 — 2026-11-03
+
+**Changed**
+- A pane open in the phone's terminal view that takes typing now takes images from the phone too, a plain shell or an agent with no `[[agents]]` entry included, so the keys row's + can paste an image there. The terminal gets the image's absolute path in the daemon's temporary folder, typed as it is (it has no spaces). Other panes still need an `[[agents]]` entry for images, and files and `git` output still need one.

@@ -680,6 +680,22 @@ fn input_allowed(conn: &Conn, terminal_id: u32) -> Result<(Arc<Terminal>, bool),
     Ok((term, gate.signals))
 }
 
+/// Whether this connection has `pane_id` open in terminal view and may
+/// type into it ([`input_allowed`]'s checks; the arm is not needed): its
+/// terminal takes image uploads too (plan 20261103_01, the 2026-11-03
+/// 15:38 EST amendment, item 3).
+pub(super) fn takes_typing(conn: &Conn, pane_id: &str) -> bool {
+    let id = conn
+        .terminals
+        .open
+        .lock()
+        .unwrap()
+        .values()
+        .find(|t| pane_ids_match(&t.pane_id, pane_id))
+        .map(|t| t.id);
+    id.is_some_and(|id| input_allowed(conn, id).is_ok())
+}
+
 /// `terminal.input_arm`.
 pub(super) fn input_arm(conn: &Conn, raw: Value) -> Result<Value, ErrorObject> {
     let p: common::TerminalInputArmParams = super::conn::params(raw)?;

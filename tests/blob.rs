@@ -906,3 +906,68 @@ async fn terminal_paste_without_the_attachment_types_literal_keys() {
         .await;
     assert_eq!(code(&r), codes::INVALID_PARAMS, "{r}");
 }
+
+/// Plan 20261103_01, the 2026-11-03 15:38 EST amendment, item 3: a shell
+/// pane, with no `[[agents]]` entry, takes images once this connection has
+/// it open in terminal view and may type into it; its paste types the
+/// image's absolute path.
+#[tokio::test]
+async fn a_shell_in_terminal_view_takes_images_and_pastes_their_paths() {
+    let env = start(READ).await;
+    let project = env.project.clone();
+    env.mock(|m| {
+        let mut shell = pane("p3", "", &project);
+        shell.extra.remove("agent");
+        m.snapshot.workspaces[0].tabs[0].panes.push(shell);
+    })
+    .await;
+    let mut phone = env.device("s23", true).await;
+    // Not open in terminal view: refused, as before.
+    assert_eq!(phone.upload("p3", &png(3)).await, Err(Code::NOT_PERMITTED));
+    let opened = phone.call("terminal.open", json!({"pane_id": "p3"})).await;
+    let tid = opened["result"]["terminal_id"].as_u64().unwrap();
+    // Open: taken, before the arm too.
+    let reference = phone.upload("p3", &png(4)).await.unwrap();
+    let r = phone
+        .call("terminal.input_arm", json!({"terminal_id": tid}))
+        .await;
+    assert!(r.get("result").is_some(), "{r}");
+    let before = env.mock(|m| m.keystroke_log.len()).await;
+    let r = phone
+        .call(
+            "terminal.paste",
+            json!({"terminal_id": tid, "images": [reference]}),
+        )
+        .await;
+    assert_eq!(r["result"], json!({}), "{r}");
+    let typed: String = env
+        .mock(|m| m.keystroke_log[before..].to_vec())
+        .await
+        .into_iter()
+        .map(|(_, k)| k.replace(' ', "").replace("space", " "))
+        .collect();
+    let dir = env.pane_dir("p3").display().to_string();
+    assert!(typed.starts_with(&dir) && dir.starts_with('/'), "{typed}");
+    assert!(typed.ends_with(".png") && !typed.contains(' '), "{typed}");
+}
+
+/// A device that may not approve may not type, so its open shell takes no
+/// images.
+#[tokio::test]
+async fn a_shell_open_by_a_device_that_may_not_type_takes_no_images() {
+    let env = start(READ).await;
+    let project = env.project.clone();
+    env.mock(|m| {
+        let mut shell = pane("p3", "", &project);
+        shell.extra.remove("agent");
+        m.snapshot.workspaces[0].tabs[0].panes.push(shell);
+    })
+    .await;
+    let mut phone = env.device("s23", false).await;
+    let opened = phone.call("terminal.open", json!({"pane_id": "p3"})).await;
+    assert!(
+        opened["result"]["terminal_id"].as_u64().is_some(),
+        "{opened}"
+    );
+    assert_eq!(phone.upload("p3", &png(5)).await, Err(Code::NOT_PERMITTED));
+}
