@@ -277,3 +277,56 @@ The click (the report's second item) needs no change: the terminal's
 rect already ends above the keys row and the bar, the pane is resized to
 the rows that fit there with the keyboard up and down, and a tap on an
 option or a click in mouse mode is sent as decisions 4 and 5 say.
+
+## Amendment — 2026-11-03 15:38 EST: two keys rows with Enter, a toggle that hides flankr's UI, image paste in any terminal
+
+On the owner's instruction (Rule 1.5), 2026-11-03: "what we could do is
+expand the keyboard on screen keyboard row to two rows and add a hide show
+for the menu item for the for the UI components above it above the
+keyboard icon. And the bottom right so with this we would have when those
+are within it would hide all of the UI elements that are part of flankr
+leaving the terminal at full height. Except for the key on screen keyboard
+row. That would also an enter key probably one of also what we're looking
+at it we should fix the the plus is not showing"; then "the insert in
+terminals it should be the absolute path to the temporary file"; then,
+offered the items below, "Yes, write the amendment and build it after the
+current fix". This replaces the keys row's one row of nine columns (the
+bottom bar plan's decision 9, as decision 1 of this plan keeps it) and adds
+to decisions 1 and 6:
+
+1. **Two keys rows**, 40 pt each, of eight equal columns:
+
+   ```
+    +    ESC  TAB  ⏎ Enter      ↑         ⛶
+    CTRL ALT            ←   ↓   →         ⌨
+   ```
+
+   - **⏎ Enter** spans columns 4 and 5 and sends `enter` (with any
+     latched modifiers, as the other keys do).
+   - **⌨**, the soft keyboard's toggle, is at the bottom right; **⛶**, the
+     UI toggle of item 2, is above it.
+   - The d-pad keeps its shape: **↑** in column 6 over **↓**, with **←**
+     and **→** beside **↓**.
+   - Columns 3 and 4 of the second row are left empty.
+   The rows show when decision 1 says the one row did; the terminal's rect
+   ends above them.
+2. **⛶ hides flankr's UI.** A tap hides everything of flankr's in the
+   agent view but the keys rows: the header, the bottom bar, pinned cards
+   and input cards. The terminal then takes the full height above the keys
+   rows (above the soft keyboard when it is up), and the pane is resized to
+   that fit. Another tap on ⛶, or Android's Back, shows it again. The
+   choice holds until changed, across sessions, and is not saved across
+   restarts. While hidden, an approval or a question that arrives draws a
+   dot on ⛶ (as a remote card's), and nothing else is shown until the UI
+   is.
+3. **Image paste in any terminal that takes typing.** The image upload's
+   check no longer needs an `[[agents]]` entry for a pane in terminal view:
+   a pane that takes typing (decision 6 as amended at 12:34 EST) takes
+   images, so the keys row's **+** works in a shell. `terminal.paste`
+   inserts each image's absolute path in the daemon's temporary folder,
+   space-separated, as it already does; the path has no spaces and is not
+   quoted. If the **+** is missing rather than drawn dim, that is fixed
+   too.
+4. **Versions,** in their series: the app's next patch with its
+   `apps/UPDATES.md` entry; the daemon's next patch with its `UPDATES.md`
+   entry for item 3.
