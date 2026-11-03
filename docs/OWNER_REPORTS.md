@@ -410,3 +410,19 @@ complete.
   mixed code are dropped; when no address takes a connection the phone says
   *Can't reach …* and offers no device code. The device code is kept only
   where it can work.
+
+## 2026-11-03 11:38 EST — Owner: re-pairing a name should ask, not need `--replace` and a second run
+
+Device: Galaxy S23 Ultra, pairing with `flankr pair` (daemon 0.7.2).
+
+**Report.** "the --replace should be a question when pairing, not
+requiring a second cycle".
+
+**Seen.** A device whose name is already in `auth.toml` is asked the usual
+*Pair?* question, and a `yes` then fails with *the name '…' is already
+paired (use --replace to re-pair it)*; the phone is told it was refused.
+Re-pairing needs a second `flankr pair --replace` run and a second scan.
+
+**In hand.** Handed to a subagent: an amendment to the link and companion
+plan (its `--replace` of the 2026-10-22 18:20 EDT amendment), with
+`flankr pair` asking whether to replace the existing entry in the same run.
