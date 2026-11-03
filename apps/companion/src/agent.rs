@@ -2238,6 +2238,18 @@ const SPEED_SPAN_MIN: Duration = Duration::from_millis(16);
 /// suggested after a finished turn.
 const QUIET_FOR_CONTINUE: f32 = 30.0;
 
+/// The notice above the terminal, in points (the height of a Finished
+/// card's bar).
+const NOTICE_H: f32 = BAR_H;
+
+/// Whether `card`, pinned, shows over the terminal (plan 20261103_01, the
+/// 2026-11-03 17:37 EST amendment, items 2 and 4): a Finished card, folded
+/// to its bar, or a live approval, which only flankr takes. A live
+/// question is a notice above the terminal instead; the rest do not show.
+fn pin_over_terminal(card: &AgentCard) -> bool {
+    card.kind == CardKind::Finished || (card.live && card.kind == CardKind::Approval)
+}
+
 /// Where things are on the screen, for the current layout and scroll.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Frame {
@@ -2260,6 +2272,11 @@ pub struct Frame {
     pub typed: Option<Flow>,
     /// The jump line, while scrolled back.
     pub jump: Option<JumpLine>,
+    /// Over the terminal, while the agent's own screen takes the input
+    /// the pinned card asks for: the one-line notice above the terminal
+    /// (plan 20261103_01, the 2026-11-03 17:37 EST amendment, item 3). It
+    /// takes no taps.
+    pub notice: Option<JumpLine>,
     /// Where other sessions' cards end, above the pinned card (plan
     /// 20261022_03, the L3 amendment of 2026-10-24 15:56 EDT, item 2).
     pub cross_bottom: f32,
@@ -4140,9 +4157,12 @@ impl AgentScreen {
                     && (matches!(c.kind, CardKind::Approval | CardKind::Question)
                         || c.choices.is_some())
             });
-        self.prompts.set_catch_up_outranked(waits);
+        // Over the terminal the catch-up does not show (the 17:37 EST
+        // amendment, item 2), and the pinned card keeps its place.
+        self.prompts
+            .set_catch_up_outranked(waits || self.term_shown);
         let catch_up = self.prompts.catch_up().text().is_some();
-        self.pinned = if catch_up && !waits {
+        self.pinned = if catch_up && !waits && !self.term_shown {
             None
         } else {
             view_pinned
@@ -4184,6 +4204,22 @@ impl AgentScreen {
     /// The pinned card is a Finished card and the terminal shows: it is one
     /// line, so it covers little of the terminal (plan 20261022_03, the L3
     /// amendment of 2026-10-27 21:58 EDT, item 3); a tap shows it whole.
+    /// Over the terminal, the notice for the pinned card when the agent's
+    /// own screen takes its input: a live question (Claude Code's own
+    /// question or prompt, as the daemon read it from the session), with
+    /// its accent (plan 20261103_01, the 2026-11-03 17:37 EST amendment,
+    /// item 3). Approvals are flankr's confirmations, which only flankr
+    /// takes: their card works over the terminal (item 4).
+    pub fn terminal_notice(&self) -> Option<(String, [f32; 4])> {
+        let card = self
+            .pinned_card()
+            .filter(|c| self.term_shown && c.live && c.kind == CardKind::Question)?;
+        Some((
+            format!("{} — answer in the terminal", card.title),
+            accent(card.kind),
+        ))
+    }
+
     fn finished_over_terminal(&self) -> bool {
         self.term_shown
             && self
@@ -4316,11 +4352,16 @@ impl AgentScreen {
             above = row_top - 8.0 * s;
         }
         // A response just sent, as typed input, until the session has it.
-        let typed = self.typed.as_deref().filter(|_| !dictating).map(|t| {
-            let flow = InputBox::lay_out(t, pad, l.w - 2.0 * pad, above, s);
-            above -= flow.height + 8.0 * s;
-            flow
-        });
+        // Not over the terminal, which shows it (the 17:37 EST amendment).
+        let typed = self
+            .typed
+            .as_deref()
+            .filter(|_| !dictating && !self.term_shown)
+            .map(|t| {
+                let flow = InputBox::lay_out(t, pad, l.w - 2.0 * pad, above, s);
+                above -= flow.height + 8.0 * s;
+                flow
+            });
         // The prompt cards, pinned above the buttons (laid out by
         // `settle`): the message on its own card, or in the card it replies
         // to with the controls; Gemini's card or its bars.
@@ -4333,7 +4374,14 @@ impl AgentScreen {
         // While a message is taken, the pinned card collapses above it
         // (unless the message is taking a reply in that card itself).
         let is_replying_to_pin = replying.is_some_and(|r| self.pinned_card() == Some(r));
-        if let Some(card) = self.pinned_card().filter(|_| !is_replying_to_pin) {
+        // Over the terminal, only a Finished card or a live approval (the
+        // 17:37 EST amendment, items 2 and 4).
+        let over_terminal = |c: &&AgentCard| !self.term_shown || pin_over_terminal(c);
+        if let Some(card) = self
+            .pinned_card()
+            .filter(|_| !is_replying_to_pin)
+            .filter(over_terminal)
+        {
             // Expanded, as many lines as leave the flow 120 pt; else the
             // first PIN_LINES.
             let view_top = header.y + header.h;
@@ -4525,7 +4573,18 @@ impl AgentScreen {
                 });
             }
         }
-        let view_top = header.y + header.h;
+        // The agent's own screen takes the input: a notice above the
+        // terminal, whose rows start below it (item 3).
+        let notice = self.terminal_notice().map(|(text, color)| {
+            let h = NOTICE_H * s;
+            let px = TOOL_PT * s;
+            JumpLine {
+                rect: Rect::new(0.0, header.y + header.h, l.w, h),
+                text: one_line(&text, columns(l.w - 2.0 * pad, px)),
+                color,
+            }
+        });
+        let view_top = header.y + header.h + notice.as_ref().map_or(0.0, |n| n.rect.h);
         let view_bottom = match &pin {
             Some(p) => p.rect.y - 8.0 * s,
             None => above,
@@ -4570,6 +4629,7 @@ impl AgentScreen {
             suggestions,
             typed,
             jump,
+            notice,
             cross_bottom,
             prompt_bottom,
             keys_row,
@@ -4602,6 +4662,7 @@ impl AgentScreen {
             suggestions: Vec::new(),
             typed: None,
             jump: None,
+            notice: None,
             cross_bottom: l.top,
             prompt_bottom: bottom,
             ..frame
@@ -5742,6 +5803,7 @@ impl AgentScreen {
         } else {
             self.term_asks.push(TermAsk::Close);
         }
+        self.rank_catch_up();
         self.settle();
     }
 
@@ -6425,6 +6487,18 @@ impl AgentScreen {
                     instance.color[3] *= alpha;
                 }
             }
+        }
+        if let Some(n) = &self.frame.notice {
+            let px = TOOL_PT * s;
+            fill(list, n.rect, theme().card, 0.0);
+            fill(
+                list,
+                Rect::new(n.rect.x, n.rect.y, EDGE * s, n.rect.h),
+                n.color,
+                0.0,
+            );
+            let y = n.rect.y + (n.rect.h - line_h(px)) * 0.5;
+            ctx.draw_text(list, &n.text, [n.rect.x + PAD * s, y], px, theme().fg);
         }
         if let Some(j) = &self.frame.jump {
             let px = TOOL_PT * s;
@@ -8562,6 +8636,106 @@ mod tests {
         b.set_terminal_state((1, true, false, None), offered(false));
         b.toggle_terminal();
         assert!(!b.frame().pin.as_ref().unwrap().compact);
+    }
+
+    /// Plan 20261103_01, the 2026-11-03 17:37 EST amendment, items 2 to
+    /// 4: over the terminal only a Finished card (its bar) or a live
+    /// approval (whole, working) shows; a live question is a notice above
+    /// the terminal that takes no taps; every other card is left out.
+    #[test]
+    fn over_the_terminal_only_finished_and_approvals_show_and_a_question_is_a_notice() {
+        let n = 20;
+        let shown = |kind: CardKind, live: bool| {
+            let mut a = screen(conversation(n), vec![card(kind, n, live)], Some(0));
+            a.set_terminal_state((1, true, true, None), open_state(true, false));
+            a.toggle_terminal();
+            a
+        };
+        // A live approval: whole over the terminal, and its buttons work.
+        let mut a = shown(CardKind::Approval, true);
+        assert!(!a.frame().pin.as_ref().expect("pinned").compact);
+        assert!(a.frame().notice.is_none());
+        let r = a.rect_of(AgentHit::Approve(7)).expect("Approve on the pin");
+        assert_eq!(
+            tap(&mut a, 1, r, Duration::from_secs(1)),
+            Some(AgentHit::Approve(7))
+        );
+        // A Finished card: its bar.
+        let a = shown(CardKind::Finished, true);
+        assert!(a.frame().pin.as_ref().expect("pinned").compact);
+        // Something broke, and a resolved approval or question: nothing.
+        for (kind, live) in [
+            (CardKind::Broke, true),
+            (CardKind::Approval, false),
+            (CardKind::Question, false),
+        ] {
+            let a = shown(kind, live);
+            assert!(a.frame().pin.is_none(), "{kind:?} {live}");
+            assert!(a.frame().notice.is_none(), "{kind:?} {live}");
+        }
+        // A live question: no card, a notice above the terminal.
+        let mut a = shown(CardKind::Question, true);
+        assert!(a.frame().pin.is_none());
+        let notice = a.frame().notice.clone().expect("the notice");
+        assert_eq!(notice.text, "Claude is asking — answer in the terminal");
+        let header = a.frame().header;
+        assert_eq!(notice.rect.y, header.y + header.h);
+        let t = a.terminal_rect();
+        assert!(
+            (t.y - (notice.rect.y + notice.rect.h)).abs() < 0.01,
+            "the terminal's rows start below it"
+        );
+        // It takes no taps: none of the view's, and not the terminal's.
+        a.take_terminal_asks();
+        assert_eq!(tap(&mut a, 2, notice.rect, Duration::from_secs(2)), None);
+        assert!(no_resize(a.take_terminal_asks()).is_empty());
+        // The pane is sized to the room below it: the notice's height
+        // less than with nothing over the terminal.
+        let c = shown(CardKind::Approval, false);
+        let (with, without) = (a.terminal_rect(), c.terminal_rect());
+        assert!((without.h - with.h - NOTICE_H * a.scale()).abs() < 0.01);
+        let fit = |x: &AgentScreen| x.terminal_view().fit_size(x.terminal_rect(), x.scale());
+        assert!(fit(&a).unwrap().1 < fit(&c).unwrap().1);
+        // ⛶ hides it with the rest.
+        let mut h = shown(CardKind::Question, true);
+        h.set_terminal_state((2, true, true, Some(0)), attached_state(true, false));
+        h.set_keys_row(true);
+        h.set_ui_hidden(true);
+        assert!(h.chrome_hidden());
+        assert!(h.frame().notice.is_none());
+        // In the list view, the card is whole again, and no notice.
+        a.toggle_terminal();
+        assert!(a.frame().notice.is_none());
+        assert!(!a.frame().pin.as_ref().expect("pinned").compact);
+    }
+
+    /// The 17:37 EST amendment, item 2: the catch-up (*While you spoke*)
+    /// and a response just sent do not show over the terminal, which shows
+    /// the response itself; the list view has them back.
+    #[test]
+    fn the_catch_up_and_a_sent_response_do_not_show_over_the_terminal() {
+        let n = 20;
+        let mut a = screen(
+            conversation(n),
+            vec![card(CardKind::Finished, n, true)],
+            Some(0),
+        );
+        a.set_catch_up(Some("While you spoke, Claude finished.".into()));
+        assert!(a.prompts().catch_up().rect().h > 0.0);
+        assert!(
+            a.frame().pin.is_none(),
+            "the catch-up takes the pin's place"
+        );
+        a.set_typed(Some("go on".into()));
+        assert!(a.frame().typed.is_some());
+        a.set_terminal_state((1, true, true, None), open_state(true, false));
+        a.toggle_terminal();
+        assert_eq!(a.prompts().catch_up().rect().h, 0.0);
+        assert!(a.frame().typed.is_none());
+        assert!(a.frame().pin.as_ref().expect("the Finished bar").compact);
+        a.toggle_terminal();
+        assert!(a.prompts().catch_up().rect().h > 0.0);
+        assert!(a.frame().typed.is_some());
     }
 
     #[test]

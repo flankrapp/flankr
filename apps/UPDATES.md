@@ -364,3 +364,9 @@ These changes came before the app had version numbers.
 **Fixed**
 - A tap on a Claude Code session's input line in terminal view raises the keyboard again, also in a session with a name. The whole box around the prompt takes the tap, so it is easier to hit.
 - The keyboard no longer goes down again just after it came up in the terminal; it is asked for once more.
+
+## 0.7.19 — 2026-11-03
+
+**Changed**
+- In terminal view the agent's own screen is where you answer it. When Claude asks a question, a one-line notice above the terminal says so ("Claude is asking — answer in the terminal") in place of the question card; it goes once the question is answered.
+- Over the terminal, only a Finished card's line and an approval flankr needs from you still show. Something broke, *While you spoke* and the message you just sent no longer show over the terminal; the terminal shows the message itself. Switch to the list view to see them.
