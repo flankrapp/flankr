@@ -1893,3 +1893,22 @@ reply to that card", which was a dictated message:
    with neither action, as on the bottom bar's buttons.
 4. **The app's version** is 0.7.9, a patch, on the owner's instruction to
    keep the same version series. flankr-companion does not change.
+
+## Amendment — 2026-11-03 14:22 EST: a drag from a question card's record scrolls the conversation (living section L3)
+
+On the owner's explicit instruction (Rule 1.5), 2026-11-03: "Yes, hand a
+drag that starts on the record button back to scrolling". This replaces
+item 3 of the 2026-11-03 14:09 EST amendment ("a drag that begins on it no
+longer scrolls the flow; it ends the press with neither action"); its
+items 1, 2 and 4 stand.
+
+1. **A drag past the slop:** a press on a question card's record that
+   moves more than the shared `SLOP` (10 pt) before its 500 ms hold fires
+   ends the press, with no tap and no hold, and the touch goes to the
+   conversation's scroll, already moving: from where the finger is when
+   it crosses the slop, the conversation scrolls by the drag's distance
+   after it, as a drag started on the conversation does, with no jump;
+   its release flings as such a drag's does.
+2. **A hold that fired** keeps the touch to its release, as now.
+3. **The app's version** is 0.7.10, a patch, in the same series.
+flankr-companion does not change.
