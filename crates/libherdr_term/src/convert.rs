@@ -160,6 +160,8 @@ impl From<PaneView<'_>> for Grid {
                 .map(|cells| row_from_cells(cells))
                 .collect(),
             cursor,
+            // The daemon finds the input bar (plan 20261103_01, decision 3).
+            input_rows: None,
         }
     }
 }
