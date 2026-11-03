@@ -4426,3 +4426,23 @@ keyboard kept; the terminal asks for one line, no action, no
 autocorrect); the keyboard's half needs libmobile's text input options
 plan and libmorph passing them on, and the app moving onto those
 releases.
+
+## 2026-11-03 15:49 EST — Two keys rows with Enter, ⛶ hiding flankr's UI, image paste in any terminal; app 0.7.15, daemon 0.7.8
+
+Plan: the terminal taps and shell panes plan (20261103_01), by its
+2026-11-03 15:38 EST amendment. App 0.7.15 and daemon 0.7.8, patches in
+their 0.7 series. flankr-companion does not change: its
+`TerminalPasteText` and `TerminalPasteImages` were already there.
+
+Two readings, within the amendment:
+
+1. ⛶ hides the UI only while the terminal shows with its keys rows; over
+   the transcript, or on a pane that takes no typing, the choice is kept
+   but nothing is hidden, since there would be no ⛶ to show it again. The
+   title bar's icons and other sessions' cards go with the header.
+2. The + opens a menu with Paste text (the clipboard into
+   `terminal.paste`). The app has no image chooser yet (libmorph has no
+   media request), so the daemon's half of item 3 (images into a pane in
+   terminal view that takes typing, without an `[[agents]]` entry; the
+   path typed is absolute and unquoted) waits for one; Attach image…
+   shows in that menu once the app offers images.
