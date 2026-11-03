@@ -81,6 +81,25 @@ pub struct LineIndex {
     /// The unfinished line's last bytes, so a needle split between two
     /// reads is found.
     line_tail: Vec<u8>,
+    /// The files of a continued session, oldest first, the last the one
+    /// being scanned (the harness protocol plan, living section L1, the
+    /// 2026-11-03 15:47 EST amendment, item 5): their lines are numbered
+    /// on, one file after another. Empty for a session in one file.
+    parts: Vec<Part>,
+}
+
+/// One file of a continued session, in its [`LineIndex`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Part {
+    pub path: PathBuf,
+    /// Its first line, as the index numbers them.
+    pub first: u32,
+    /// The offset just after its last whole line; the index's `end` for
+    /// the last part.
+    pub end: u64,
+    /// Its lines up to this one, as the index numbers them, copy the file
+    /// before it and are not read (item 4); `first - 1` for none.
+    pub copied_to: u32,
 }
 
 impl LineIndex {
@@ -113,8 +132,77 @@ impl LineIndex {
     pub fn span(&self, line: u32) -> Option<(u64, u64)> {
         let i = (line as usize).checked_sub(1)?;
         let start = *self.starts.get(i)?;
-        let next = self.starts.get(i + 1).copied().unwrap_or(self.end);
+        let next = match self.part_at(line) {
+            Some(k) if k + 1 < self.parts.len() && line + 1 >= self.parts[k + 1].first => {
+                self.parts[k].end
+            }
+            _ => self.starts.get(i + 1).copied().unwrap_or(self.end),
+        };
         Some((start, next.saturating_sub(1)))
+    }
+
+    /// The place in `parts` of the file that holds `line`.
+    fn part_at(&self, line: u32) -> Option<usize> {
+        self.parts.iter().rposition(|p| p.first <= line)
+    }
+
+    /// The file that holds `line`: `path` for a session in one file.
+    pub fn path_of<'a>(&'a self, line: u32, path: &'a Path) -> &'a Path {
+        self.part_at(line)
+            .map_or(path, |k| self.parts[k].path.as_path())
+    }
+
+    /// The file being scanned, the newest: `path` for a session in one
+    /// file.
+    pub fn current<'a>(&'a self, path: &'a Path) -> &'a Path {
+        self.parts.last().map_or(path, |p| p.path.as_path())
+    }
+
+    /// Whether `line` copies the file before its own and is not read.
+    pub fn is_copy(&self, line: u32) -> bool {
+        self.part_at(line)
+            .is_some_and(|k| line <= self.parts[k].copied_to)
+    }
+
+    /// `line` as its own file numbers it, with that file: `path` and
+    /// `line` for a session in one file.
+    pub fn local<'a>(&'a self, line: u32, path: &'a Path) -> (&'a Path, u32) {
+        match self.part_at(line) {
+            Some(k) => (self.parts[k].path.as_path(), line + 1 - self.parts[k].first),
+            None => (path, line),
+        }
+    }
+
+    /// The files of a continued session before the one being scanned,
+    /// with the lengths they were indexed at.
+    pub fn earlier(&self) -> &[Part] {
+        self.parts.split_last().map_or(&[], |(_, rest)| rest)
+    }
+
+    /// Go on numbering in `next`, the file the one at `path` (the index's
+    /// so far) continues in, its first `copied` lines copies; scanned
+    /// from its start by [`LineIndex::extend`] from now on.
+    pub fn continue_in(&mut self, path: &Path, next: PathBuf, copied: u32) {
+        match self.parts.last_mut() {
+            Some(last) => last.end = self.end,
+            None => self.parts.push(Part {
+                path: path.to_path_buf(),
+                first: 1,
+                end: self.end,
+                copied_to: 0,
+            }),
+        }
+        let first = self.lines() + 1;
+        self.parts.push(Part {
+            path: next,
+            first,
+            end: 0,
+            copied_to: (first - 1).saturating_add(copied),
+        });
+        self.end = 0;
+        self.scanned = 0;
+        self.line_flag = false;
+        self.line_tail.clear();
     }
 
     /// Scan `file` from where the index stops, up to `len` and at most
@@ -209,11 +297,21 @@ pub fn read_lines(
     if from > to {
         return Ok(out);
     }
-    let mut file = File::open(path)?;
+    let mut open: Option<(&Path, File)> = None;
     let mut buf = Vec::new();
     for line in from..=to {
         let Some((start, end)) = index.span(line) else {
             break;
+        };
+        if index.is_copy(line) {
+            continue;
+        }
+        let at = index.path_of(line, path);
+        if open.as_ref().is_none_or(|(p, _)| *p != at) {
+            open = Some((at, File::open(at)?));
+        }
+        let Some((_, file)) = open.as_mut() else {
+            continue;
         };
         let len = end.saturating_sub(start);
         if len == 0 || len > TAIL_READ_MAX {
@@ -857,17 +955,20 @@ impl Tailer {
         journal: &Journal,
     ) -> std::io::Result<Tailer> {
         let session = session_key(located);
-        let file = file_hash(&located.path);
+        // A continued session is tailed from its first file on (the
+        // 15:47 EST amendment, item 5).
+        let root = located.root();
+        let file = file_hash(root);
         let state = if agent == "agy" {
-            Self::fresh_state_agy(&sessions, &located.path, file, &linker)?
+            Self::fresh_state_agy(&sessions, root, file, &linker)?
         } else {
-            Self::fresh_state_line(&sessions, agent, &located.path, file, &linker)?
+            Self::fresh_state_line(&sessions, agent, root, file, &linker)?
         };
         let mut state = state;
         state.approvals = journal.read(&session);
         let (tx, _) = broadcast::channel(64);
         Ok(Tailer {
-            path: located.path.clone(),
+            path: root.to_path_buf(),
             file,
             session,
             agent: agent.to_string(),
@@ -904,7 +1005,13 @@ impl Tailer {
         file: u32,
         linker: &Linker,
     ) -> std::io::Result<TailState> {
-        let (index, flagged) = LineIndex::scan(path)?;
+        let (mut index, mut flagged) = LineIndex::scan(path)?;
+        // And on through the files it continues in (the 15:47 EST
+        // amendment, item 2).
+        while let Some(next) = Self::next_part(sessions, agent, path, &index) {
+            let (_, more) = Self::continue_index(&mut index, path, next, u64::MAX)?;
+            flagged.extend(more);
+        }
         // A subagent's transcript has its own reader (the subagents plan).
         let reader = sessions
             .line_reader_at(agent, path)
@@ -988,6 +1095,7 @@ impl Tailer {
             path: path.to_path_buf(),
             session_id: None,
             matched: Matched::Id,
+            earlier: Vec::new(),
         }
         .modified();
         Ok(TailState {
@@ -1011,6 +1119,39 @@ impl Tailer {
             suggestions_seen: 0,
             primed: false,
         })
+    }
+
+    /// The file the newest one of `index` continues in, if it does and
+    /// the chain has room for it.
+    fn next_part(
+        sessions: &Sessions,
+        agent: &str,
+        path: &Path,
+        index: &LineIndex,
+    ) -> Option<PathBuf> {
+        if index.earlier().len() + 1 >= super::claude::CHAIN_MAX {
+            return None;
+        }
+        let current = index.current(path);
+        let next = sessions.successor(agent, current)?;
+        let known = next == path || index.earlier().iter().any(|p| p.path == next);
+        (!known && next != current).then_some(next)
+    }
+
+    /// Number on in `next` from the newest file of `index` (of the session
+    /// first at `path`), its copies left unread, and scan at most `max`
+    /// bytes of it.
+    fn continue_index(
+        index: &mut LineIndex,
+        path: &Path,
+        next: PathBuf,
+        max: u64,
+    ) -> std::io::Result<(NewLines, Vec<u32>)> {
+        let copied = super::claude::copied_lines(index.current(path), &next);
+        let mut file = File::open(&next)?;
+        let len = file.metadata()?.len();
+        index.continue_in(path, next, copied);
+        index.extend(&mut file, len, max)
     }
 
     /// The reader of this tailer's agent.
@@ -1261,7 +1402,12 @@ impl Tailer {
         if st.gone {
             return None;
         }
-        let meta = match std::fs::metadata(&self.path) {
+        // The newest file of a continued session.
+        let current = match &st.backend {
+            TailBackend::Line(index) => index.current(&self.path).to_path_buf(),
+            TailBackend::Agy { .. } => self.path.clone(),
+        };
+        let meta = match std::fs::metadata(&current) {
             Ok(m) => m,
             Err(_) => {
                 st.gone = true;
@@ -1276,7 +1422,13 @@ impl Tailer {
         if is_line {
             let len = meta.len();
             let need_fresh = if let TailBackend::Line(index) = &st.backend {
+                // An earlier file that changed is read again from the
+                // start (the 15:47 EST amendment, item 5).
                 len < index.end()
+                    || index
+                        .earlier()
+                        .iter()
+                        .any(|p| std::fs::metadata(&p.path).map_or(true, |m| m.len() != p.end))
             } else {
                 false
             };
@@ -1306,12 +1458,19 @@ impl Tailer {
                 let TailBackend::Line(ref mut index) = st.backend else {
                     unreachable!()
                 };
-                let extended = if len > index.scanned() {
-                    File::open(&self.path)
-                        .and_then(|mut f| index.extend(&mut f, len, READ_PER_CHECK))
+                let mut extended = if len > index.scanned() {
+                    File::open(&current).and_then(|mut f| index.extend(&mut f, len, READ_PER_CHECK))
                 } else {
                     Ok((None, Vec::new()))
                 };
+                // The newest file did not grow: has it been continued in
+                // another (the 15:47 EST amendment, item 3)?
+                if matches!(extended, Ok((None, _))) && len <= index.scanned() {
+                    let next = Self::next_part(&self.sessions, &self.agent, &self.path, index);
+                    if let Some(next) = next {
+                        extended = Self::continue_index(index, &self.path, next, READ_PER_CHECK);
+                    }
+                }
                 match extended {
                     Ok((Some((first, last)), _)) => {
                         if last > SERIAL_LINE_MAX {
@@ -1360,6 +1519,7 @@ impl Tailer {
                 path: self.path.clone(),
                 session_id: None,
                 matched: Matched::Id,
+                earlier: Vec::new(),
             }
             .modified();
             if modified != last_modified {
@@ -1436,9 +1596,10 @@ impl Tailer {
             }
         }
         let quiet = Located {
-            path: self.path.clone(),
+            path: current,
             session_id: None,
             matched: Matched::Id,
+            earlier: Vec::new(),
         }
         .quiet();
         if quiet != st.live.quiet {
@@ -1501,8 +1662,13 @@ impl Tailer {
             .rev()
             .find_map(|c| Some((c, CardSummaries::key(c)?)))
         {
-            self.summaries
-                .note_latest(&self.path, card.serial.line, key);
+            // Under the file and line `agents.list` reads it at: the
+            // newest file's own, for a continued session.
+            let (path, line) = match &st.backend {
+                TailBackend::Line(index) => index.local(card.serial.line, &self.path),
+                TailBackend::Agy { .. } => (self.path.as_path(), card.serial.line),
+            };
+            self.summaries.note_latest(path, line, key);
         }
         let mut out: BTreeMap<u64, Section> = changed
             .into_iter()
@@ -1777,7 +1943,7 @@ impl SessionHub {
             // in between.
             {
                 let tailers = self.tailers.lock().unwrap();
-                if let Some(t) = tailers.get(&located.path) {
+                if let Some(t) = tailers.get(located.root()) {
                     let (rx, snapshot) = t.subscribe();
                     return Ok((Arc::clone(t), rx, snapshot));
                 }
@@ -1800,11 +1966,11 @@ impl SessionHub {
             .await
             .map_err(std::io::Error::other)??;
             let mut tailers = self.tailers.lock().unwrap();
-            if tailers.contains_key(&located.path) {
+            if tailers.contains_key(located.root()) {
                 continue; // another subscriber started one meanwhile
             }
             let tailer = Arc::new(opened);
-            tailers.insert(located.path.clone(), Arc::clone(&tailer));
+            tailers.insert(located.root().to_path_buf(), Arc::clone(&tailer));
             let (rx, snapshot) = tailer.subscribe();
             tokio::spawn(Arc::clone(&tailer).run(Arc::downgrade(self)));
             return Ok((tailer, rx, snapshot));

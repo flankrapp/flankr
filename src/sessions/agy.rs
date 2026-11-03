@@ -39,6 +39,7 @@ impl AgyReader {
                 path,
                 session_id: Some(id.to_string()),
                 matched: Matched::Id,
+                earlier: Vec::new(),
             });
         }
         let cwd = cwd?;
@@ -64,6 +65,7 @@ impl AgyReader {
                     path,
                     session_id,
                     matched: Matched::Cwd,
+                    earlier: Vec::new(),
                 });
             }
         }
@@ -574,6 +576,7 @@ mod tests {
             path: path.clone(),
             session_id: Some("asking".into()),
             matched: Matched::Id,
+            earlier: Vec::new(),
         };
         let read = reader.read_back(&located, &|_| false).unwrap();
         let items = read.items;
@@ -624,6 +627,7 @@ mod tests {
             path: path.clone(),
             session_id: Some("stopped".into()),
             matched: Matched::Id,
+            earlier: Vec::new(),
         };
         let read = reader.read_back(&located, &|_| false).unwrap();
         let items = read.items;
@@ -654,6 +658,7 @@ mod tests {
             path: db_path,
             session_id: Some("locked".into()),
             matched: Matched::Id,
+            earlier: Vec::new(),
         };
 
         let start = std::time::Instant::now();
@@ -734,6 +739,7 @@ mod tests {
             path: path.clone(),
             session_id: path.file_stem().map(|s| s.to_string_lossy().into_owned()),
             matched: Matched::Id,
+            earlier: Vec::new(),
         };
         let read = reader.read_back(&located, &|_| false).unwrap();
         assert!(!read.items.is_empty());

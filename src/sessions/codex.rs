@@ -112,6 +112,7 @@ impl SessionReader for Codex {
                     path,
                     session_id: Some(id.to_string()),
                     matched: Matched::Id,
+                    earlier: Vec::new(),
                 });
         }
         let want = cwd?.to_string_lossy().into_owned();
@@ -129,6 +130,7 @@ impl SessionReader for Codex {
                 path,
                 session_id,
                 matched: Matched::Cwd,
+                earlier: Vec::new(),
             })
         })
     }

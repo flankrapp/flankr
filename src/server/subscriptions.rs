@@ -825,7 +825,10 @@ impl Task {
         // A different file, as after `/clear`, or one found at last.
         let now = found.map(|(located, _)| located);
         let moved = match (&self.located, &now) {
-            (Some(a), Some(b)) => a.path != b.path,
+            // A continued session keeps its first file, and its tailer
+            // follows it on (the harness protocol plan, the 2026-11-03
+            // 15:47 EST amendment, item 5).
+            (Some(a), Some(b)) => a.root() != b.root(),
             (None, Some(_)) => {
                 self.permitted && self.reason.as_deref() != Some(delivery_reasons::TOO_LONG)
             }
@@ -990,15 +993,25 @@ async fn journal_asked(
     let named = names.get(&view.pane_id)?;
     let (_, located) = daemon.sessions.locate(&named.agent)?;
     let session = hub::session_key(&located);
-    let tailer = daemon.hub.tailer(&located.path);
+    let tailer = daemon.hub.tailer(located.root());
     let line = match &tailer {
         Some(t) => t.newest_line(),
         None => {
-            let path = located.path.clone();
-            tokio::task::spawn_blocking(move || LineIndex::scan(&path).map(|(i, _)| i.lines()))
-                .await
-                .ok()?
-                .ok()?
+            // Numbered on through a continued session's files.
+            let paths: Vec<_> = located
+                .earlier
+                .iter()
+                .chain(std::iter::once(&located.path))
+                .cloned()
+                .collect();
+            tokio::task::spawn_blocking(move || {
+                paths.iter().try_fold(0u32, |n, p| {
+                    LineIndex::scan(p).map(|(i, _)| n.saturating_add(i.lines()))
+                })
+            })
+            .await
+            .ok()?
+            .ok()?
         }
     };
     let spoken = named.spoken.clone();
@@ -1015,7 +1028,7 @@ async fn journal_asked(
             if let Some(t) = tailer {
                 t.approval(approval, true);
             }
-            Some((session, located.path))
+            Some((session, located.root().to_path_buf()))
         }
         Ok(None) => None,
         Err(e) => {

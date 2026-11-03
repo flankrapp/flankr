@@ -267,3 +267,8 @@ These changes came before the program had version numbers.
 
 **Changed**
 - A pane open in the phone's terminal view that takes typing now takes images from the phone too, a plain shell or an agent with no `[[agents]]` entry included, so the keys row's + can paste an image there. The terminal gets the image's absolute path in the daemon's temporary folder, typed as it is (it has no spaces). Other panes still need an `[[agents]]` entry for images, and files and `git` output still need one.
+
+## 0.7.9 — 2026-11-03
+
+**Fixed**
+- A Claude Code session continued after its context ran out keeps updating in the phone's list view. Claude goes on in a new transcript while herdr still names the old one; the daemon now follows the old transcript's `continued-in` record to the new one (and on, if it is continued again), the earlier conversation staying above the new. The log says `[sessions] <pane>: Claude continued <old id> as <new id>; following it` once for each pane at each switch.

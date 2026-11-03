@@ -17,8 +17,13 @@
 //! `type` is bookkeeping, and [`is_bookkeeping`] knows most of it from a
 //! line's first bytes.
 
-use std::io::Read as _;
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::{BufRead as _, Read as _, Seek as _, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -34,15 +39,95 @@ use super::{
 /// How much of a file's start is searched for its `cwd`.
 const HEAD_MAX: usize = 64 * 1024;
 
+/// The longest `continued-in` record read (the harness protocol plan,
+/// living section L1, the 2026-11-03 15:47 EST amendment, item 1).
+const LINK_MAX: u64 = 4 * 1024;
+/// The most files a continued session is followed through (item 2).
+pub const CHAIN_MAX: usize = 16;
+/// How soon a file whose length changed is checked for a link again
+/// (item 3).
+pub const PROBE_GAP: Duration = Duration::from_secs(3);
+/// The most files whose link is remembered.
+const PROBES_MAX: usize = 1024;
+/// How much of an old transcript's end is searched for its last `uuid`.
+const LAST_UUID_MAX: u64 = 1024 * 1024;
+/// How much of a new transcript's start is searched for the end of its
+/// copies (item 4).
+const COPIES_MAX: u64 = 64 * 1024 * 1024;
+
+/// A file's link as last read: at its length then, and when.
+struct Probe {
+    len: u64,
+    at: Instant,
+    next: Option<PathBuf>,
+}
+
 /// The Claude Code reader, over one `projects` directory.
 pub struct ClaudeCode {
     projects: PathBuf,
+    /// Each file's `continued-in` link as last read.
+    probes: Mutex<HashMap<PathBuf, Probe>>,
+    /// [`PROBE_GAP`] in milliseconds; less in tests.
+    probe_gap_ms: AtomicU64,
 }
 
 impl ClaudeCode {
     /// A reader of the sessions under `projects` (`~/.claude/projects`).
     pub fn new(projects: PathBuf) -> Self {
-        Self { projects }
+        Self {
+            projects,
+            probes: Mutex::new(HashMap::new()),
+            probe_gap_ms: AtomicU64::new(PROBE_GAP.as_millis() as u64),
+        }
+    }
+
+    /// Check a changed file for its link at most every `gap`.
+    pub fn set_probe_gap(&self, gap: Duration) {
+        self.probe_gap_ms
+            .store(gap.as_millis() as u64, Ordering::Relaxed);
+    }
+
+    /// The transcript the file at `path` continues in (item 1), read again
+    /// only once its length has changed and the probe gap has passed.
+    pub fn successor(&self, path: &Path) -> Option<PathBuf> {
+        let len = std::fs::metadata(path).ok()?.len();
+        let gap = Duration::from_millis(self.probe_gap_ms.load(Ordering::Relaxed));
+        if let Some(p) = self.probes.lock().unwrap().get(path)
+            && (p.len == len || p.at.elapsed() < gap)
+        {
+            return p.next.clone();
+        }
+        let next = continued_in(path);
+        let mut probes = self.probes.lock().unwrap();
+        if probes.len() >= PROBES_MAX {
+            probes.clear();
+        }
+        probes.insert(
+            path.to_path_buf(),
+            Probe {
+                len,
+                at: Instant::now(),
+                next: next.clone(),
+            },
+        );
+        next
+    }
+
+    /// The files the one at `path` continues in, in order, to the newest
+    /// (item 2): empty when it is not continued.
+    pub fn successors(&self, path: &Path) -> Vec<PathBuf> {
+        let mut chain = vec![path.to_path_buf()];
+        while chain.len() < CHAIN_MAX {
+            let Some(next) = chain.last().and_then(|p| self.successor(p)) else {
+                break;
+            };
+            if chain.contains(&next) {
+                break;
+            }
+            chain.push(next);
+        }
+        chain.remove(0);
+        chain
     }
 
     /// The project directory for `cwd`: every character other than an
@@ -109,6 +194,81 @@ impl ClaudeCode {
         found.sort_by(|a, b| b.cmp(a));
         found.into_iter().next().map(|(_, p)| p)
     }
+}
+
+/// The transcript the file at `path` continues in: its last whole line
+/// is a `continued-in` record of at most [`LINK_MAX`] bytes naming
+/// `<new id>.jsonl`, which exists beside it (the 15:47 EST amendment,
+/// item 1).
+pub fn continued_in(path: &Path) -> Option<PathBuf> {
+    let mut file = File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    let from = len.saturating_sub(LINK_MAX + 1);
+    file.seek(SeekFrom::Start(from)).ok()?;
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf).ok()?;
+    let body = buf.strip_suffix(b"\n")?;
+    let start = match body.iter().rposition(|&b| b == b'\n') {
+        Some(i) => i + 1,
+        None if from == 0 => 0,
+        None => return None,
+    };
+    let record: Value = serde_json::from_slice(body[start..].trim_ascii()).ok()?;
+    if record.get("type")?.as_str()? != "continued-in" {
+        return None;
+    }
+    let id = record.get("continuedInSessionId")?.as_str()?;
+    if !safe_id(id) {
+        return None;
+    }
+    let next = path.with_file_name(format!("{id}.jsonl"));
+    (next != path && next.is_file()).then_some(next)
+}
+
+/// How many of the first lines of `next`, the transcript `prev` continues
+/// in, copy `prev`: those up to and including the one with the `uuid` of
+/// `prev`'s last record that has one; 0 when it is not found (the
+/// 15:47 EST amendment, item 4).
+pub fn copied_lines(prev: &Path, next: &Path) -> u32 {
+    let Some(uuid) = last_uuid(prev) else {
+        return 0;
+    };
+    let needle = format!("\"uuid\":\"{uuid}\"");
+    let Ok(file) = File::open(next) else {
+        return 0;
+    };
+    let mut reader = std::io::BufReader::new(file.take(COPIES_MAX));
+    let mut line = Vec::new();
+    let mut n: u32 = 0;
+    loop {
+        line.clear();
+        match reader.read_until(b'\n', &mut line) {
+            Ok(0) | Err(_) => return 0,
+            Ok(_) => {}
+        }
+        if line.last() != Some(&b'\n') {
+            return 0; // an unfinished line
+        }
+        n += 1;
+        if line.windows(needle.len()).any(|w| w == needle.as_bytes()) {
+            return n;
+        }
+    }
+}
+
+/// The `uuid` of the last record near the end of `path` that has one.
+fn last_uuid(path: &Path) -> Option<String> {
+    const KEY: &[u8] = b"\"uuid\":\"";
+    let mut file = File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    file.seek(SeekFrom::Start(len.saturating_sub(LAST_UUID_MAX)))
+        .ok()?;
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf).ok()?;
+    let at = buf.windows(KEY.len()).rposition(|w| w == KEY)? + KEY.len();
+    let end = buf[at..].iter().position(|&b| b == b'"')?;
+    let uuid = std::str::from_utf8(&buf[at..at + end]).ok()?;
+    safe_id(uuid).then(|| uuid.to_string())
 }
 
 /// The `cwd` of the first line near the start of the file that has one.
@@ -301,10 +461,21 @@ impl SessionReader for ClaudeCode {
         if let Some(id) = session_id {
             // herdr named the session: that file or nothing, never another
             // agent's newest file.
-            return self.by_id(cwd, id).map(|path| Located {
-                path,
-                session_id: Some(id.to_string()),
-                matched: Matched::Id,
+            // A continued session is read from its newest file (the
+            // 15:47 EST amendment, item 2).
+            return self.by_id(cwd, id).map(|first| {
+                let mut later = self.successors(&first);
+                let path = later.pop();
+                let earlier = match path {
+                    Some(_) => std::iter::once(first.clone()).chain(later).collect(),
+                    None => Vec::new(),
+                };
+                Located {
+                    path: path.unwrap_or(first),
+                    session_id: Some(id.to_string()),
+                    matched: Matched::Id,
+                    earlier,
+                }
             });
         }
         let path = self.by_cwd(cwd?)?;
@@ -313,6 +484,7 @@ impl SessionReader for ClaudeCode {
             path,
             session_id,
             matched: Matched::Cwd,
+            earlier: Vec::new(),
         })
     }
 
@@ -466,6 +638,7 @@ pub(crate) fn children_at(at: &Located, now: SystemTime) -> Vec<Child> {
                 path,
                 session_id: Some(id.clone()),
                 matched: Matched::Id,
+                earlier: Vec::new(),
             },
             id,
         });
@@ -1271,6 +1444,7 @@ mod tests {
             path: session.clone(),
             session_id: None,
             matched: Matched::Id,
+            earlier: Vec::new(),
         };
         let r = reader();
         // No subagents directory: none running, no time of theirs.
@@ -1460,6 +1634,7 @@ mod tests {
             ),
             session_id: None,
             matched: Matched::Id,
+            earlier: Vec::new(),
         };
         let now = SystemTime::now();
         assert_eq!(codex.subagents(&at, now), None);

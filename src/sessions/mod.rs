@@ -268,9 +268,20 @@ pub struct Located {
     /// The session's id, where it is known.
     pub session_id: Option<String>,
     pub matched: Matched,
+    /// The files `path` continues, oldest first: a Claude Code session
+    /// continued in a new transcript (the harness protocol plan, living
+    /// section L1, the 2026-11-03 15:47 EST amendment). Empty for a
+    /// session in one file.
+    pub earlier: Vec<PathBuf>,
 }
 
 impl Located {
+    /// The session's first file: the one herdr named, whose name gives
+    /// the serials their prefix; `path` for a session in one file.
+    pub fn root(&self) -> &Path {
+        self.earlier.first().unwrap_or(&self.path)
+    }
+
     /// Whether the session file has been unwritten for
     /// [`pending::TURN_QUIET`], so a final reply ended the turn whatever
     /// herdr's status.
@@ -377,6 +388,7 @@ pub trait SessionReader: Send + Sync {
             path: path.to_path_buf(),
             session_id: None,
             matched: Matched::Id,
+            earlier: Vec::new(),
         };
         let mut items = self.read_back(&at, &|items| items.len() >= n)?.items;
         let skip = items.len().saturating_sub(n);
@@ -581,11 +593,17 @@ pub struct Sessions {
     /// modification time and length and whether it was finished then: a
     /// list reads only the transcripts that changed.
     child_turns: Mutex<HashMap<PathBuf, ChildTurn>>,
+    /// The newest file each pane was last found continued to, so each
+    /// switch is logged once.
+    followed: Mutex<HashMap<String, PathBuf>>,
 }
 
 /// A subagent's turn as read from its transcript at a modification time
 /// and length, finished or not.
 type ChildTurn = (Option<SystemTime>, u64, bool, turn::Turn);
+
+/// The most panes [`Sessions`] remembers a followed transcript for.
+const FOLLOWED_MAX: usize = 1024;
 
 /// The most subagents' turns [`Sessions`] keeps.
 const CHILD_TURNS_MAX: usize = 512;
@@ -637,6 +655,7 @@ impl Sessions {
                 .join("sessions"),
             suggestions: Arc::new(SuggestionStore::shipped()),
             child_turns: Mutex::new(HashMap::new()),
+            followed: Mutex::new(HashMap::new()),
         }
     }
 
@@ -772,7 +791,64 @@ impl Sessions {
         let id = pane.session.as_ref().and_then(|s| s.id());
         let cwd = pane.cwd.as_deref().map(Path::new);
         let located = reader.locate(cwd, id)?;
+        for line in self.note_followed(&pane.pane_id, &located) {
+            log::info!("{line}");
+        }
         Some((reader, located))
+    }
+
+    /// The log lines for the switches to a continuing transcript not yet
+    /// logged for `pane`, each once (the 2026-11-03 15:47 EST amendment,
+    /// item 7).
+    fn note_followed(&self, pane: &str, located: &Located) -> Vec<String> {
+        let mut followed = self.followed.lock().unwrap();
+        if located.earlier.is_empty() {
+            followed.remove(pane);
+            return Vec::new();
+        }
+        if followed.get(pane) == Some(&located.path) {
+            return Vec::new();
+        }
+        let chain: Vec<&Path> = located
+            .earlier
+            .iter()
+            .map(PathBuf::as_path)
+            .chain(std::iter::once(located.path.as_path()))
+            .collect();
+        // The hops not yet logged: those after the newest file logged.
+        let from = followed
+            .get(pane)
+            .and_then(|seen| chain.iter().position(|p| *p == seen.as_path()))
+            .unwrap_or(0);
+        let stem = |p: &Path| {
+            p.file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        };
+        let lines = chain[from..]
+            .windows(2)
+            .map(|hop| {
+                format!(
+                    "[sessions] {pane}: Claude continued {} as {}; following it",
+                    stem(hop[0]),
+                    stem(hop[1])
+                )
+            })
+            .collect();
+        if followed.len() >= FOLLOWED_MAX {
+            followed.clear();
+        }
+        followed.insert(pane.to_string(), located.path.clone());
+        lines
+    }
+
+    /// The transcript the file at `path` of an `agent` continues in, if
+    /// any; only Claude Code's continue (the 15:47 EST amendment).
+    pub fn successor(&self, agent: &str, path: &Path) -> Option<PathBuf> {
+        if agent != "claude" || claude::is_child_path(path) {
+            return None;
+        }
+        self.claude.successor(path)
     }
 
     /// Read the session of the agent in `pane` from the end until `enough`

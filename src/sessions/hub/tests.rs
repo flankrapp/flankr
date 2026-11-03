@@ -81,6 +81,7 @@ fn located(path: &Path) -> Located {
         path: path.to_path_buf(),
         session_id: path.file_stem().map(|s| s.to_string_lossy().into_owned()),
         matched: Matched::Id,
+        earlier: Vec::new(),
     }
 }
 
@@ -1122,4 +1123,301 @@ fn ranges_take_the_four_shapes_and_say_what_was_cut_and_removed() {
     assert_eq!((back.index, back.rev), (5, 1));
     assert_eq!(o.removed(), [4]);
     assert!(Outline::default().range(None, None, 5).indexes.is_empty());
+}
+
+// A Claude Code session continued in a new transcript (the harness
+// protocol plan, living section L1, the 2026-11-03 15:47 EST amendment).
+// The fixtures are hand-made: records shaped as Claude Code writes them.
+
+const ID_A: &str = "00000000-0000-4000-8000-0000000c0aa1";
+const ID_B: &str = "00000000-0000-4000-8000-0000000c0bb2";
+const ID_C: &str = "00000000-0000-4000-8000-0000000c0cc3";
+const ID_D: &str = "00000000-0000-4000-8000-0000000c0dd4";
+
+/// `line` with a `uuid`, as Claude Code's conversation records have.
+fn with_uuid(line: String, uuid: &str) -> String {
+    let mut v: serde_json::Value = serde_json::from_str(&line).unwrap();
+    v["uuid"] = serde_json::Value::from(uuid);
+    v.to_string()
+}
+
+fn continued_in(old: &str, new: &str) -> String {
+    serde_json::json!({"type": "continued-in", "timestamp": ts(99),
+        "sessionId": old, "continuedInSessionId": new})
+    .to_string()
+}
+
+fn cost_state(id: &str) -> String {
+    serde_json::json!({"type": "cost-state", "sessionId": id, "totalCostUSD": 1.0}).to_string()
+}
+
+fn title(id: &str) -> String {
+    serde_json::json!({"type": "ai-title", "aiTitle": "t", "sessionId": id}).to_string()
+}
+
+/// A home with the project folder `/work/example` and Claude Code's
+/// reader checking a changed file at once.
+fn continued_home() -> (tempfile::TempDir, PathBuf, Arc<Sessions>) {
+    let home = tempfile::tempdir().unwrap();
+    let dir = home.path().join(".claude/projects/-work-example");
+    std::fs::create_dir_all(&dir).unwrap();
+    let sessions = Arc::new(Sessions::with_home(home.path()));
+    sessions.claude.set_probe_gap(Duration::ZERO);
+    (home, dir, sessions)
+}
+
+/// The old transcript's conversation, without its end.
+fn old_lines() -> Vec<String> {
+    vec![
+        with_uuid(user(1, "one"), "u-1"),
+        with_uuid(reply(2, "two"), "u-2"),
+    ]
+}
+
+/// The new transcript: bookkeeping, a copy of the old conversation, then
+/// its own, the copies ending at `last_old`'s uuid.
+fn new_lines(id: &str, own: &[(&str, &str)]) -> Vec<String> {
+    let mut lines = vec![
+        title(id),
+        with_uuid(user(1, "one"), "u-1"),
+        with_uuid(reply(2, "two"), "u-2"),
+    ];
+    for (i, (text, uuid)) in own.iter().enumerate() {
+        let n = 10 + i as u32;
+        let line = if i % 2 == 0 {
+            user(n, text)
+        } else {
+            reply(n, text)
+        };
+        lines.push(with_uuid(line, uuid));
+    }
+    lines
+}
+
+fn pane_on(pane_id: &str, id: &str) -> crate::core::agents::AgentRef {
+    crate::core::agents::AgentRef {
+        pane_id: pane_id.into(),
+        agent: "claude".into(),
+        project: Some("example".into()),
+        cwd: Some("/work/example".into()),
+        workspace_id: None,
+        tab_id: None,
+        tab_label: None,
+        tab_number: None,
+        status: AgentStatus::Working,
+        focused: false,
+        session: Some(libherdr::protocol::AgentSession {
+            source: "herdr:claude".into(),
+            agent: "claude".into(),
+            kind: "id".into(),
+            value: id.into(),
+        }),
+        workspace_label: None,
+        workspace_number: None,
+    }
+}
+
+fn texts(sections: &[Section]) -> Vec<String> {
+    sections
+        .iter()
+        .flat_map(|s| s.entries.iter().map(|e| e.summary.clone()))
+        .collect()
+}
+
+#[test]
+fn a_continued_session_is_read_from_its_successor() {
+    let (_home, dir, sessions) = continued_home();
+    let a = dir.join(format!("{ID_A}.jsonl"));
+    let b = dir.join(format!("{ID_B}.jsonl"));
+    let mut lines = old_lines();
+    lines.extend([cost_state(ID_A), continued_in(ID_A, ID_B)]);
+    write(&a, &lines);
+    write(&b, &new_lines(ID_B, &[("three", "u-3")]));
+    let (_, at) = sessions.locate(&pane_on("w1:p1", ID_A)).unwrap();
+    assert_eq!(at.path, b);
+    assert_eq!(at.earlier, vec![a.clone()]);
+    assert_eq!(at.root(), a.as_path());
+    // herdr's id stays the session's, and the journal's name.
+    assert_eq!(at.session_id.as_deref(), Some(ID_A));
+    assert_eq!(at.matched, Matched::Id);
+    assert_eq!(crate::sessions::claude::copied_lines(&a, &b), 3);
+}
+
+#[test]
+fn a_chain_of_two_continuations_is_followed_to_the_newest() {
+    let (_home, dir, sessions) = continued_home();
+    let a = dir.join(format!("{ID_A}.jsonl"));
+    let b = dir.join(format!("{ID_B}.jsonl"));
+    let c = dir.join(format!("{ID_C}.jsonl"));
+    let mut lines = old_lines();
+    lines.push(continued_in(ID_A, ID_B));
+    write(&a, &lines);
+    let mut lines = new_lines(ID_B, &[("three", "u-3"), ("four", "u-4")]);
+    lines.push(continued_in(ID_B, ID_C));
+    write(&b, &lines);
+    let mut lines = vec![title(ID_C), with_uuid(reply(11, "four"), "u-4")];
+    lines.push(with_uuid(user(20, "five"), "u-5"));
+    write(&c, &lines);
+    let (_, at) = sessions.locate(&pane_on("w1:p1", ID_A)).unwrap();
+    assert_eq!(at.path, c);
+    assert_eq!(at.earlier, vec![a.clone(), b.clone()]);
+    // Read through all three, each copy once.
+    let journal = Journal::new(sessions.state.clone());
+    let t = Tailer::open(
+        Arc::clone(&sessions),
+        "claude",
+        &at,
+        Linker::default(),
+        &journal,
+    )
+    .unwrap();
+    assert_eq!(t.path, a);
+    assert_eq!(t.file, file_hash(&a));
+    let got = all(&t);
+    assert_eq!(texts(&got), ["one", "two", "three", "four", "five"]);
+    assert!(got.iter().all(|s| s.serial.file == file_hash(&a)));
+    // A loop of links ends where it started.
+    let mut lines = vec![title(ID_C)];
+    lines.push(continued_in(ID_C, ID_A));
+    write(&c, &lines);
+    let (_, at) = sessions.locate(&pane_on("w1:p1", ID_A)).unwrap();
+    assert_eq!(at.path, c);
+    assert_eq!(at.earlier, vec![a, b]);
+}
+
+#[test]
+fn a_newer_unrelated_file_in_the_folder_is_not_followed() {
+    let (_home, dir, sessions) = continued_home();
+    let a = dir.join(format!("{ID_A}.jsonl"));
+    let d = dir.join(format!("{ID_D}.jsonl"));
+    write(&a, &old_lines());
+    // Newer, and even a continuation summary naming the old file: prose,
+    // not the link.
+    let summary = serde_json::json!({"type": "user", "isCompactSummary": true,
+        "message": {"role": "user", "content": format!(
+            "This session is being continued from a previous conversation. \
+             read the full transcript at: {}", a.display())}});
+    write(&d, &[title(ID_D), summary.to_string(), user(30, "other")]);
+    let (_, at) = sessions.locate(&pane_on("w1:p1", ID_A)).unwrap();
+    assert_eq!(at.path, a);
+    assert!(at.earlier.is_empty());
+    // A link to a file that does not exist is not followed either.
+    append_lines(&a, &[continued_in(ID_A, ID_C)]);
+    let (_, at) = sessions.locate(&pane_on("w1:p1", ID_A)).unwrap();
+    assert_eq!(at.path, a);
+    // Nor one that is not the last line.
+    write(&a, &[continued_in(ID_A, ID_D), user(40, "again")]);
+    let (_, at) = sessions.locate(&pane_on("w1:p1", ID_A)).unwrap();
+    assert_eq!(at.path, a);
+}
+
+#[test]
+fn two_panes_on_the_old_id_both_follow_the_file_and_share_its_tailer() {
+    let (_home, dir, sessions) = continued_home();
+    let a = dir.join(format!("{ID_A}.jsonl"));
+    let b = dir.join(format!("{ID_B}.jsonl"));
+    let mut lines = old_lines();
+    lines.push(continued_in(ID_A, ID_B));
+    write(&a, &lines);
+    write(&b, &new_lines(ID_B, &[("three", "u-3")]));
+    let (_, one) = sessions.locate(&pane_on("w2:pZ", ID_A)).unwrap();
+    let (_, two) = sessions.locate(&pane_on("wD:p1", ID_A)).unwrap();
+    assert_eq!((&one.path, &two.path), (&b, &b));
+    // One tailer's key, the first file, for both.
+    assert_eq!((one.root(), two.root()), (a.as_path(), a.as_path()));
+    // Each pane logs its own switch once.
+    let first = sessions.note_followed("w2:pZ", &one);
+    assert!(first.is_empty(), "logged by locate already: {first:?}");
+}
+
+#[test]
+fn a_switch_is_logged_once_per_pane() {
+    let (_home, dir, sessions) = continued_home();
+    let a = dir.join(format!("{ID_A}.jsonl"));
+    let b = dir.join(format!("{ID_B}.jsonl"));
+    let c = dir.join(format!("{ID_C}.jsonl"));
+    let at = Located {
+        path: b.clone(),
+        session_id: Some(ID_A.into()),
+        matched: Matched::Id,
+        earlier: vec![a.clone()],
+    };
+    let want = format!("[sessions] w2:pZ: Claude continued {ID_A} as {ID_B}; following it");
+    assert_eq!(sessions.note_followed("w2:pZ", &at), [want]);
+    assert!(sessions.note_followed("w2:pZ", &at).is_empty());
+    // Another pane on the same id logs its own.
+    assert_eq!(sessions.note_followed("wD:p1", &at).len(), 1);
+    // A further continuation logs only the new hop.
+    let on = Located {
+        path: c,
+        earlier: vec![a, b],
+        ..at
+    };
+    assert_eq!(
+        sessions.note_followed("w2:pZ", &on),
+        [format!(
+            "[sessions] w2:pZ: Claude continued {ID_B} as {ID_C}; following it"
+        )]
+    );
+    let _ = dir;
+}
+
+#[test]
+fn a_tailer_carries_on_into_the_successor_with_later_serials() {
+    let (_home, dir, sessions) = continued_home();
+    let a = dir.join(format!("{ID_A}.jsonl"));
+    let b = dir.join(format!("{ID_B}.jsonl"));
+    write(&a, &old_lines());
+    let journal = Journal::new(sessions.state.clone());
+    let t = Tailer::open(
+        Arc::clone(&sessions),
+        "claude",
+        &located(&a),
+        Linker::default(),
+        &journal,
+    )
+    .unwrap();
+    let before = all(&t);
+    assert_eq!(texts(&before), ["one", "two"]);
+    let newest_old = before.iter().map(|s| s.serial.to_u64()).max().unwrap();
+    // Claude continues: the new file is written, then the old one's link.
+    write(&b, &new_lines(ID_B, &[("three", "u-3")]));
+    append_lines(&a, &[cost_state(ID_A), continued_in(ID_A, ID_B)]);
+    let mut got = Vec::new();
+    for _ in 0..3 {
+        if let Some(batch) = t.check() {
+            assert!(!batch.truncated, "no reset at the switch");
+            got.extend(batch.sections);
+        }
+    }
+    let new: Vec<&Section> = got
+        .iter()
+        .filter(|s| s.entries.iter().any(|e| e.summary == "three"))
+        .collect();
+    assert_eq!(new.len(), 1, "{got:?}");
+    let three = new[0].serial;
+    assert_eq!(three.file, file_hash(&a));
+    // a's 4 lines, then b's 3 copies, then b's own line 4.
+    assert_eq!(three.line, 4 + 4);
+    assert!(three.to_u64() > newest_old);
+    assert_eq!(
+        three.partial_cmp(&before[1].serial),
+        Some(std::cmp::Ordering::Greater)
+    );
+    // The whole session reads as one, the copies not again.
+    assert_eq!(texts(&all(&t)), ["one", "two", "three"]);
+    // It goes on growing in the new file.
+    append_lines(&b, &[with_uuid(reply(12, "four"), "u-4")]);
+    let batch = t.check().unwrap();
+    assert!(batch.sections.iter().all(|s| s.serial.line > three.line));
+    assert_eq!(texts(&all(&t)), ["one", "two", "three", "four"]);
+    // A subscriber that held up to "three" catches up without a reset.
+    let snap = t.snapshot();
+    let caught = since(&t.source(&snap).unwrap(), three, 50).unwrap();
+    assert!(!caught.reset);
+    // The old file written again: read again from the start.
+    append_lines(&a, &[user(50, "again")]);
+    let batch = t.check().unwrap();
+    assert!(batch.truncated);
+    assert_eq!(texts(&all(&t)), ["one", "two", "again"]);
 }
