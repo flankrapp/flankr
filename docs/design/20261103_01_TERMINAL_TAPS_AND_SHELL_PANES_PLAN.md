@@ -232,3 +232,48 @@ Step 1 has begun: libflankr_term 0.1.2 carries the input bar's rows on
 a grid and a frame (`RowSpan`, a second trailer after the cursor's),
 and `status` is `In implementation`. From here the document changes
 only on the owner's explicit instruction.
+
+## Amendment — 2026-11-03 15:36 EST: the keyboard's action key is Enter; a local blinking underline cursor
+
+On the owner's report of 2026-11-03 15:27 EST in `docs/OWNER_REPORTS.md`
+(app 0.7.13, Galaxy S23 Ultra, Samsung keyboard), verbatim: "tested la
+with one enter in repowiki shell, did not execute as enter is replaced
+with check on kbd. terminal mouse click doesn't appear to be worked by but
+option row is hidden so I can't confirm. grouping works. is there input
+for the terminal cursor in json or state? it should have a local blinking
+underline cursor". This adds two decisions to section 3, beside decisions
+1 to 5, and adds to step 4's app half:
+
+1. **The soft keyboard's action key is Enter in the terminal.** While the
+   soft keyboard types into the armed terminal, its action key, whatever
+   it shows (Done, Go, Send, or Enter), sends `enter` to the pane, and
+   the keyboard stays up; a newline in the keyboard's text is `enter`
+   too. The keyboard is asked for as terminal apps ask for one: a single
+   line, no action of its own (the key shows Enter), and no autocorrect or
+   suggestions, so what is typed reaches the pane as typed. The prompts'
+   and the nickname field's keyboards are unchanged.
+   The app's half (the action as `enter`, the keyboard kept, these
+   options) is built here. The keyboard's half is not in the libraries the
+   app is pinned to: libmorph's Android runner does not pass
+   `TextInputOptions` on, and libmobile's hidden field is single-line
+   with Android's default Done action and no editor-action listener, so
+   Done hides the keyboard and nothing reaches the app. It needs
+   libmobile's text input options plan (`20261024_06`, Draft there) and
+   libmorph passing the options and the action through; until the app
+   moves onto those releases the check still only closes the keyboard.
+2. **The cursor is a local blinking underline.** The terminal draws the
+   frame's cursor as an underline at the foot of its cell, in the cell's
+   text colour, whatever DECSCUSR shape the program asks for. It blinks on
+   the phone: on for 530 ms, off for 530 ms, and on again from the start
+   whenever it moves to another cell or a key is sent to the pane. It is
+   still not drawn while the program hides it (`visible` false) or the
+   frame is stale. The view draws again for the blink only while the
+   terminal shows and its cursor is drawn, once each time it turns on or
+   off; there are no frames for it otherwise. This replaces plan
+   `20261027_08` step 9's "the app draws the cursor (block, underline or
+   bar by `shape`...)" (amended there to point here).
+
+The click (the report's second item) needs no change: the terminal's
+rect already ends above the keys row and the bar, the pane is resized to
+the rows that fit there with the keyboard up and down, and a tap on an
+option or a click in mouse mode is sent as decisions 4 and 5 say.

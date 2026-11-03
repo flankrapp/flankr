@@ -934,3 +934,15 @@ Implementation has started with step 1 (the `vendor/herdr` submodule,
 pinned at `2713feb`, `PROTOCOL_VERSION = 22`). The status is `In
 implementation`, and the document is now immutable: it changes only on the
 owner's explicit instruction.
+
+## Amendment — 2026-11-03 15:36 EST: the cursor drawn as a local blinking underline
+
+On the owner's report of 2026-11-03 15:27 EST in `docs/OWNER_REPORTS.md`
+("it should have a local blinking underline cursor"), this replaces step
+9's "the app draws the cursor (block, underline or bar by `shape`,
+hidden when not `visible` or `stale`)": the app draws the cursor as an
+underline at its cell whatever `shape` says, blinking locally (530 ms on,
+530 ms off, on again when it moves or a key is sent), still hidden when
+not `visible` or `stale`, as plan
+`20261103_01_TERMINAL_TAPS_AND_SHELL_PANES_PLAN.md`'s amendment of the
+same time, item 2, says. The frames and `Cursor` are unchanged.
