@@ -4,6 +4,7 @@
 //! docs/design/20261102_01_BACKGROUND_DAEMON_PLAN.md).
 //!
 //! ```text
+//! flankr version | --version | -V
 //! flankr [serve [--foreground | --stop] | server]
 //!        [--config <file>] [--transport <name> | --remote <user@host> |
 //!         --socket <herdr.sock> | --mock] [--listen <flankr.sock>] [--show-tokens]
@@ -74,6 +75,9 @@ struct AppArgs {
     foreground: bool,
     /// `serve --stop`: stop the background server.
     stop: bool,
+    /// Arguments `parse_args` does not know: an error (the 2026-11-02
+    /// 22:33 EST amendment, item 2).
+    unknown: Vec<String>,
 }
 
 fn parse_args(args: impl Iterator<Item = String>) -> AppArgs {
@@ -108,6 +112,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> AppArgs {
         agent: None,
         foreground: false,
         stop: false,
+        unknown: Vec::new(),
     };
 
     while let Some(arg) = args.next() {
@@ -149,10 +154,10 @@ fn parse_args(args: impl Iterator<Item = String>) -> AppArgs {
             "--agent" => parsed.agent = args.next(),
             "--foreground" => parsed.foreground = true,
             "--stop" => parsed.stop = true,
-            _ if !arg.starts_with("--") => parsed.positional.push(arg),
-            _ => {
-                eprintln!("Unknown argument: {}", arg);
-            }
+            _ if !arg.starts_with('-') => parsed.positional.push(arg),
+            // An unknown argument is an error, never a reason to go on
+            // (plan 20261102_01, the 2026-11-02 22:33 EST amendment, item 2).
+            _ => parsed.unknown.push(arg),
         }
     }
 
@@ -551,6 +556,7 @@ async fn prompt(args: AppArgs) -> Result<i32, Box<dyn std::error::Error>> {
 const PROMPT_USAGE: &str = "usage: flankr prompt [--use general_agent] [--agent <name>] [--prompts <ADDITIONAL_PROMPTS.md>]";
 
 const USAGE: &str = "\
+flankr version | --version | -V
 flankr [serve [--foreground | --stop] | server]
        [--config <file>] [--transport <name> | --remote <user@host> |
         --socket <herdr.sock> | --mock] [--listen <flankr.sock>] [--show-tokens]
@@ -569,8 +575,24 @@ flankr prompt [--use general_agent] [--agent <name>] [--prompts <ADDITIONAL_PROM
                --socket <herdr.sock> | --mock]
 herdr's socket: --socket, else HERDR_SOCKET_PATH, else config.toml, else ~/.config/herdr/herdr.sock";
 
+/// `flankr --version`'s line: the version and the commit built from (the
+/// 2026-11-02 22:33 EST amendment, item 1).
+fn version_line() -> String {
+    format!(
+        "flankr {} ({})",
+        env!("CARGO_PKG_VERSION"),
+        env!("FLANKR_COMMIT")
+    )
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut argv: Vec<String> = std::env::args().skip(1).collect();
+    if argv.first().map(String::as_str) == Some("version")
+        || argv.iter().any(|a| a == "--version" || a == "-V")
+    {
+        println!("{}", version_line());
+        return Ok(());
+    }
     let command = match argv.first().map(String::as_str) {
         Some("serve") | Some("server") | Some("ctl") | Some("pair") | Some("session")
         | Some("prompt") => argv.remove(0),
@@ -591,6 +613,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     let args = parse_args(argv.clone().into_iter());
+    if let Some(arg) = args.unknown.first() {
+        eprintln!("flankr: unknown argument '{arg}'; see flankr --help");
+        std::process::exit(2);
+    }
     let background = command == "serve" && !args.foreground;
     // The background server loads `.env` itself, from the same folder;
     // `serve` reads only this shell's environment (decision 3).

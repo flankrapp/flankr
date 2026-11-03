@@ -196,3 +196,11 @@ These changes came before the program had version numbers.
 
 **Changed**
 - `flankr pair` starts the daemon in the background first when none is running, as `flankr serve` does, then pairs. `flankr pair --foreground` never starts one.
+
+## 0.6.2 — 2026-11-02
+
+**Added**
+- `flankr --version`, `flankr -V` and `flankr version` print the version and the commit it was built from, e.g. `flankr 0.6.2 (1a2b3c4)`.
+
+**Changed**
+- An unknown argument is now an error (`flankr: unknown argument '…'; see flankr --help`, exit 2) instead of a warning: before, `flankr --anything` went on to start the daemon. Bare `flankr` with nothing after it still starts it.

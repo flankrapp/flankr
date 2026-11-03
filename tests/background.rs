@@ -414,3 +414,36 @@ fn pair_starts_the_daemon_unless_foreground() {
     );
     assert_eq!(read_pid(&files.pid), Some(pid));
 }
+
+/// `--version`, `-V` and `version` print the version and start nothing;
+/// an unknown argument is an error that starts nothing (plan 20261102_01,
+/// the 2026-11-02 22:33 EST amendment).
+#[test]
+fn version_and_unknown_arguments_start_nothing() {
+    let rig = Rig::new();
+    let want = format!("flankr {} (", env!("CARGO_PKG_VERSION"));
+    for args in [
+        &["--version"][..],
+        &["-V"],
+        &["version"],
+        &["serve", "--version"],
+    ] {
+        let out = rig.run(args, &[]);
+        assert_eq!(out.status.code(), Some(0), "{args:?}: {out:?}");
+        let line = text(&out.stdout);
+        assert!(
+            line.starts_with(&want) && line.ends_with(")\n"),
+            "{args:?}: {line}"
+        );
+        assert!(!rig.answers(), "{args:?} started a daemon");
+    }
+    for args in [&["--bogus"][..], &["serve", "--bogus"], &["pair", "-x"]] {
+        let out = rig.run(args, &[]);
+        assert_eq!(out.status.code(), Some(2), "{args:?}: {out:?}");
+        assert!(
+            text(&out.stderr).contains(&format!("unknown argument '{}'", args[args.len() - 1])),
+            "{args:?}: {out:?}"
+        );
+        assert!(!rig.answers(), "{args:?} started a daemon");
+    }
+}
