@@ -4058,3 +4058,12 @@ release build of flankr 0.7.0 (`94262fb`):
 Not yet checked: the Keychain path itself, which needs `flankr key import`
 (or `set`) run from a terminal in the logged-in desktop session; the step
 stays open for that.
+
+## 2026-11-02 23:49 EST — The link's reach through a VPN or an explicit address
+
+Plan: `docs/design/20261102_03_LINK_VPN_PLAN.md` (Draft). On the owner's
+instruction (2026-11-02): a `Vpn` trait with Tailscale as the default; the
+daemon adds Tailscale's forward to its link itself, replacing the link
+plan's rule that flankr never changes Tailscale's configuration; `--vpn
+none` with `--bind` or `[link] listen` for a local port or an explicit
+address; the pairing offer carries the address a phone can reach.
