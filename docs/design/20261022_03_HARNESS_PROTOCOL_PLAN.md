@@ -1997,3 +1997,63 @@ amendment; the rest of that item stands.
    `test result: FAILED` and `FAIL` / `--- FAIL` lines are unchanged.
 4. **Versions.** The daemon's next patch, 0.7.7, and, since the app's user
    sees the card go, the app's next patch (FLANKR RULE 2 item 4).
+
+## Amendment — 2026-11-03 15:47 EST: a continued Claude Code session is followed to its newest transcript (living section L1)
+
+On the owner's report, 2026-11-03: "Check the list mode is getting behind
+the terminal again" (`docs/OWNER_REPORTS.md`, 15:40 EST). A Claude Code
+session continued after its context ran out goes on in a new transcript,
+`<new id>.jsonl` in the same `~/.claude/projects/<encoded cwd>/` folder,
+while herdr keeps reporting the pane's `agent_session` as the old id. The
+daemon read only the file herdr names, so the agent view stopped while the
+terminal went on. This adds to "By id" for Claude Code in the 2026-10-22
+16:23 EDT amendment, and says how the serials of the 2026-10-23 14:54 EDT
+amendment's A2 in the session subscriptions plan (20261023_03) number such
+a session; nothing earlier is replaced.
+
+1. **The link.** When Claude Code continues a session in a new one, the
+   old transcript's last line is a record
+   `{"type":"continued-in","sessionId":"<old id>","continuedInSessionId":"<new id>",…}`.
+   A file is continued when its last whole line is such a record, at most
+   4 KiB long, and `<new id>.jsonl` exists in the same folder. Only this
+   link is followed: never a newer file in the folder because it is newer,
+   and not the new transcript's continuation summary ("…read the full
+   transcript at: <old path>"), which is prose.
+2. **Following it.** From the file herdr names, the link is followed file
+   by file to the newest, at most 16 files, never back to one already in
+   the chain. The session is then read from the newest file: the agent
+   view, the turn, the pending question, the activity, the subagents and
+   the context. The session id stays herdr's, and so does the approval
+   journal's name; `matched` stays `"id"`.
+3. **When it is checked.** On each locate, and by a running tailer when its
+   newest file did not grow in a check: one read of that file's last line,
+   again only once the file's length has changed and at least 3 s after
+   that file's last check. A file whose length has not changed keeps its
+   answer.
+4. **Copies.** The new transcript starts with a copy of the old one's
+   conversation since its last compaction (the same records, with the same
+   `uuid`s). Its lines up to and including the one with the `uuid` of the
+   old file's last record that has one are copies; they are counted but
+   not read. When that `uuid` is not found, nothing is skipped.
+5. **Serials (A2 for a chain).** A continued session is one sequence: a
+   serial's `file` is the hash of the name of the chain's first file (the
+   one herdr names), and its `line` counts every line of the chain's files
+   in order, so the old file's `N` lines keep their serials and the new
+   file's line `k` is line `N + k`. A subscriber gets the new file's
+   sections as new content after the old file's, with no reset. If an
+   earlier file of the chain changes length, the chain is read again from
+   its start, a reset as for a file that shrank. Should herdr later name
+   the new id itself, that is another first file, and the view resets
+   once.
+6. **Two panes on one id.** The link is the file's, not a pane's: every
+   pane herdr reports on the old id follows it. A Claude Code session that
+   continued no longer writes its old file, so nothing newer is lost by
+   following; and if a process writes the old file again, its last line is
+   no longer the link, and the panes read the old file again, as in
+   item 5.
+7. **The log.** Once per pane and switch:
+   `[sessions] <pane>: Claude continued <old id> as <new id>; following it`.
+8. **Versions.** A fix: the daemon's next patch, with a root `UPDATES.md`
+   Fixed line, and, since the app's user sees the list view keep up, the
+   app's next patch with an `apps/UPDATES.md` Fixed line (FLANKR RULE 2
+   item 4).
