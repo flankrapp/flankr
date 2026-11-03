@@ -1,8 +1,10 @@
 //! One timer for every held press in the app
 //! (docs/design/20261028_06_BOTTOM_BAR_UPDATE_PLAN.md, decision 7 and the
 //! 2026-11-03 12:13 EST amendment): the centre (✦ Gemini) and right
-//! (record) buttons, volume, and the text input's +; the drawer's remote
-//! cards and the overview's plugin cards use its [`HOLD`] too.
+//! (record) buttons, volume, the text input's +, and a question card's
+//! record (plan 20261022_03, the L3 amendment of 2026-11-03 14:09 EST);
+//! the drawer's remote cards and the overview's plugin cards use its
+//! [`HOLD`] too.
 //!
 //! A press fires after [`HOLD`], 500 ms; [`SLOP`] is 10 pt. A release
 //! before then is a tap; at the hold the press fires at once, before the

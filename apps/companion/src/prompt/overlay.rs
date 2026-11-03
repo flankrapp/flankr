@@ -25,7 +25,13 @@ use super::input_row::{InputRow, InputTools, ROW_GAP};
 use crate::agent::AgentHit;
 use crate::agent::{PAD, columns, fill, line_h, one_line, wrap_hard};
 use crate::controls::scroll::Touched;
+use crate::controls::square_button::ime_glyph;
+use crate::settings;
 use crate::theme::theme;
+
+/// The voice card's keyboard glyph's square at the header's right, in
+/// points, as the pinned card's beside its up arrow.
+const KEYBOARD: f32 = 36.0;
 
 /// What a touch on the sheet did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -74,6 +80,11 @@ pub struct PromptOverlay {
     /// as placed (where it opens to).
     row_for: Option<(PromptKind, InputTools)>,
     row: Option<InputRow>,
+    /// The expanded card's kind while it takes voice: the keyboard glyph
+    /// at the header's right, which goes on typed (plan 20261028_06, the
+    /// 2026-11-03 13:27 EST amendment), and where it opens to.
+    voice: Option<PromptKind>,
+    keyboard: Option<Rect>,
 }
 
 impl Default for PromptOverlay {
@@ -112,6 +123,8 @@ impl PromptOverlay {
             row_for: None,
             row: None,
             history: Rect::default(),
+            voice: None,
+            keyboard: None,
         }
     }
 
@@ -156,6 +169,18 @@ impl PromptOverlay {
         self.place();
     }
 
+    /// The expanded card's kind while it takes voice, for the keyboard
+    /// glyph; `None` while typed or with nothing being taken.
+    pub fn set_voice(&mut self, voice: Option<PromptKind>) {
+        self.voice = voice;
+        self.place();
+    }
+
+    /// The voice card's keyboard glyph where it opens to.
+    pub fn keyboard(&self) -> Option<Rect> {
+        self.keyboard
+    }
+
     /// The input area's height for its text: 3 lines of 12 pt, growing to
     /// 6.
     fn input_h(&self) -> f32 {
@@ -198,15 +223,38 @@ impl PromptOverlay {
         self.row = self.row_for.and_then(|(kind, tools)| {
             InputRow::lay_out(kind, r.x, r.y + r.h + ROW_GAP * s, r.w, s, &tools)
         });
+        let k = KEYBOARD * s;
+        self.keyboard = self.voice.filter(|_| settings::TEXT_INPUT).map(|_| {
+            Rect::new(
+                a.x + a.w - pad - k,
+                a.y + Self::HANDLE_H * s + (Self::HEADER_H * s - k) * 0.5,
+                k,
+                k,
+            )
+        });
+    }
+
+    fn moved(r: Rect, dy: f32) -> Rect {
+        Rect::new(r.x, r.y + dy, r.w, r.h)
     }
 
     /// The input row's control at `(x, y)`, where it is now.
     pub fn row_hit(&self, x: f32, y: f32) -> Option<AgentHit> {
+        if let (Some(kind), Some(r)) = (self.voice, self.keyboard)
+            && Self::moved(r, self.drop()).contains([x, y])
+        {
+            return Some(AgentHit::PromptIme(kind));
+        }
         self.row.as_ref()?.hit(x, y, self.drop())
     }
 
     /// Where the input row's `hit` is now.
     pub fn row_rect(&self, hit: AgentHit) -> Option<Rect> {
+        if let (Some(kind), Some(r)) = (self.voice, self.keyboard)
+            && hit == AgentHit::PromptIme(kind)
+        {
+            return Some(Self::moved(r, self.drop()));
+        }
         self.row.as_ref()?.rect_of(hit, self.drop())
     }
 
@@ -410,6 +458,9 @@ impl PromptOverlay {
         }
         if let Some(row) = &self.row {
             row.draw(list, drop);
+        }
+        if let Some(k) = self.keyboard {
+            ime_glyph(list, Self::moved(k, drop), s, theme().fg, false);
         }
     }
 }

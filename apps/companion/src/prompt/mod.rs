@@ -438,10 +438,14 @@ impl Prompts {
             let text = card.input_text();
             let keyboard = card.input().is_some_and(PromptInput::keyboard);
             let row = Some((kind, card.tools()));
+            let voice = card.by_voice().then_some(kind);
             self.overlay
                 .set_input(&header, colour, &text, &placeholder, keyboard, row);
+            self.overlay.set_voice(voice);
             let area = self.overlay.history_rect();
             self.card_mut(kind).history_mut().set_viewport(area, s);
+        } else {
+            self.overlay.set_voice(None);
         }
         above
     }
@@ -692,6 +696,22 @@ mod tests {
     fn tap(p: &mut Prompts, x: f32, y: f32) -> Option<PromptTouched> {
         p.touch(1, TouchPhase::Started, x, y, Duration::ZERO)?;
         p.touch(1, TouchPhase::Ended, x, y, MS)
+    }
+
+    #[test]
+    fn an_expanded_card_taking_voice_has_the_keyboard_glyph_in_its_header() {
+        let mut p = prompts();
+        p.set_message(Some(PromptInput::said("please run").into()));
+        p.expand(PromptKind::Message);
+        settle(&mut p);
+        let hit = AgentHit::PromptIme(PromptKind::Message);
+        let k = p.rect_of(hit).expect("the glyph in the sheet");
+        let [x, y] = k.center();
+        assert_eq!(tap(&mut p, x, y), Some(PromptTouched::Hit(hit)));
+        // Typed: the toggle's row instead, and no glyph in the header.
+        p.set_message(Some(PromptInput::typed("please run").into()));
+        settle(&mut p);
+        assert!(p.overlay().keyboard().is_none());
     }
 
     fn talk(p: &mut Prompts, turns: usize) {

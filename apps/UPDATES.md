@@ -300,3 +300,12 @@ These changes came before the app had version numbers.
 - The keyboard comes up only when you tap the agent's input line (Claude Code's prompt box, Codex's or agy's prompt, a shell's prompt line). A tap elsewhere in the terminal no longer brings it up, so the screen no longer shifts under your finger.
 - The row of Esc, Tab, arrow, CTRL and ALT keys is always there in the terminal view while you can type into it, not only after a tap. The first key you press, type or paste starts typing.
 - With a program that takes the mouse, a tap still clicks where you tap; the keyboard comes up only if the tap is on the input line.
+
+## 0.7.9 — 2026-11-03
+
+**Added**
+- Holding the record button on a question card (one with Approve, Discuss or the agent's own answers) for half a second opens your reply typed: the card's question stays above the text, the keyboard comes up, and the microphone does not listen. A quick tap still answers by voice.
+- A card you are speaking into also has its keyboard button when it is expanded to the full sheet, at the right of its title.
+
+**Changed**
+- A drag that starts on a question card's record button no longer scrolls the conversation; start the scroll beside it.

@@ -170,3 +170,64 @@ fn the_voice_message_cards_keyboard_goes_on_typed_and_focused() {
     );
     assert!(p.drawer.voice_keyboards.is_empty(), "typed: no glyph");
 }
+
+/// The pinned question's record, held `frames` before the release.
+fn press(r: libcontrols::Rect, frames: u32) -> String {
+    let [x, y] = r.center();
+    format!("touch 6 start {x} {y}\nframes {frames}\ntouch 6 end {x} {y}\nframes {SETTLE}\n")
+}
+
+#[test]
+fn a_500_ms_hold_on_a_question_cards_record_opens_its_reply_typed() {
+    let card = live(CardKind::Question, "Claude is asking", "Shall I go on?");
+    let Some((open, p, _)) = open_view(&card) else {
+        return;
+    };
+    let record = p.drawer.reply.expect("the card's record");
+    // Held past 500 ms: the reply, typed and focused, nothing listening.
+    let p = run_with(&format!("{open}{}", press(record, HOLD)), &card, Vec::new()).unwrap();
+    assert_eq!(inputs_with(&p, "StartTextPrompt"), 1, "{:?}", p.inputs);
+    assert_eq!(inputs_with(&p, "StartDictation"), 0, "a hold is no tap");
+    assert_eq!(
+        p.drawer.prompt.as_ref().map(|d| (d.0, d.1)),
+        Some((false, PromptMode::Keyboard))
+    );
+    assert_eq!(p.drawer.replying_to.as_deref(), Some("Claude is asking"));
+    assert_eq!(
+        p.drawer.focused,
+        Some(crate::prompt::keyboard::FocusedPrompt::Card {
+            screen: crate::prompt::keyboard::PromptScreen::Agent,
+            kind: crate::prompt::PromptKind::Message,
+        })
+    );
+    assert!(!p.drawer.holding);
+    // Released before: the voice reply, as before.
+    let p = run_with(&format!("{open}{}", press(record, 3)), &card, Vec::new()).unwrap();
+    assert_eq!(inputs_with(&p, "StartDictation"), 1, "{:?}", p.inputs);
+    assert_eq!(inputs_with(&p, "StartTextPrompt"), 0);
+    assert_eq!(
+        p.drawer.prompt.as_ref().map(|d| (d.0, d.1)),
+        Some((false, PromptMode::Voice))
+    );
+    assert_eq!(p.drawer.replying_to.as_deref(), Some("Claude is asking"));
+}
+
+#[test]
+fn nothing_is_drawn_along_the_record_while_it_is_held() {
+    let card = live(CardKind::Question, "Claude is asking", "Shall I go on?");
+    let Some((open, p, _)) = open_view(&card) else {
+        return;
+    };
+    let record = p.drawer.reply.expect("the card's record");
+    let [x, y] = record.center();
+    // Half-way through the hold: timed, and the screen is as before it.
+    let script = format!("{open}touch 6 start {x} {y}\nframes 3\n");
+    let held = run_with(&script, &card, Vec::new()).unwrap();
+    assert!(held.drawer.holding, "timed for its hold");
+    assert_eq!(
+        held.drawer.pin.as_ref().map(|p| p.rect),
+        p.drawer.pin.as_ref().map(|p| p.rect)
+    );
+    assert_eq!(held.drawer.reply, Some(record), "it does not press in");
+    assert!(held.drawer.prompt.is_none(), "nothing opened yet");
+}

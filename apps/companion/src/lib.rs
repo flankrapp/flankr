@@ -3160,6 +3160,10 @@ impl App {
             // the typed message card even while record is dim (CHANGES.md
             // departure; its tap still needs the microphone).
             AgentHit::Message if settings::TEXT_INPUT => Some(hit),
+            // A question card's record: its tap is the voice reply, its
+            // hold the reply typed (plan 20261022_03, the L3 amendment of
+            // 2026-11-03 14:09 EST), which needs no microphone either.
+            AgentHit::Reply if settings::TEXT_INPUT => Some(hit),
             AgentHit::PromptAttach(_) => Some(hit),
             _ => None,
         }
@@ -3234,6 +3238,14 @@ impl App {
                 self.agent_hit(AgentHit::PromptText(PromptKind::GeneralAgent));
             }
             AgentHit::Message => {
+                self.send(Input::StartTextPrompt);
+                self.focus_prompt(PromptKind::Message);
+            }
+            // The card's reply, typed and focused, without listening.
+            AgentHit::Reply => {
+                if let Some(agent) = &mut self.agent {
+                    agent.begin_reply();
+                }
                 self.send(Input::StartTextPrompt);
                 self.focus_prompt(PromptKind::Message);
             }
@@ -5463,6 +5475,10 @@ pub(crate) mod probe {
         pub prompt: Option<(bool, flankr_companion::PromptMode, String)>,
         /// What the keyboard route has focused.
         pub focused: Option<crate::prompt::keyboard::FocusedPrompt>,
+        /// The agent view's first question card record (`AgentHit::Reply`)
+        /// on screen, and the card the message replies to, by title.
+        pub reply: Option<Rect>,
+        pub replying_to: Option<String>,
         /// The message card's keyboard glyph while it takes voice, and
         /// Gemini's, on the screen shown.
         pub voice_keyboards: Vec<(crate::prompt::PromptKind, Rect)>,
@@ -5645,6 +5661,14 @@ pub(crate) mod probe {
                 .as_ref()
                 .map(|d| (d.general_agent, d.mode, d.text.clone())),
             focused: app.keyboard.focused(),
+            reply: app
+                .agent
+                .as_ref()
+                .and_then(|a| a.rect_of(crate::agent::AgentHit::Reply)),
+            replying_to: app
+                .agent
+                .as_ref()
+                .and_then(|a| a.replying_to().map(|c| c.title.clone())),
             voice_keyboards: [
                 crate::prompt::PromptKind::Message,
                 crate::prompt::PromptKind::GeneralAgent,
