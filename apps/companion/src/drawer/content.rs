@@ -5,6 +5,17 @@
 //! order. Built from the client's events into the drawer's content router,
 //! in the sheet's own coordinates.
 //!
+//! Grouped by workspace (plan 20261103_02, decisions 3.1 to 3.5; the
+//! default), the list is in herdr's workspace order instead: a
+//! [`GroupHeader`] per workspace with two rows or more, its agent sessions
+//! in tab order and then its shell panes under it unless it is collapsed;
+//! a workspace with one row has no header, and its row, in the place the
+//! header would have had, shows its full name (the 13:05 EST amendment,
+//! item 3). Not grouped, the list is as above. The collapsed workspaces
+//! are the remote in use's, from [`RemoteInfo::collapsed_workspaces`]; a
+//! change is taken with [`DrawerContent::take_collapsed`] for the client
+//! to keep.
+//!
 //! [`DrawerContent::build`] makes the nodes again when what they show
 //! changes (a list, the remotes, a pending approval, the view open);
 //! between lists [`DrawerContent::refresh`] judges each row's activity
@@ -27,6 +38,7 @@ use libcontrols::{
 use libflankr_proto::common::AgentInfo;
 use libmsdf::drawlist::DrawList;
 
+use super::group_header::{GroupHeader, HEADER_H};
 use super::remote_card::{CARD_H, RemoteCard, Slot};
 use super::session_row::{COLUMN_W, ROW_H, SessionRow};
 use super::{DrawerHit, cut_right, spinner};
@@ -70,6 +82,48 @@ pub fn grid(w: f32, top: f32, n: usize, s: f32) -> Vec<Rect> {
             )
         })
         .collect()
+}
+
+/// One workspace's sessions, in the grouped drawer.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Group {
+    /// `None` for sessions with no workspace (an older daemon): listed
+    /// after the groups, as in the flat list, with no header.
+    pub workspace_id: Option<String>,
+    /// The header's text.
+    pub text: String,
+    /// herdr's workspace number.
+    pub number: Option<u32>,
+    /// Indexes into the list: agent sessions in tab order, then shell
+    /// panes in tab order.
+    pub rows: Vec<usize>,
+}
+
+impl Group {
+    /// Whether it has a header: a workspace with two rows or more.
+    pub fn headed(&self) -> bool {
+        self.workspace_id.is_some() && self.rows.len() > 1
+    }
+}
+
+/// What the list shows, in order.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Entry {
+    /// A workspace's header: the group's index.
+    Header(usize),
+    /// A session's row: its index in the list, and whether it stands
+    /// alone for its workspace, with its full name.
+    Row { index: usize, lone: bool },
+}
+
+/// The header's text for workspace `n` with no label and no project.
+fn workspace_text(number: Option<u32>) -> String {
+    match number {
+        Some(n) => copy::DRAWER_WORKSPACE_NUMBER.fill(None, &[("number", &n.to_string())]),
+        None => copy::DRAWER_WORKSPACE.text.to_string(),
+    }
+    .trim()
+    .to_string()
 }
 
 /// The note's one row, dim, in the list.
@@ -131,6 +185,20 @@ pub struct DrawerContent {
     open_pane: Option<String>,
     /// The next try, while the remote in use cannot be reached.
     retry_in: Option<u32>,
+    /// *Drawer sessions*: grouped by workspace, or not.
+    grouped: bool,
+    /// The remote in use's collapsed workspaces, by id, and which remote
+    /// they are for.
+    collapsed: HashSet<String>,
+    collapsed_for: Option<RemoteId>,
+    /// The collapsed workspaces changed here, not yet taken.
+    collapsed_changed: bool,
+    /// They were changed here for this remote: the client's echo of them
+    /// is not taken back.
+    collapsed_own: bool,
+    /// The panes with a question or an approval waiting, as last judged,
+    /// once a list has been given (decision 3.5).
+    waiting_panes: Option<HashSet<String>>,
     /// The sheet's size, the safe area's top and bottom, the scale.
     size: [f32; 2],
     insets: [f32; 2],
@@ -142,6 +210,8 @@ pub struct DrawerContent {
     list: Rect,
     pane: Option<NodeId>,
     rows: Vec<(NodeId, String)>,
+    /// The headers' nodes and their workspace ids.
+    headers: Vec<(NodeId, String)>,
     /// The card held.
     press: Option<usize>,
     /// The spinner's frame last drawn, while any row spins.
@@ -161,6 +231,12 @@ impl Default for DrawerContent {
             pending: Vec::new(),
             open_pane: None,
             retry_in: None,
+            grouped: true,
+            collapsed: HashSet::new(),
+            collapsed_for: None,
+            collapsed_changed: false,
+            collapsed_own: false,
+            waiting_panes: None,
             size: [0.0; 2],
             insets: [0.0; 2],
             scale: 1.0,
@@ -169,6 +245,7 @@ impl Default for DrawerContent {
             list: Rect::new(0.0, 0.0, 0.0, 0.0),
             pane: None,
             rows: Vec::new(),
+            headers: Vec::new(),
             press: None,
             frame: None,
             dirty: true,
@@ -182,6 +259,201 @@ impl DrawerContent {
             self.remotes = remotes;
             self.dirty = true;
         }
+        self.adopt_collapsed();
+    }
+
+    /// The remote in use's collapsed workspaces, as the client keeps them:
+    /// all of them when the remote in use is another, and while none were
+    /// changed here; a change made here is not undone by the client's
+    /// echo of an older one.
+    fn adopt_collapsed(&mut self) {
+        let Some(active) = self.remotes.iter().find(|r| r.active) else {
+            return;
+        };
+        let kept: HashSet<String> = active.collapsed_workspaces.iter().cloned().collect();
+        if self.collapsed_for != Some(active.id) {
+            self.collapsed_for = Some(active.id);
+            self.collapsed = kept;
+            self.collapsed_changed = false;
+            self.collapsed_own = false;
+            // Another remote's sessions: their waiting is judged afresh.
+            self.waiting_panes = None;
+            self.dirty = true;
+        } else if !self.collapsed_own && kept != self.collapsed {
+            self.collapsed = kept;
+            self.dirty = true;
+        }
+    }
+
+    /// *Drawer sessions*: grouped by workspace, or the flat list.
+    pub fn set_grouped(&mut self, grouped: bool) {
+        if grouped != self.grouped {
+            self.grouped = grouped;
+            self.dirty = true;
+        }
+    }
+
+    pub fn grouped(&self) -> bool {
+        self.grouped
+    }
+
+    /// Whether workspace `id`'s group is kept collapsed.
+    pub fn is_collapsed(&self, id: &str) -> bool {
+        self.collapsed.contains(id)
+    }
+
+    /// A tap on workspace `id`'s header: collapses its group, or expands
+    /// it.
+    pub fn toggle_group(&mut self, id: &str) {
+        if !self.collapsed.remove(id) {
+            self.collapsed.insert(id.to_string());
+        }
+        self.collapsed_changed = true;
+        self.dirty = true;
+    }
+
+    /// The collapsed workspaces when they changed here since last taken,
+    /// with the remote they are for, sorted: for the client to keep in the
+    /// remote's `state.redb`.
+    pub fn take_collapsed(&mut self) -> Option<(RemoteId, Vec<String>)> {
+        if !std::mem::take(&mut self.collapsed_changed) {
+            return None;
+        }
+        let id = self.collapsed_for?;
+        self.collapsed_own = true;
+        let mut list: Vec<String> = self.collapsed.iter().cloned().collect();
+        list.sort();
+        Some((id, list))
+    }
+
+    /// Whether `agent` has a question or an approval waiting.
+    fn waits(&self, agent: &AgentInfo) -> bool {
+        matches!(
+            self.activity_of(agent, self.received_at),
+            Activity::NeedsInput(_)
+        )
+    }
+
+    /// The group `pane` is in, if it has a header and is collapsed, is
+    /// expanded (decision 3.5).
+    fn expand_for(&mut self, pane: &str) {
+        let Some(group) = self
+            .groups()
+            .into_iter()
+            .find(|g| g.rows.iter().any(|&i| self.agents[i].pane_id == pane))
+        else {
+            return;
+        };
+        if let (true, Some(id)) = (group.headed(), &group.workspace_id)
+            && self.collapsed.remove(id)
+        {
+            self.collapsed_changed = true;
+            self.dirty = true;
+        }
+    }
+
+    /// A session that starts waiting is never hidden by a collapse made
+    /// before (decision 3.5): its group expands. The first list after a
+    /// start or a switch only sets what is waiting, so a group collapsed
+    /// over a waiting session stays collapsed, with its dot.
+    fn follow_waiting(&mut self) {
+        if !self.listed {
+            return;
+        }
+        let now: HashSet<String> = self
+            .agents
+            .iter()
+            .filter(|a| self.waits(a))
+            .map(|a| a.pane_id.clone())
+            .collect();
+        if let Some(before) = self.waiting_panes.take() {
+            for pane in now.difference(&before) {
+                self.expand_for(pane);
+            }
+        }
+        self.waiting_panes = Some(now);
+    }
+
+    /// The list's groups by workspace, in herdr's order: by workspace
+    /// number, then those with none by their header's text; sessions with
+    /// no workspace last.
+    pub fn groups(&self) -> Vec<Group> {
+        let mut groups: Vec<Group> = Vec::new();
+        for (i, a) in self.agents.iter().enumerate() {
+            match groups.iter_mut().find(|g| g.workspace_id == a.workspace_id) {
+                Some(g) => {
+                    g.rows.push(i);
+                    g.number = g.number.or(a.workspace_number);
+                }
+                None => groups.push(Group {
+                    workspace_id: a.workspace_id.clone(),
+                    text: String::new(),
+                    number: a.workspace_number,
+                    rows: vec![i],
+                }),
+            }
+        }
+        for g in &mut groups {
+            let agents = &self.agents;
+            g.rows.sort_by_key(|&i| {
+                let a = &agents[i];
+                (
+                    flankr_companion::cross::is_terminal_only(a),
+                    a.tab_number.unwrap_or(u32::MAX),
+                )
+            });
+            let first = |f: fn(&AgentInfo) -> Option<&String>| {
+                g.rows
+                    .iter()
+                    .find_map(|&i| f(&agents[i]).filter(|t| !t.trim().is_empty()))
+                    .cloned()
+            };
+            g.text = first(|a| a.workspace_label.as_ref())
+                .or_else(|| first(|a| a.project.as_ref()))
+                .unwrap_or_else(|| workspace_text(g.number));
+        }
+        groups.sort_by(|a, b| {
+            (a.workspace_id.is_none(), a.number.is_none(), a.number)
+                .cmp(&(b.workspace_id.is_none(), b.number.is_none(), b.number))
+                .then_with(|| match (a.number, b.number) {
+                    (None, None) => a.text.to_lowercase().cmp(&b.text.to_lowercase()),
+                    _ => std::cmp::Ordering::Equal,
+                })
+        });
+        groups
+    }
+
+    /// What the list shows, in order: grouped, the headers and the rows
+    /// not collapsed; not grouped, every row in the list's order.
+    pub fn entries(&self) -> (Vec<Group>, Vec<Entry>) {
+        if !self.grouped {
+            let rows = (0..self.agents.len())
+                .map(|index| Entry::Row { index, lone: false })
+                .collect();
+            return (Vec::new(), rows);
+        }
+        let groups = self.groups();
+        let mut entries = Vec::new();
+        for (gi, g) in groups.iter().enumerate() {
+            if !g.headed() {
+                let lone = g.workspace_id.is_some();
+                entries.extend(g.rows.iter().map(|&index| Entry::Row { index, lone }));
+                continue;
+            }
+            entries.push(Entry::Header(gi));
+            if g.workspace_id
+                .as_ref()
+                .is_some_and(|id| self.collapsed.contains(id))
+            {
+                continue;
+            }
+            entries.extend(
+                g.rows
+                    .iter()
+                    .map(|&index| Entry::Row { index, lone: false }),
+            );
+        }
+        (groups, entries)
     }
 
     pub fn remotes(&self) -> &[RemoteInfo] {
@@ -217,6 +489,7 @@ impl DrawerContent {
         self.listed = true;
         self.received_at = now;
         self.dirty = true;
+        self.follow_waiting();
     }
 
     /// No list: the rows go and no note shows until one is given (a switch
@@ -224,6 +497,7 @@ impl DrawerContent {
     pub fn unload(&mut self) {
         self.agents.clear();
         self.listed = false;
+        self.waiting_panes = None;
         self.dirty = true;
     }
 
@@ -235,12 +509,18 @@ impl DrawerContent {
         if pending != self.pending {
             self.pending = pending;
             self.dirty = true;
+            self.follow_waiting();
         }
     }
 
-    /// The pane whose agent view is open under the drawer.
+    /// The pane whose agent view is open under the drawer. A group
+    /// collapsed over it is expanded, so it is never hidden by a collapse
+    /// made before it opened (decision 3.5).
     pub fn set_open_pane(&mut self, pane: Option<String>) {
         if pane != self.open_pane {
+            if let Some(p) = &pane {
+                self.expand_for(p);
+            }
             self.open_pane = pane;
             self.dirty = true;
         }
@@ -366,14 +646,43 @@ impl DrawerContent {
         }
         // The rows show online or not: a kept list shows at once (the
         // 13:15 EDT amendment, item 2).
-        for agent in &self.agents {
-            let approval = self.pending.contains(&agent.pane_id);
-            let open = self.open_pane.as_deref() == Some(agent.pane_id.as_str());
-            let mut row = SessionRow::new(agent, approval, self.activity_of(agent, now), open, s);
-            row.rect = Rect::new(self.list.x, y, self.list.w, row_h);
-            let id = router.add(Some(pane), row);
-            self.rows.push((id, agent.pane_id.clone()));
-            y += row_h;
+        self.headers.clear();
+        let (groups, entries) = self.entries();
+        for entry in entries {
+            match entry {
+                Entry::Header(gi) => {
+                    let g = &groups[gi];
+                    let id = g.workspace_id.clone().unwrap_or_default();
+                    let header_h = HEADER_H * s;
+                    let header = GroupHeader {
+                        rect: Rect::new(self.list.x, y, self.list.w, header_h),
+                        collapsed: self.collapsed.contains(&id),
+                        waiting: g.rows.iter().any(|&i| self.waits(&self.agents[i])),
+                        workspace_id: id.clone(),
+                        text: g.text.clone(),
+                        count: g.rows.len(),
+                        scale: s,
+                    };
+                    let node = router.add(Some(pane), header);
+                    self.headers.push((node, id));
+                    y += header_h;
+                }
+                Entry::Row { index, lone } => {
+                    let agent = &self.agents[index];
+                    let approval = self.pending.contains(&agent.pane_id);
+                    let open = self.open_pane.as_deref() == Some(agent.pane_id.as_str());
+                    let mut row =
+                        SessionRow::new(agent, approval, self.activity_of(agent, now), open, s);
+                    if lone {
+                        // No header names its workspace: its full name.
+                        row.tab = flankr_companion::cross::shown_name(agent);
+                    }
+                    row.rect = Rect::new(self.list.x, y, self.list.w, row_h);
+                    let id = router.add(Some(pane), row);
+                    self.rows.push((id, agent.pane_id.clone()));
+                    y += row_h;
+                }
+            }
         }
         if let Some(p) = router.get::<ScrollPane>(pane) {
             p.set_content_size(Some([self.list.w, y - list_top]));
@@ -453,12 +762,32 @@ impl DrawerContent {
         true
     }
 
-    /// The session a node is the row of.
+    /// The session a node is the row of, or the workspace it is the
+    /// header of.
     pub fn row_hit(&self, node: NodeId) -> Option<DrawerHit> {
         self.rows
             .iter()
             .find(|(id, _)| *id == node)
             .map(|(_, pane)| DrawerHit::Session(pane.clone()))
+            .or_else(|| {
+                self.headers
+                    .iter()
+                    .find(|(id, _)| *id == node)
+                    .map(|(_, ws)| DrawerHit::Workspace(ws.clone()))
+            })
+    }
+
+    /// The headers' workspace ids, in order.
+    pub fn header_ids(&self) -> Vec<String> {
+        self.headers.iter().map(|(_, w)| w.clone()).collect()
+    }
+
+    /// Where header `i` is now, in sheet coordinates (scrolled).
+    pub fn header_rect(&self, router: &Router, i: usize) -> Option<Rect> {
+        let (id, _) = self.headers.get(i)?;
+        let h = router.get::<GroupHeader>(*id)?;
+        let dy = self.scroll.offset()[1];
+        Some(Rect::new(h.rect.x, h.rect.y - dy, h.rect.w, h.rect.h))
     }
 
     /// The rows' panes, in order.
@@ -607,6 +936,7 @@ mod tests {
         c.build(&mut router, Duration::ZERO);
         // Connecting: no looking-for message.
         assert_eq!(c.note(), None);
+        c.set_grouped(false);
         c.set_retry(Some(4));
         assert_eq!(
             c.note_text(&c.note().unwrap()),
@@ -645,6 +975,7 @@ mod tests {
         // Plan 20261103_01, decision 7 and the 12:34 EST amendment, item 5.
         crate::theme::testing::use_theme("dark_gray");
         let mut c = DrawerContent::default();
+        c.set_grouped(false);
         c.set_remotes(remotes(1));
         c.set_frame([326.0, 800.0], [0.0, 0.0], 1.0);
         let shell = |pane: &str| {
@@ -709,5 +1040,314 @@ mod tests {
         );
         // Each spinning row shows the one clock's frame.
         assert!(!c.refresh(&mut router, t0 + Duration::from_secs(10)));
+    }
+
+    /// A session in workspace `ws`, number `n`, labelled `label`.
+    fn in_ws(pane: &str, tab: u32, ws: &str, n: Option<u32>, label: Option<&str>) -> AgentInfo {
+        let mut a = agent(pane, Some(tab), None);
+        a.workspace_id = Some(ws.into());
+        a.workspace_number = n;
+        a.workspace_label = label.map(str::to_string);
+        a.project = label.map(str::to_string);
+        a.name = Some(match label {
+            Some(l) => format!("Claude in {l}, tab {tab}-fl"),
+            None => format!("Claude, tab {tab}-fl"),
+        });
+        a
+    }
+
+    fn shell_in(pane: &str, tab: u32, ws: &str, n: Option<u32>, label: Option<&str>) -> AgentInfo {
+        let mut a = in_ws(pane, tab, ws, n, label);
+        a.agent = "shell".into();
+        a.turn = None;
+        a
+    }
+
+    fn asking(mut a: AgentInfo) -> AgentInfo {
+        a.turn = Some(Turn::Asking {
+            question: "Go on?".into(),
+        });
+        a
+    }
+
+    fn grouped() -> (DrawerContent, Router) {
+        crate::theme::testing::use_theme("dark_gray");
+        let mut c = DrawerContent::default();
+        assert!(c.grouped(), "grouped by default (decision 2)");
+        c.set_remotes(remotes(1));
+        c.set_frame([326.0, 2000.0], [0.0, 0.0], 1.0);
+        (c, Router::new())
+    }
+
+    /// Each header's text and count, and the rows' panes, as built.
+    fn shown(c: &DrawerContent, router: &Router) -> (Vec<(String, usize)>, Vec<String>) {
+        let headers = c
+            .headers
+            .iter()
+            .map(|(id, _)| {
+                let h = router.get::<GroupHeader>(*id).unwrap();
+                (h.text.clone(), h.count)
+            })
+            .collect();
+        (headers, c.row_panes())
+    }
+
+    fn tap_header(c: &mut DrawerContent, ws: &str) {
+        let node = c.headers.iter().find(|(_, w)| w == ws).unwrap().0;
+        let Some(DrawerHit::Workspace(id)) = c.row_hit(node) else {
+            panic!("a header's tap is its workspace");
+        };
+        c.toggle_group(&id);
+    }
+
+    #[test]
+    fn headers_are_in_herdrs_order_with_their_sessions_in_tab_order_then_shells() {
+        // Plan 20261103_02, decisions 3.1 and 3.2, and the 13:05 EST
+        // amendment, item 3.
+        let (mut c, mut router) = grouped();
+        c.set_agents(
+            vec![
+                in_ws("a3", 3, "w1", Some(2), Some("libmorph")),
+                shell_in("s1", 1, "w1", Some(2), Some("libmorph")),
+                in_ws("b1", 1, "w2", Some(1), Some("flankr")),
+                in_ws("a2", 2, "w1", Some(2), Some("libmorph")),
+                in_ws("b5", 5, "w2", Some(1), Some("flankr")),
+                // One session: no header, its full name.
+                in_ws("l1", 1, "w3", Some(3), Some("libcontrols")),
+                // No label, no project: by number; then no number, last.
+                {
+                    let mut a = in_ws("n1", 1, "w4", Some(4), None);
+                    a.project = None;
+                    a
+                },
+                in_ws("n2", 2, "w4", Some(4), None),
+                in_ws("z1", 1, "w5", None, Some("zeta")),
+                in_ws("z2", 2, "w5", None, Some("zeta")),
+                in_ws("y1", 1, "w6", None, Some("alpha")),
+                in_ws("y2", 2, "w6", None, Some("alpha")),
+            ],
+            Duration::ZERO,
+        );
+        c.build(&mut router, Duration::ZERO);
+        let (headers, rows) = shown(&c, &router);
+        assert_eq!(
+            headers,
+            [
+                ("flankr".to_string(), 2),
+                ("libmorph".to_string(), 3),
+                ("Workspace 4".to_string(), 2),
+                ("alpha".to_string(), 2),
+                ("zeta".to_string(), 2),
+            ]
+        );
+        assert_eq!(
+            rows,
+            [
+                "b1", "b5", "a2", "a3", "s1", "l1", "n1", "n2", "y1", "y2", "z1", "z2"
+            ]
+        );
+        // Under a header a row is its tab and summary, which leave out
+        // the workspace the header shows; the one alone has its full name,
+        // in the place its header would have had, after libmorph's.
+        let row = |pane: &str| {
+            let i = c.row_panes().iter().position(|p| p == pane).unwrap();
+            router.get::<SessionRow>(c.rows[i].0).unwrap().clone()
+        };
+        assert_eq!(row("b1").tab, "1-fl");
+        assert_eq!(row("l1").tab, "Claude in libcontrols, tab 1-fl");
+        // Laid out in order: a 28 pt header, then 44 pt rows.
+        let h0 = c.header_rect(&router, 0).unwrap();
+        assert_eq!((h0.y, h0.h), (c.list_rect().y, 28.0));
+        let r0 = c.row_rect(&router, 0).unwrap();
+        assert_eq!(r0.y, h0.y + 28.0);
+        assert_eq!(c.row_rect(&router, 1).unwrap().y, r0.y + 44.0);
+        let h1 = c.header_rect(&router, 1).unwrap();
+        assert_eq!(h1.y, r0.y + 88.0);
+    }
+
+    #[test]
+    fn not_grouped_gives_todays_list() {
+        // Decision 4: the list's order, shell panes at its end, no headers,
+        // the rows' text as before.
+        let (mut c, mut router) = grouped();
+        c.set_grouped(false);
+        c.set_agents(
+            vec![
+                in_ws("a3", 3, "w1", Some(2), Some("libmorph")),
+                shell_in("s1", 1, "w1", Some(2), Some("libmorph")),
+                in_ws("b1", 1, "w2", Some(1), Some("flankr")),
+                in_ws("l1", 1, "w3", Some(3), Some("libcontrols")),
+            ],
+            Duration::ZERO,
+        );
+        c.build(&mut router, Duration::ZERO);
+        let (headers, rows) = shown(&c, &router);
+        assert!(headers.is_empty());
+        assert_eq!(rows, ["a3", "b1", "l1", "s1"]);
+        let tab = router.get::<SessionRow>(c.rows[2].0).unwrap().tab.clone();
+        assert_eq!(tab, "1-fl", "no full name");
+        // Grouped again: the headers come back.
+        c.set_grouped(true);
+        assert!(c.is_dirty());
+        c.build(&mut router, Duration::ZERO);
+        assert_eq!(shown(&c, &router).0.len(), 1, "libmorph's only");
+    }
+
+    #[test]
+    fn a_tap_collapses_a_group_kept_per_remote_and_given_back_at_a_restart() {
+        // Decision 3.4.
+        let (mut c, mut router) = grouped();
+        let list = vec![
+            in_ws("a1", 1, "w1", Some(1), Some("libmorph")),
+            in_ws("a2", 2, "w1", Some(1), Some("libmorph")),
+            in_ws("b1", 1, "w2", Some(2), Some("flankr")),
+            in_ws("b2", 2, "w2", Some(2), Some("flankr")),
+        ];
+        c.set_agents(list.clone(), Duration::ZERO);
+        c.build(&mut router, Duration::ZERO);
+        assert_eq!(c.take_collapsed(), None, "nothing changed");
+        tap_header(&mut c, "w2");
+        c.build(&mut router, Duration::ZERO);
+        assert_eq!(c.row_panes(), ["a1", "a2"]);
+        assert_eq!(c.header_ids(), ["w1", "w2"], "its header stays");
+        let header = router.get::<GroupHeader>(c.headers[1].0).unwrap();
+        assert!(header.collapsed && header.count == 2 && !header.dot());
+        tap_header(&mut c, "w1");
+        let kept = c.take_collapsed();
+        assert_eq!(
+            kept,
+            Some((RemoteId([0; 8]), vec!["w1".to_string(), "w2".to_string()]))
+        );
+        assert_eq!(c.take_collapsed(), None, "taken once");
+        // The client's echo of the first change does not undo the second.
+        let mut rs = remotes(1);
+        rs[0].collapsed_workspaces = vec!["w2".into()];
+        c.set_remotes(rs);
+        assert!(c.is_collapsed("w1") && c.is_collapsed("w2"));
+        // Expanded again with a second tap.
+        tap_header(&mut c, "w1");
+        c.build(&mut router, Duration::ZERO);
+        assert_eq!(c.row_panes(), ["a1", "a2"]);
+        assert_eq!(c.take_collapsed().unwrap().1, ["w2"]);
+
+        // A restart: the remote's kept groups, from its state.redb through
+        // the client's remote rows.
+        let (mut again, mut router) = grouped();
+        let mut rs = remotes(2);
+        rs[0].collapsed_workspaces = vec!["w2".into()];
+        rs[1].collapsed_workspaces = vec!["w1".into()];
+        again.set_remotes(rs.clone());
+        again.set_agents(list, Duration::ZERO);
+        again.build(&mut router, Duration::ZERO);
+        assert_eq!(again.row_panes(), ["a1", "a2"]);
+        assert_eq!(again.take_collapsed(), None, "nothing to keep");
+        // The other remote in use: its own.
+        rs[0].active = false;
+        rs[1].active = true;
+        again.set_remotes(rs);
+        assert!(again.is_collapsed("w1") && !again.is_collapsed("w2"));
+    }
+
+    #[test]
+    fn a_workspace_of_one_has_no_header_and_gets_it_back_collapsed_as_kept() {
+        // The 13:05 EST amendment, item 3.
+        let (mut c, mut router) = grouped();
+        let mut rs = remotes(1);
+        rs[0].collapsed_workspaces = vec!["w1".into()];
+        c.set_remotes(rs);
+        c.set_agents(
+            vec![in_ws("a1", 1, "w1", Some(1), Some("libmorph"))],
+            Duration::ZERO,
+        );
+        c.build(&mut router, Duration::ZERO);
+        assert!(c.header_ids().is_empty());
+        assert_eq!(c.row_panes(), ["a1"], "kept collapsed, but alone: shown");
+        c.set_agents(
+            vec![
+                in_ws("a1", 1, "w1", Some(1), Some("libmorph")),
+                in_ws("a2", 2, "w1", Some(1), Some("libmorph")),
+            ],
+            Duration::ZERO,
+        );
+        c.build(&mut router, Duration::ZERO);
+        assert_eq!(c.header_ids(), ["w1"]);
+        assert!(c.row_panes().is_empty(), "collapsed, as it was kept");
+    }
+
+    #[test]
+    fn a_collapsed_header_shows_a_dot_while_a_session_in_it_waits() {
+        // Decision 3.4: a question, or an approval, waiting.
+        let (mut c, mut router) = grouped();
+        let mut rs = remotes(1);
+        rs[0].collapsed_workspaces = vec!["w1".into()];
+        c.set_remotes(rs);
+        let list = vec![
+            asking(in_ws("a1", 1, "w1", Some(1), Some("libmorph"))),
+            in_ws("a2", 2, "w1", Some(1), Some("libmorph")),
+            in_ws("b1", 1, "w2", Some(2), Some("flankr")),
+            in_ws("b2", 2, "w2", Some(2), Some("flankr")),
+        ];
+        // The first list: the group collapsed over a waiting session stays
+        // collapsed, with its dot.
+        c.set_agents(list.clone(), Duration::ZERO);
+        c.build(&mut router, Duration::ZERO);
+        assert_eq!(c.row_panes(), ["b1", "b2"]);
+        let dot = |c: &DrawerContent, router: &Router, i: usize| {
+            router.get::<GroupHeader>(c.headers[i].0).unwrap().dot()
+        };
+        assert!(dot(&c, &router, 0));
+        assert!(!dot(&c, &router, 1), "expanded, no dot");
+        // Answered: no dot.
+        let mut answered = list.clone();
+        answered[0].turn = None;
+        c.set_agents(answered, Duration::ZERO);
+        c.build(&mut router, Duration::ZERO);
+        assert!(!dot(&c, &router, 0));
+        // An approval waiting shows it too, and collapsing over it keeps
+        // it collapsed.
+        tap_header(&mut c, "w2");
+        c.take_collapsed();
+        c.set_pending(vec!["b2".into()]);
+        c.build(&mut router, Duration::ZERO);
+        assert!(c.row_panes().contains(&"b2".to_string()), "it expanded");
+        tap_header(&mut c, "w2");
+        c.build(&mut router, Duration::ZERO);
+        assert!(dot(&c, &router, 1), "collapsed over the approval");
+        assert!(c.row_panes().is_empty());
+    }
+
+    #[test]
+    fn a_group_expands_when_a_session_in_it_starts_waiting_or_opens() {
+        // Decision 3.5.
+        let (mut c, mut router) = grouped();
+        let list = vec![
+            in_ws("a1", 1, "w1", Some(1), Some("libmorph")),
+            in_ws("a2", 2, "w1", Some(1), Some("libmorph")),
+            in_ws("b1", 1, "w2", Some(2), Some("flankr")),
+            in_ws("b2", 2, "w2", Some(2), Some("flankr")),
+        ];
+        c.set_agents(list.clone(), Duration::ZERO);
+        c.build(&mut router, Duration::ZERO);
+        tap_header(&mut c, "w1");
+        tap_header(&mut c, "w2");
+        c.take_collapsed();
+        c.build(&mut router, Duration::ZERO);
+        assert!(c.row_panes().is_empty());
+        // a2 starts asking: libmorph's group expands, and that is kept.
+        let mut next = list.clone();
+        next[1] = asking(next[1].clone());
+        c.set_agents(next, Duration::ZERO);
+        c.build(&mut router, Duration::ZERO);
+        assert_eq!(c.row_panes(), ["a1", "a2"]);
+        assert_eq!(c.take_collapsed().unwrap().1, ["w2"]);
+        // The session opened in the agent view: its group expands.
+        c.set_open_pane(Some("b1".into()));
+        c.build(&mut router, Duration::ZERO);
+        assert_eq!(c.row_panes(), ["a1", "a2", "b1", "b2"]);
+        assert_eq!(c.take_collapsed().unwrap().1, Vec::<String>::new());
+        // Collapsed after it opened: it stays collapsed.
+        tap_header(&mut c, "w2");
+        c.build(&mut router, Duration::ZERO);
+        assert_eq!(c.row_panes(), ["a1", "a2"]);
     }
 }

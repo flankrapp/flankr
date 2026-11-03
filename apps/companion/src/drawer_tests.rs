@@ -47,6 +47,7 @@ fn remote(n: u8, name: &str, active: bool) -> RemoteInfo {
         nickname: None,
         display_name: name.into(),
         last_session: None,
+        collapsed_workspaces: Vec::new(),
     }
 }
 
@@ -72,6 +73,8 @@ fn agent(pane: &str, tab: u32) -> AgentInfo {
         subagents_running: None,
         children: Vec::new(),
         summary: None,
+        workspace_label: None,
+        workspace_number: None,
     }
 }
 
@@ -207,6 +210,62 @@ fn a_tap_on_the_scrim_closes_it() {
             .iter()
             .all(|f| f.0 == Shown::Overview)
     );
+}
+
+#[test]
+fn a_tap_on_a_workspace_header_collapses_it_and_asks_the_client_to_keep_it() {
+    // Plan 20261103_02, decisions 3.1 and 3.4: p1 and p2 share w1, so it
+    // has a header, above them; a tap collapses it, the drawer stays open,
+    // and the client is asked to keep it for m4. A second tap expands it.
+    let Some(at) = places() else { return };
+    assert_eq!(at.drawer.workspaces, ["w1"]);
+    let header = at.drawer.headers[0];
+    assert!(
+        header.y + header.h <= at.drawer.rows[0].y + 0.5,
+        "above them"
+    );
+    let menu = at.drawer.menu.unwrap();
+    let open = format!("frames {SETTLE}\n{}frames {SLIDE}\n", tap(menu));
+    let at = run(&open, || {}).unwrap();
+    let header = at.drawer.headers[0];
+    let once = format!("{open}{}frames {TAP}\n", tap(header));
+    let p = run(&once, || {}).unwrap();
+    assert!(p.drawer.shown, "the drawer stays open");
+    assert!(p.drawer.panes.is_empty(), "collapsed: {:?}", p.drawer.panes);
+    assert_eq!(p.drawer.workspaces, ["w1"]);
+    assert_eq!(
+        p.inputs
+            .iter()
+            .filter(|i| i.starts_with("SetCollapsedWorkspaces")
+                && i.contains(&format!("{:?}", RemoteId([1; 8])))
+                && i.ends_with("workspaces: [\"w1\"] }"))
+            .count(),
+        1,
+        "{:?}",
+        p.inputs
+    );
+    let twice = format!("{once}{}frames {TAP}\n", tap(header));
+    let p = run(&twice, || {}).unwrap();
+    assert_eq!(p.drawer.panes, ["p1", "p2"]);
+    assert_eq!(inputs_with(&p, "workspaces: [] }"), 1, "{:?}", p.inputs);
+}
+
+#[test]
+fn the_kept_collapsed_groups_come_with_the_remotes_at_start() {
+    // A collapse kept across a restart: the client gives it in the remote
+    // rows, read from the remote's state.redb.
+    let p = run(&format!("frames {SETTLE}\n"), || {
+        let mut m4 = remote(1, "m4", true);
+        m4.collapsed_workspaces = vec!["w1".into()];
+        probe::inject(
+            READY + 1,
+            Event::Remotes(vec![m4, remote(2, "mini", false)]),
+        );
+    });
+    let Some(p) = p else { return };
+    assert_eq!(p.drawer.workspaces, ["w1"]);
+    assert!(p.drawer.panes.is_empty(), "{:?}", p.drawer.panes);
+    assert_eq!(inputs_with(&p, "SetCollapsedWorkspaces"), 0);
 }
 
 #[test]

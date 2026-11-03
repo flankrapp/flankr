@@ -280,6 +280,7 @@ pub(crate) mod tests {
             nickname: None,
             display_name: name.to_string(),
             last_session: None,
+            collapsed_workspaces: Vec::new(),
         }
     }
 }

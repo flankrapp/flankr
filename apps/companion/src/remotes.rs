@@ -589,6 +589,7 @@ mod tests {
             nickname: None,
             display_name: format!("m{n}"),
             last_session: None,
+            collapsed_workspaces: Vec::new(),
         }
     }
 

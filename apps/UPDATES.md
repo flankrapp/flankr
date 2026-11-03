@@ -314,3 +314,10 @@ These changes came before the app had version numbers.
 
 **Fixed**
 - A drag that starts on a question card's record button scrolls the conversation again, from where your finger is once it moves, with no jump. Holding the button still opens your reply typed, and a quick tap still answers by voice.
+
+## 0.7.11 — 2026-11-03
+
+**Added**
+- The drawer groups your sessions under their herdr workspace, in herdr's order: a small header with the workspace's name and how many sessions it has, then its agent sessions by tab, then its shell panes. A workspace with only one session has no header; that session shows its full name, such as "Claude in libmorph, tab -mb".
+- Tap a workspace's header to fold its sessions away, and again to show them. The phone remembers which are folded for each remote, after a restart too. A folded workspace shows a dot while one of its sessions has a question or approval waiting, and opens by itself when one starts waiting or when you open one of its sessions from elsewhere.
+- A new setting, Drawer sessions, under At startup: Grouped by workspace (the default) or Not grouped, which keeps the single list as before.

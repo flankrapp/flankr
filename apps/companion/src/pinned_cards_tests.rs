@@ -42,6 +42,7 @@ pub(super) fn remote() -> RemoteInfo {
         nickname: None,
         display_name: "m4".into(),
         last_session: None,
+        collapsed_workspaces: Vec::new(),
     }
 }
 
@@ -65,6 +66,8 @@ pub(super) fn agent() -> AgentInfo {
         subagents_running: None,
         summary: None,
         children: Vec::new(),
+        workspace_label: None,
+        workspace_number: None,
     }
 }
 

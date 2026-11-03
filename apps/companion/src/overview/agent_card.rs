@@ -413,6 +413,8 @@ pub(crate) mod tests {
             subagents_running: None,
             children: Vec::new(),
             summary: None,
+            workspace_label: None,
+            workspace_number: None,
         }
     }
 

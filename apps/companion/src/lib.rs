@@ -2377,6 +2377,10 @@ impl App {
                 self.open_agent(pane.clone());
                 self.drawer.content_mut().set_open_pane(Some(pane));
             }
+            // The drawer stays open on its new list.
+            DrawerHit::Workspace(id) => {
+                self.drawer.content_mut().toggle_group(&id);
+            }
         }
     }
 
@@ -2609,6 +2613,9 @@ impl App {
             agent.invalidate();
         }
         self.overview.settings_changed();
+        self.drawer
+            .content_mut()
+            .set_grouped(settings.drawer_sessions == settings::DrawerSessions::Grouped);
     }
 
     /// The session speaks in the saved voice, or *Default* when Phonon does
@@ -4686,6 +4693,9 @@ impl MorphApp for App {
             layout: Layout::default(),
         };
         app.startup_pending = app.settings.startup == settings::Startup::LastSession;
+        app.drawer
+            .content_mut()
+            .set_grouped(app.settings.drawer_sessions == settings::DrawerSessions::Grouped);
         app.notifier
             .set_alerts(app.settings.alerts && app.settings.background);
         // The toggle shows the real permission; nothing is asked at start.
@@ -4959,6 +4969,11 @@ impl MorphApp for App {
         if let Some(on) = self.drawer.take_shown_change() {
             log::info!("drawer: {}", if on { "shown" } else { "hidden" });
             self.send(Input::DrawerShown(on));
+        }
+        // A group collapsed or expanded: kept in the remote's state.redb
+        // (plan 20261103_02, decision 3.4).
+        if let Some((id, workspaces)) = self.drawer.content_mut().take_collapsed() {
+            self.send(Input::SetCollapsedWorkspaces { id, workspaces });
         }
         self.settings_closed_for_drawer();
         #[cfg(test)]
@@ -5472,6 +5487,9 @@ pub(crate) mod probe {
         pub cards: Vec<Rect>,
         pub rows: Vec<Rect>,
         pub panes: Vec<String>,
+        /// The grouped drawer's headers, and their workspace ids.
+        pub headers: Vec<Rect>,
+        pub workspaces: Vec<String>,
         pub menu: Option<Rect>,
         pub agent_pane: Option<String>,
         pub settings: bool,
@@ -5664,6 +5682,10 @@ pub(crate) mod probe {
             cards: (0..n).filter_map(|i| d.card_on_screen(i)).collect(),
             rows: (0..rows).filter_map(|i| d.row_on_screen(i)).collect(),
             panes: d.content().row_panes(),
+            headers: (0..d.content().header_ids().len())
+                .filter_map(|i| d.header_on_screen(i))
+                .collect(),
+            workspaces: d.content().header_ids(),
             menu,
             agent_pane: app.agent_pane.clone(),
             settings: app.settings_screen.is_some(),

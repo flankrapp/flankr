@@ -281,6 +281,7 @@ mod tests {
             nickname: None,
             display_name: name.into(),
             last_session: None,
+            collapsed_workspaces: Vec::new(),
         }
     }
 

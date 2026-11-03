@@ -12,7 +12,9 @@
 //!   offers none (plan 20261024_02, the 2026-10-27 11:27 EDT amendment);
 //!   then *At startup*, "‹ Overview ›" or "‹ Last session ›", on
 //!   libcontrols' `SelectableLabel` ([`StartupRow`]; the 2026-10-30 15:20
-//!   EDT amendment);
+//!   EDT amendment); then *Drawer sessions*, "‹ Grouped by workspace ›" or
+//!   "‹ Not grouped ›", on the same row ([`DrawerSessionsRow`]; plan
+//!   20261103_02, decision 2);
 //! - **Display**: *Scrollbar*, "‹ Hidden ›"; then *Appearance* (*System*,
 //!   *Always light*, *Always dark*), *Light theme* and *Dark theme*, the
 //!   themes of each kind by name, each step applied at once; with *Always
@@ -54,7 +56,7 @@
 //!   gone: each remote's X replaces it.
 //!
 //! Rows with a long explanation have an ⓘ that opens it in a modal
-//! ([`InfoModal`]): *Voice*, *General agent*, *Tab follows focus*, *At startup*, *Appearance*, the two above, *Battery optimization*,
+//! ([`InfoModal`]): *Voice*, *General agent*, *Tab follows focus*, *At startup*, *Drawer sessions*, *Appearance*, the two above, *Battery optimization*,
 //! *Samsung battery (app sleeping)*, and the Remotes title. All the copy is in
 //! `copy/SETTINGS_COPY.md` ([`copy`]), drawn as Markdown where it is more than a
 //! label; a link in it is tappable, and the app opens it with libmorph's
@@ -90,7 +92,7 @@ use super::option_row::OptionRow;
 use super::plugin_row::PluginRow;
 use super::remote_details::{self as details, DetailsModal, DetailsState};
 use super::remote_row::{REMOVE_PART, RemoteRow};
-use super::startup_row::StartupRow;
+use super::startup_row::{DrawerSessionsRow, StartupRow};
 use super::toggle_row::ToggleRow;
 use super::voice;
 use super::{Settings, dim_since, scrollbar_label, step_scrollbar};
@@ -180,6 +182,7 @@ enum Info {
     GeneralAgent,
     TabFollowsFocus,
     AtStartup,
+    DrawerSessions,
     Background,
     Alerts,
     Optimization,
@@ -197,6 +200,7 @@ impl Info {
             Info::GeneralAgent => copy::GENERAL_AGENT,
             Info::TabFollowsFocus => copy::TAB_FOLLOWS_FOCUS,
             Info::AtStartup => copy::AT_STARTUP,
+            Info::DrawerSessions => copy::DRAWER_SESSIONS,
             Info::Background => copy::BACKGROUND,
             Info::Alerts => copy::ALERTS,
             Info::Optimization => copy::BATTERY_OPTIMIZATION,
@@ -327,6 +331,7 @@ impl Asking {
             Asking::Info(Info::GeneralAgent) => "info_general_agent",
             Asking::Info(Info::TabFollowsFocus) => "info_tab_follows_focus",
             Asking::Info(Info::AtStartup) => "info_at_startup",
+            Asking::Info(Info::DrawerSessions) => "info_drawer_sessions",
             Asking::Info(Info::Background) => "info_background",
             Asking::Info(Info::Alerts) => "info_alerts",
             Asking::Info(Info::Optimization) => "info_optimization",
@@ -355,6 +360,8 @@ struct Nodes {
     tab_follows_focus: NodeId,
     /// *At startup*, after *Tab follows focus*.
     startup: NodeId,
+    /// *Drawer sessions*, after *At startup*.
+    drawer_sessions: NodeId,
     scrollbar: NodeId,
     appearance: NodeId,
     light_theme: NodeId,
@@ -1095,6 +1102,15 @@ impl SettingsScreen {
             row.label_w = self.label_w(copy::AT_STARTUP.label());
             router.add(under, row)
         };
+        let drawer_sessions = {
+            let mut row = DrawerSessionsRow::new(
+                copy::DRAWER_SESSIONS.label(),
+                self.settings.drawer_sessions,
+                s,
+            );
+            row.label_w = self.label_w(copy::DRAWER_SESSIONS.label());
+            router.add(under, row)
+        };
         let scrollbar = router.add(
             under,
             OptionRow::new(
@@ -1189,6 +1205,7 @@ impl SettingsScreen {
             general_agent,
             tab_follows_focus,
             startup,
+            drawer_sessions,
             scrollbar,
             appearance,
             light_theme,
@@ -1345,6 +1362,11 @@ impl SettingsScreen {
                     if let Some(r) = router.get_mut::<StartupRow>(n.startup) {
                         r.set_rect(rect);
                         r.set_value(settings.startup);
+                    }
+                    let rect = row(&mut y);
+                    if let Some(r) = router.get_mut::<DrawerSessionsRow>(n.drawer_sessions) {
+                        r.set_rect(rect);
+                        r.set_value(settings.drawer_sessions);
                     }
                 }
                 Section::Display => {
@@ -1563,6 +1585,10 @@ impl SettingsScreen {
             r.get::<StartupRow>(n.startup)
                 .map(|row| (row.label.clone(), row.rect)),
         )
+        .chain(
+            r.get::<DrawerSessionsRow>(n.drawer_sessions)
+                .map(|row| (row.label.clone(), row.rect)),
+        )
         .chain([n.optimization, n.vendor].into_iter().filter_map(|id| {
             r.get::<LinkRow>(id)
                 .filter(|_| shown(id))
@@ -1649,6 +1675,14 @@ impl SettingsScreen {
     pub fn startup_shown(&self) -> Option<(String, Rect, Rect)> {
         let n = self.nodes.as_ref()?;
         let row = self.router.get::<StartupRow>(n.startup)?;
+        let (left, right) = row.arrows();
+        Some((row.select.display_string(), left, right))
+    }
+
+    /// The *Drawer sessions* row: its value as shown, and its arrows' rects.
+    pub fn drawer_sessions_shown(&self) -> Option<(String, Rect, Rect)> {
+        let n = self.nodes.as_ref()?;
+        let row = self.router.get::<DrawerSessionsRow>(n.drawer_sessions)?;
         let (left, right) = row.arrows();
         Some((row.select.display_string(), left, right))
     }
@@ -1775,6 +1809,7 @@ impl SettingsScreen {
                 (n.general_agent, Info::GeneralAgent),
                 (n.tab_follows_focus, Info::TabFollowsFocus),
                 (n.startup, Info::AtStartup),
+                (n.drawer_sessions, Info::DrawerSessions),
                 (n.background, Info::Background),
                 (n.alerts, Info::Alerts),
                 (n.optimization, Info::Optimization),
@@ -1827,6 +1862,12 @@ impl SettingsScreen {
                 .router
                 .get::<StartupRow>(n.startup)
                 .map(StartupRow::value)?;
+        } else if target == n.drawer_sessions {
+            step(action)?;
+            s.drawer_sessions = self
+                .router
+                .get::<DrawerSessionsRow>(n.drawer_sessions)
+                .map(DrawerSessionsRow::value)?;
         } else if target == n.background {
             s.background = !s.background;
         } else if target == n.alerts {
@@ -2401,6 +2442,13 @@ impl SettingsScreen {
         {
             return r.info.then(|| r.info_rect().center());
         }
+        if let Some(r) = self
+            .router
+            .get::<DrawerSessionsRow>(n.drawer_sessions)
+            .filter(|r| r.label == label)
+        {
+            return r.info.then(|| r.info_rect().center());
+        }
         [n.optimization, n.vendor]
             .into_iter()
             .filter(|&id| !self.router.flags(id).contains(NodeFlags::HIDDEN))
@@ -2877,6 +2925,38 @@ mod tests {
     }
 
     #[test]
+    fn drawer_sessions_steps_between_grouped_and_not_grouped_under_at_startup() {
+        // Plan 20261103_02, decision 2.
+        use super::super::DrawerSessions;
+        let mut s = plain();
+        let startup = s.row_rect("At startup").unwrap();
+        let r = s.row_rect("Drawer sessions").unwrap();
+        assert_eq!(r.y, startup.y + startup.h, "right after At startup");
+        let (shown, left, right) = s.drawer_sessions_shown().unwrap();
+        assert_eq!(shown, "Grouped by workspace", "the default");
+        assert_eq!(s.settings().drawer_sessions, DrawerSessions::Grouped);
+        assert_eq!(tap(&mut s, left.center()[0], left.center()[1]), None);
+        let Some(SettingsHit::Changed(now)) = tap(&mut s, right.center()[0], right.center()[1])
+        else {
+            panic!("the right arrow steps");
+        };
+        assert_eq!(now.drawer_sessions, DrawerSessions::Flat);
+        assert_eq!(s.drawer_sessions_shown().unwrap().0, "Not grouped");
+        // Kept across a new layout.
+        s.set_layout(Layout { w: 1200.0, ..PHONE });
+        assert_eq!(s.drawer_sessions_shown().unwrap().0, "Not grouped");
+        assert_eq!(
+            copy::DRAWER_SESSIONS
+                .text
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" "),
+            "Group the drawer's sessions under their herdr workspace, in herdr's \
+             order, or list them all together."
+        );
+    }
+
+    #[test]
     fn appearance_steps_and_dims_the_other_kinds_row() {
         let mut s = plain();
         let (right, left) = arrows(&s, "Appearance");
@@ -3071,6 +3151,7 @@ mod tests {
             nickname: None,
             display_name: format!("m{n}"),
             last_session: None,
+            collapsed_workspaces: Vec::new(),
         }
     }
 
@@ -3916,7 +3997,9 @@ mod tests {
                 ready: false,
                 asked: Rc::new(RefCell::new(0)),
             }));
-        s.set_layout(PHONE);
+        // Tall enough that the alerts row is on screen under *Drawer
+        // sessions*.
+        s.set_layout(TALL);
         assert_eq!(s.background_notes(), [copy::NEEDS_UPDATE.text]);
         tap_row(&mut s, ALERTS);
         assert_eq!(
@@ -4061,6 +4144,7 @@ mod tests {
             ("General agent (Gemini)", Info::GeneralAgent),
             ("Tab follows focus", Info::TabFollowsFocus),
             ("At startup", Info::AtStartup),
+            ("Drawer sessions", Info::DrawerSessions),
             (BACKGROUND, Info::Background),
             (ALERTS, Info::Alerts),
             ("Battery optimization", Info::Optimization),

@@ -111,6 +111,7 @@ fn run_timed(
             nickname: None,
             display_name: "m4".into(),
             last_session: None,
+            collapsed_workspaces: Vec::new(),
         }]),
     );
     probe::inject(

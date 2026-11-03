@@ -101,6 +101,71 @@ pub struct Settings {
     /// *At startup* (plan 20261024_02, the 2026-10-30 15:20 EDT
     /// amendment): the overview, or the session last open.
     pub startup: Startup,
+    /// *Drawer sessions* (plan 20261103_02, decision 2): grouped by
+    /// workspace (the default), or not.
+    pub drawer_sessions: DrawerSessions,
+}
+
+/// The values of a settings row on libcontrols' `SelectableLabel`
+/// ([`startup_row::SelectRow`]), in the order its arrows step.
+pub trait Choice:
+    Copy + Default + PartialEq + std::fmt::Display + std::fmt::Debug + 'static
+{
+    fn options() -> &'static [Self];
+
+    /// Its place in [`Choice::options`].
+    fn index(self) -> usize {
+        Self::options().iter().position(|&o| o == self).unwrap_or(0)
+    }
+}
+
+impl Choice for Startup {
+    fn options() -> &'static [Self] {
+        &STARTUP_OPTIONS
+    }
+}
+
+/// How the drawer lists the remote in use's sessions: under a header per
+/// herdr workspace, or in one list.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DrawerSessions {
+    #[default]
+    Grouped,
+    Flat,
+}
+
+/// *Drawer sessions*' values, in the order its arrows step through them.
+pub static DRAWER_SESSIONS_OPTIONS: [DrawerSessions; 2] =
+    [DrawerSessions::Grouped, DrawerSessions::Flat];
+
+impl DrawerSessions {
+    /// As `settings.toml` writes it.
+    pub fn name(self) -> &'static str {
+        match self {
+            DrawerSessions::Grouped => "grouped",
+            DrawerSessions::Flat => "flat",
+        }
+    }
+
+    /// As the screen shows it.
+    pub fn label(self) -> &'static str {
+        match self {
+            DrawerSessions::Grouped => copy::DRAWER_SESSIONS_GROUPED.text,
+            DrawerSessions::Flat => copy::DRAWER_SESSIONS_FLAT.text,
+        }
+    }
+}
+
+impl std::fmt::Display for DrawerSessions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
+impl Choice for DrawerSessions {
+    fn options() -> &'static [Self] {
+        &DRAWER_SESSIONS_OPTIONS
+    }
 }
 
 /// What the app opens on at start: *Overview* or *Last session*.
@@ -129,11 +194,6 @@ impl Startup {
             Startup::Overview => copy::AT_STARTUP_OVERVIEW.text,
             Startup::LastSession => copy::AT_STARTUP_LAST_SESSION.text,
         }
-    }
-
-    /// Its place in [`STARTUP_OPTIONS`].
-    pub fn index(self) -> usize {
-        STARTUP_OPTIONS.iter().position(|&o| o == self).unwrap_or(0)
     }
 }
 
@@ -221,6 +281,7 @@ impl Default for Settings {
             light_theme: None,
             dark_theme: None,
             startup: Startup::Overview,
+            drawer_sessions: DrawerSessions::Grouped,
         }
     }
 }
@@ -265,6 +326,13 @@ struct SettingsFile {
     /// `overview` or `last_session`.
     #[serde(default = "overview")]
     startup: String,
+    /// `grouped` or `flat`.
+    #[serde(default = "grouped")]
+    drawer_sessions: String,
+}
+
+fn grouped() -> String {
+    DrawerSessions::Grouped.name().to_string()
 }
 
 fn overview() -> String {
@@ -384,6 +452,10 @@ impl Settings {
                 .into_iter()
                 .find(|o| o.name() == file.startup)
                 .unwrap_or_default(),
+            drawer_sessions: DRAWER_SESSIONS_OPTIONS
+                .into_iter()
+                .find(|o| o.name() == file.drawer_sessions)
+                .unwrap_or_default(),
         }
     }
 
@@ -407,6 +479,7 @@ impl Settings {
             light_theme: self.light_theme.clone(),
             dark_theme: self.dark_theme.clone(),
             startup: self.startup.name().to_string(),
+            drawer_sessions: self.drawer_sessions.name().to_string(),
         };
         let text = toml::to_string(&file).map_err(|e| e.to_string())?;
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -706,6 +779,7 @@ mod tests {
             light_theme: Some("solarized_light".into()),
             dark_theme: Some("nord".into()),
             startup: Startup::LastSession,
+            drawer_sessions: DrawerSessions::Flat,
         };
         s.save(dir.path()).unwrap();
         assert_eq!(Settings::load(dir.path()), s);
@@ -719,6 +793,7 @@ mod tests {
         assert!(text.contains("light_theme = \"solarized_light\""), "{text}");
         assert!(text.contains("dark_theme = \"nord\""), "{text}");
         assert!(text.contains("startup = \"last_session\""), "{text}");
+        assert!(text.contains("drawer_sessions = \"flat\""), "{text}");
         // *Default* is left out of the file.
         Settings::default().save(dir.path()).unwrap();
         let text = std::fs::read_to_string(dir.path().join(FILE)).unwrap();
@@ -732,6 +807,20 @@ mod tests {
         assert!(text.contains("startup = \"overview\""), "{text}");
         std::fs::write(dir.path().join(FILE), "startup = \"sideways\"\n").unwrap();
         assert_eq!(Settings::load(dir.path()).startup, Startup::Overview);
+        // *Drawer sessions* is grouped unless chosen (plan 20261103_02,
+        // decision 2), in a file without it and with a value it lacks.
+        assert_eq!(
+            Settings::load(dir.path()).drawer_sessions,
+            DrawerSessions::Grouped
+        );
+        std::fs::write(dir.path().join(FILE), "drawer_sessions = \"sideways\"\n").unwrap();
+        assert_eq!(
+            Settings::load(dir.path()).drawer_sessions,
+            DrawerSessions::Grouped
+        );
+        Settings::default().save(dir.path()).unwrap();
+        let text = std::fs::read_to_string(dir.path().join(FILE)).unwrap();
+        assert!(text.contains("drawer_sessions = \"grouped\""), "{text}");
 
         std::fs::write(
             dir.path().join(FILE),

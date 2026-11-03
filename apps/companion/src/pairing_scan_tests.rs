@@ -533,6 +533,7 @@ fn remote(n: u8, name: &str, active: bool) -> flankr_companion::RemoteInfo {
         nickname: None,
         display_name: name.into(),
         last_session: None,
+        collapsed_workspaces: Vec::new(),
     }
 }
 

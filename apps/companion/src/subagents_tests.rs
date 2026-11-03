@@ -37,6 +37,7 @@ fn remote() -> RemoteInfo {
         nickname: None,
         display_name: "m4".into(),
         last_session: None,
+        collapsed_workspaces: Vec::new(),
     }
 }
 
@@ -100,6 +101,8 @@ fn agent(children: Vec<ChildInfo>) -> AgentInfo {
         subagents_running: Some(2),
         summary: None,
         children,
+        workspace_label: None,
+        workspace_number: None,
     }
 }
 

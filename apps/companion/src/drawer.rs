@@ -27,6 +27,7 @@
 //! - a drag in the list scrolls it; a tap on the scrim closes the drawer.
 
 pub mod content;
+pub mod group_header;
 pub mod remote_card;
 pub mod session_row;
 pub mod spinner;
@@ -61,6 +62,9 @@ pub enum DrawerHit {
     Details(RemoteId),
     /// A tap on a session's row: its pane.
     Session(String),
+    /// A tap on a workspace's header in the grouped drawer: its workspace
+    /// id (plan 20261103_02, decision 3.4).
+    Workspace(String),
 }
 
 /// What [`AppDrawer::touch`] did.
@@ -428,6 +432,14 @@ impl AppDrawer {
         let o = self.layout.drawer().sheet_open();
         self.content
             .row_rect(self.layout.content(), i)
+            .map(|r| Rect::new(r.x + o.x, r.y + o.y, r.w, r.h))
+    }
+
+    /// Where header `i` is when the drawer is open, in the app's pixels.
+    pub fn header_on_screen(&self, i: usize) -> Option<Rect> {
+        let o = self.layout.drawer().sheet_open();
+        self.content
+            .header_rect(self.layout.content(), i)
             .map(|r| Rect::new(r.x + o.x, r.y + o.y, r.w, r.h))
     }
 

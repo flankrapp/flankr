@@ -138,6 +138,21 @@ The two speak options, shared by the Sound rows and the volume menu
 
 - text: Last session
 
+# [Copy] drawer_sessions
+
+- title: Drawer sessions
+- text: |
+    Group the drawer's sessions under their herdr workspace, in herdr's
+    order, or list them all together.
+
+# [Copy] drawer_sessions_grouped
+
+- text: Grouped by workspace
+
+# [Copy] drawer_sessions_flat
+
+- text: Not grouped
+
 # [Copy] scrollbar
 
 - text: Scrollbar

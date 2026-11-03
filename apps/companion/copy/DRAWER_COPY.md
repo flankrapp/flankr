@@ -65,3 +65,16 @@ formatted, not copy.
 # [Copy] drawer_session_idle_now
 
 - text: now
+
+A workspace's header in the grouped drawer, when the workspace has no
+label and its first session no project (plan 20261103_02, decision 3.1):
+with herdr's number for it, and without one.
+
+# [Copy] drawer_workspace_number
+
+- [abc] number: herdr's number for the workspace, its place in herdr's sidebar
+- text: Workspace {{ [abc] number }}
+
+# [Copy] drawer_workspace
+
+- text: Workspace
