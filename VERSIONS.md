@@ -1236,3 +1236,16 @@ libflankr_term 0.1.2, both additive.
   drops them. Before, they were refused with an `Event::Error`. Keys into
   a terminal that does not take typing, or is not open, are still
   refused.
+
+## libflankr_proto 0.5.12 — 2026-11-03 (the commit tagged `libflankr_proto-v0.5.12`)
+
+Additive (appended fields, by the owner's ruling that appending to a
+struct is additive; plan 20261103_02, decision 1):
+
+- **Added:** `AgentInfo::workspace_label: Option<String>` (appended,
+  default `None`, not written when `None`): the pane's workspace's label
+  as herdr gives it, absent when the workspace has none. Unlike
+  `project`, never the cwd's basename.
+- **Added:** `AgentInfo::workspace_number: Option<u32>` (appended,
+  default `None`, not written when `None`): herdr's workspace number, its
+  place in herdr's sidebar. An older daemon sends neither.

@@ -235,6 +235,15 @@ pub struct AgentInfo {
     /// or its reader reads none (only Claude Code's does).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<ChildInfo>,
+    /// The pane's workspace's label as written in herdr; absent when the
+    /// workspace has none, or from an older daemon (plan 20261103_02,
+    /// decision 1). Unlike `project`, never the cwd's basename.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_label: Option<String>,
+    /// herdr's workspace number: the workspace's place in herdr's sidebar,
+    /// from 1 (plan 20261103_02, decision 1). Absent from an older daemon.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_number: Option<u32>,
 }
 
 /// The most subagents an [`AgentInfo`] lists.
@@ -2684,6 +2693,8 @@ mod tests {
                         line: "Bash cargo test".to_string(),
                     }),
                 }],
+                workspace_label: None,
+                workspace_number: None,
             }],
             focus: Some(FocusInfo {
                 pane_id: "w2:pZ".to_string(),
@@ -3012,6 +3023,8 @@ mod tests {
             "idle_ms",
             "subagents_running",
             "summary",
+            "workspace_label",
+            "workspace_number",
         ] {
             assert!(shown.get(key).is_none(), "{key} in {shown}");
         }
@@ -3042,12 +3055,29 @@ mod tests {
             spoken: Some("Claude".to_string()),
             tab_label: Some("-mb".to_string()),
             tab_number: Some(4),
-            ..agent
+            ..agent.clone()
         })
         .unwrap();
         assert_eq!(named["name"], "Claude");
         assert_eq!(named["tab_label"], "-mb");
         assert_eq!(named["tab_number"], 4);
+        // The workspace fields (plan 20261103_02, decision 1) are
+        // additive: absent from an older list, on the wire when set.
+        assert_eq!(
+            (&agent.workspace_label, agent.workspace_number),
+            (&None, None)
+        );
+        let grouped = serde_json::to_value(AgentInfo {
+            workspace_label: Some("libmorph".to_string()),
+            workspace_number: Some(3),
+            ..agent.clone()
+        })
+        .unwrap();
+        assert_eq!(grouped["workspace_label"], "libmorph");
+        assert_eq!(grouped["workspace_number"], 3);
+        let back: AgentInfo = serde_json::from_value(grouped).unwrap();
+        assert_eq!(back.workspace_label.as_deref(), Some("libmorph"));
+        assert_eq!(back.workspace_number, Some(3));
         assert_eq!(serde_json::to_value(Empty {}).unwrap(), json!({}));
 
         // A turn is tagged by `state`.

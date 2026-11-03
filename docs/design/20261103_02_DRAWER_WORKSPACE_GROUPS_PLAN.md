@@ -1,7 +1,7 @@
 ---
 title: Workspace groups in the drawer
 date: 2026-11-03
-status: Draft
+status: In implementation
 covers:
   - "A setting, *Drawer sessions*: **Grouped by workspace** or **Not
     grouped**, with libcontrols' `SelectableLabel`, saved on the phone"
@@ -145,3 +145,9 @@ replaces decision 3.6:
 The owner approved the plan as it stands at `a663279` (2026-11-03:
 "Approve the plan"). The first implementing commit sets `In
 implementation`.
+
+## Amendment — 2026-11-03 14:32 EST: implementation started; the document is now immutable
+
+Step 1 has begun: libflankr_proto 0.5.12 appends `workspace_label` and
+`workspace_number` to `AgentInfo`, and `status` is `In implementation`.
+From here the document changes only on the owner's explicit instruction.
