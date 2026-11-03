@@ -510,3 +510,21 @@ Details and Done; Details closes it and opens the remote's details modal.
 modal becomes the remote's details modal in place, with a "Paired with
 <name>" flash at its top for about 3 s on that first open only; the
 "Paired with" screen goes.
+
+## 2026-11-03 13:05 EST — Owner: a hold on record should open text input
+
+Device: Galaxy S23 Ultra (app 0.7.6).
+
+**Report.** "hold on that record should have opened text input".
+
+**Seen** (the phone's log). Two 500 ms holds on the record button, at
+12:59:21 and 13:02:34, each logged `hold: fired Message` and opened the
+message card typed (`dictation: on`, keyboard mode, no listening). After
+the first, nothing was typed until a tap on the card's text area at
+12:59:24 (`agent_hit: PromptText(Message)`), so the soft keyboard did
+not come up on its own; after the second, typing began at 13:02:37 with
+no tap. The card opens; the focus and keyboard after a hold do not always
+follow.
+
+**In hand.** Handed to a subagent to find why the keyboard does not
+always rise after the hold, and fix it.
