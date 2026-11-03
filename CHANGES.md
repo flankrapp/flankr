@@ -3967,3 +3967,32 @@ does the detaching.
    macOS, `/proc/<pid>/exe` on Linux).
 8. **Step 2, `flankr server --stop` and `--foreground`** are refused
    with a line pointing to `flankr serve --stop`.
+
+## 2026-11-02 22:22 EST — the background daemon plan, step 3: checked on the Mac mini
+
+Plan `docs/design/20261102_01_BACKGROUND_DAEMON_PLAN.md`, step 3, with the
+release build of flankr 0.6.0, `--mock`, an isolated HOME and its own
+listen socket (never the real daemon), environment cleared so the
+launchd path is taken:
+
+- `flankr serve` printed `flankr is running on /tmp/claude-501/fbh/f.sock;
+  log: …/daemon-2ab553ba.log` and returned. `launchctl list` showed the
+  finished one-shot job `dev.flankr.server.1793676034540` (status 0); the
+  server (pid 56020) had parent pid 1: started through launchd, out of
+  the job and out of the launching shell's process tree.
+- `flankr serve` again: `flankr is already running on … (pid 56020)`.
+- `flankr serve --stop`: `flankr stopped on … (pid 56020)`, the process
+  gone and its pid file removed; again: `flankr is not running on …`.
+- A start more than 60 s after earlier ones booted out the three finished
+  `dev.flankr.server.*` jobs, leaving only its own.
+- The first try used a socket path too long for a Unix socket; `serve`
+  printed `did not start … within 5 s` with the log's last lines, as
+  decision 1 says.
+
+Not checked: quitting a terminal app with the daemon running. This
+session runs over SSH, with no terminal app to quit; parent pid 1 and the
+launchd job are what that relies on. The step stays open for the owner's
+check from a terminal app. Also seen: each readiness probe leaves one
+`WARN … Refused a connection: cannot read its credentials` line in the
+daemon's log (the probe connects and closes at once); harmless, worth
+quieting later.
