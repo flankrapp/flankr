@@ -1184,6 +1184,8 @@ mod tests {
             status: libherdr::protocol::AgentStatus::Idle,
             focused: false,
             session: None,
+            workspace_label: None,
+            workspace_number: None,
         };
         (home, sessions, pane)
     }

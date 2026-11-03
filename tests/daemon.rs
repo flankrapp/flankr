@@ -462,8 +462,19 @@ async fn start_tabbed() -> (
     Arc<Daemon>,
     FakeHerdr,
 ) {
+    start_with(tabbed_snapshot()).await
+}
+
+async fn start_with(
+    snapshot: Value,
+) -> (
+    tempfile::TempDir,
+    std::path::PathBuf,
+    Arc<Daemon>,
+    FakeHerdr,
+) {
     let dir = tempfile::tempdir().unwrap();
-    let herdr = FakeHerdr::start(&dir.path().join("herdr.sock"), tabbed_snapshot()).await;
+    let herdr = FakeHerdr::start(&dir.path().join("herdr.sock"), snapshot).await;
     let socket = dir.path().join("h.sock");
     let daemon = Daemon::with_turns(
         HerdrClient::local(dir.path().join("herdr.sock")),
@@ -513,6 +524,41 @@ async fn agents_are_listed_with_names_and_tabs() {
             );
         }
     }
+}
+
+/// Plan 20261103_02, step 1: each session carries its workspace's label
+/// and number from herdr's snapshot (herdr 0.9.5's `workspaces` entries
+/// give `label` and `number`); a workspace with no label gives none.
+#[tokio::test]
+async fn agents_carry_their_workspace_label_and_number() {
+    let snapshot = json!({"snapshot": {
+        "workspaces": [
+            {"workspace_id": "w1", "label": "libmorph", "number": 2},
+            {"workspace_id": "w2", "label": "", "number": 1}
+        ],
+        "tabs": [
+            {"tab_id": "w1:t1", "workspace_id": "w1", "number": 1, "label": "-mb"},
+            {"tab_id": "w2:t1", "workspace_id": "w2", "number": 1, "label": "main"}
+        ],
+        "panes": [
+            {"pane_id": "w1:p1", "tab_id": "w1:t1", "workspace_id": "w1",
+             "cwd": "/src/libmorph", "agent": "claude", "agent_status": "idle", "focused": false},
+            {"pane_id": "w2:p1", "tab_id": "w2:t1", "workspace_id": "w2",
+             "cwd": "/src/scratch", "agent_status": "unknown", "focused": false}
+        ]
+    }});
+    let (_dir, socket, _daemon, _herdr) = start_with(snapshot).await;
+    let mut c = Client::hello(&socket, "t").await;
+    let r = c.call("agents.list", json!({})).await;
+    let agents = r["result"]["agents"].as_array().unwrap();
+    let by_pane = |id: &str| agents.iter().find(|a| a["pane_id"] == id).unwrap();
+
+    let labelled = by_pane("w1:p1");
+    assert_eq!(labelled["workspace_label"], "libmorph", "{r}");
+    assert_eq!(labelled["workspace_number"], 2);
+    let unlabelled = by_pane("w2:p1");
+    assert!(unlabelled.get("workspace_label").is_none(), "{r}");
+    assert_eq!(unlabelled["workspace_number"], 1);
 }
 
 #[tokio::test]

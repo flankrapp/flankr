@@ -27,6 +27,11 @@ pub struct AgentRef {
     pub tab_label: Option<String>,
     /// The tab's number, unique within its workspace.
     pub tab_number: Option<u32>,
+    /// The workspace's label as herdr gives it; `None` when it has none
+    /// (plan 20261103_02, decision 1).
+    pub workspace_label: Option<String>,
+    /// herdr's workspace number, its place in herdr's sidebar.
+    pub workspace_number: Option<u32>,
     pub status: AgentStatus,
     pub focused: bool,
     /// The session herdr reports for the pane's agent (plan 20261022_03,
@@ -37,6 +42,7 @@ pub struct AgentRef {
 /// Every pane in the snapshot, once each, as an `AgentRef`.
 pub fn agents(snapshot: &serde_json::Value) -> Vec<AgentRef> {
     let labels = workspace_labels(snapshot);
+    let numbers = workspace_numbers(snapshot);
     let tabs = tab_infos(snapshot);
     let nested_tab_of = nested_tab_ids(snapshot);
     let mut refs: Vec<AgentRef> = Vec::new();
@@ -55,6 +61,8 @@ pub fn agents(snapshot: &serde_json::Value) -> Vec<AgentRef> {
             agent: agent_name_of(pane).unwrap_or_else(|| "shell".to_string()),
             project: project_for(pane, &labels),
             cwd: text("cwd"),
+            workspace_label: text("workspace_id").and_then(|ws| labels.get(&ws).cloned()),
+            workspace_number: text("workspace_id").and_then(|ws| numbers.get(&ws).copied()),
             workspace_id: text("workspace_id"),
             tab_label: tab.and_then(|t| t.label.clone()),
             tab_number: tab.and_then(|t| t.number),
@@ -181,6 +189,24 @@ pub fn workspace_labels(snapshot: &serde_json::Value) -> HashMap<String, String>
         }
     }
     labels
+}
+
+/// Workspace id -> herdr's workspace number, for workspaces that have one.
+pub fn workspace_numbers(snapshot: &serde_json::Value) -> HashMap<String, u32> {
+    snapshot_root(snapshot)
+        .get("workspaces")
+        .and_then(|w| w.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|ws| {
+            let id = ws.get("workspace_id").and_then(|v| v.as_str())?;
+            let number = ws
+                .get("number")
+                .and_then(|v| v.as_u64())
+                .and_then(|n| u32::try_from(n).ok())?;
+            Some((id.to_string(), number))
+        })
+        .collect()
 }
 
 /// The project a pane sits in: its workspace's label, or the basename of its
@@ -423,6 +449,11 @@ mod tests {
         assert_eq!(refs[1].project.as_deref(), Some("highbay"));
         assert_eq!(refs[1].status, AgentStatus::Unknown);
         assert_eq!(refs[1].tab_label, None);
+        // The workspace's own label, never the cwd's basename; no number
+        // where the snapshot gives none.
+        assert_eq!(refs[0].workspace_label.as_deref(), Some("orchestration"));
+        assert_eq!(refs[1].workspace_label, None);
+        assert_eq!(refs[1].workspace_number, None);
     }
 
     #[test]
@@ -466,6 +497,8 @@ mod tests {
         let refs = agents(&snap);
         assert_eq!(refs[0].tab_label.as_deref(), Some("17-hr"));
         assert_eq!(refs[0].tab_number, Some(17));
+        assert_eq!(refs[0].workspace_label.as_deref(), Some("cc-highbay"));
+        assert_eq!(refs[0].workspace_number, Some(2));
         assert_eq!(refs[1].tab_label.as_deref(), Some("-mb"));
         assert_eq!(refs[1].tab_number, Some(3));
     }

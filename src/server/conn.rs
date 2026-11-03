@@ -1027,6 +1027,8 @@ async fn call(
                         tab_label: a.tab_label,
                         tab_number: a.tab_number,
                         focused: a.focused,
+                        workspace_label: a.workspace_label,
+                        workspace_number: a.workspace_number,
                     }
                 })
                 .collect();
