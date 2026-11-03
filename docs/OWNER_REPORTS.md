@@ -336,3 +336,17 @@ the window says *Camera is off for flankr*; refused for good, it adds
 **Open Settings**. Pasting a link works throughout. This reverses the
 16:40 EDT choice for first pairing too (the pairing QR scan plan's
 2026-11-02 22:46 EST amendment).
+
+## 2026-11-02 23:03 EST — Owner: the pairing window was blank
+
+Device: Galaxy S23 Ultra, app 0.7.1 (the report is about the tries at
+22:38 EST, before 0.7.2 was installed at 22:57).
+
+**Report.** "I'm not sure why it didn't show the placeholder either, it
+just showed a blank screen".
+
+**Seen.** Opening the drawer's **+** (`remotes: pairing another`, then
+`drawer: hidden`, at 22:38:26 and 22:38:35) showed a blank screen: no
+*Tap to scan* placeholder, no paste field. The log has no drawing errors.
+Handed to a subagent in its own worktree; 0.7.2 changes what opening does
+(it starts the camera) and may hide or change this.
