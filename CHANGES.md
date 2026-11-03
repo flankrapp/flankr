@@ -4371,3 +4371,19 @@ Departures and readings, within the plan:
 6. herdr 0.9.5's `session.snapshot` gives each workspace `number` and
    `label` (its display name, never empty there); an empty or missing
    label gives no `workspace_label`.
+
+## 2026-11-03 14:59 EST — More and Less at the card's bottom right, below the buttons; app 0.7.12 in its 0.7 series
+
+Plan: the harness protocol plan (20261022_03), living section L3, by its
+2026-11-03 14:49 EST amendment and the 14:57 EST amendment that replaces
+its placement on cards with buttons, from the owner's report of 14:35 EST
+in `docs/OWNER_REPORTS.md`. A fix, so app 0.7.12, a patch, after the
+drawer's 0.7.11. flankr-companion does not change.
+
+Two readings, within the amendments:
+
+1. A conversation summary card that is also a question (one with points)
+   puts its dim "more" below its buttons too, as the pinned cards do.
+2. With no buttons, the link's tap area is as before; with buttons, it is
+   the 40 pt from the row's bottom to the card's, so the card grows by
+   about 10 pt more than the link's line alone.
