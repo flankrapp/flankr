@@ -4155,3 +4155,19 @@ bump it that much while we work this out", it is 0.7.3 instead, as for
 0.7.1. Only the daemon's own pair-mode messages gain optional fields
 (`link.pair_begin`'s `name`, `link.pair_request`'s `already_paired`);
 `libflankr_proto`, flankr-companion and the app do not change.
+
+## 2026-11-03 11:57 EST — `flankr serve --restart` and a stale daemon noticed; the daemon stays in its 0.7 series
+
+Plan: `docs/design/20261102_01_BACKGROUND_DAEMON_PLAN.md`, the 2026-11-03
+11:51 EST amendment as renamed by the 11:53 EST one (`serve --restart`,
+not `serve --replace`). A new flag and a new line, which FLANKR RULE 2
+would make a minor bump (0.8.0); on the owner's instruction "keep the same
+version series", as for 0.7.3, the daemon is 0.7.4 instead, as item 4 of
+the 11:51 EST amendment says.
+
+One reading of item 2, for `flankr pair`: `pair` printed nothing about a
+daemon already running, and still prints nothing when it runs this
+binary's copy. When it runs another copy, `pair` prints the same two
+lines `serve` does (`flankr is already running on <socket> (pid <pid>)`
+and the stale line), so the stale line is never shown without the line
+it follows, then pairs with the running daemon as before.
