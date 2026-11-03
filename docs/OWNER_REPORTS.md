@@ -298,3 +298,23 @@ today?" to Claude?); only a tap on the card or a reply to Gemini answers
 it, never a dictated or typed message; *Not sent: denied.* shows on
 Gemini's card; each line a turn speaks and each question it asks is
 logged.
+
+## 2026-11-02 22:43 EST — Owner: adding a remote does not open the camera
+
+Device: Galaxy S23 Ultra (app 0.7.1).
+
+**Report.** "it didn't open the camera, regardless of the trailscale serve"
+(pairing the MacBook, after `flankr pair` there).
+
+**Seen.**
+- The app logged `remotes: pairing another` at 22:38:26 and 22:38:35
+  (the drawer's **+**), and nothing about the camera or a permission
+  after either: no scanner start, no permission request.
+- `dumpsys package dev.flankr.companion`: `android.permission.CAMERA:
+  granted=false, flags=[… ONE_TIME]`: the camera was once allowed "only
+  this time", and Android has since revoked it. The add screen neither
+  asks again nor says the camera is off.
+- Separately, the MacBook's daemon could not be reached anyway: its link
+  listens on 127.0.0.1:7347 and Tailscale did not forward the port.
+
+Handed to a subagent in its own worktree.
