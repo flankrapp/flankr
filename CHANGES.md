@@ -4005,3 +4005,35 @@ owner's instruction (2026-11-02): the daemon no longer reads the key from
 explicit `api_key_file`, the macOS Keychain, then a file in flankr's
 config folder, and `flankr key set|import|status gemini` store and report
 it without it reaching a command line or a log.
+
+## 2026-11-02 23:05 EST — The Gemini key store: small departures in steps 1 and 2
+
+Plan: `docs/design/20261102_02_GEMINI_KEY_STORE_PLAN.md`, steps 1 and 2
+(flankr 0.7.0). Small departures needed to make it work:
+
+1. **Step 1, decision 8: two guards keep the Keychain from tests.** Only
+   `src/main.rs` adds the Keychain (`KeyEnv::with_keychain`); the library
+   never makes one on its own. `with_keychain` adds nothing when
+   `FLANKR_KEY_STORE=file` is set, or when `HOME` is not the account's
+   home folder from the user database (a test's temporary `HOME`), so a
+   test that forgets the variable still cannot reach the login keychain.
+   `flankr key status` shows such a skip as `Keychain (dev.flankr/gemini):
+   skipped (<why>)`. `FLANKR_KEY_STORE` is not among the variables the
+   background daemon is given (plan 20261102_01, decision 3, unchanged).
+2. **Step 1, decision 1: a refused source stops the lookup.** A key file
+   others can read, or a Keychain error other than "not found" or
+   "locked", makes that backend unavailable with the refusal and its fix,
+   rather than passing on to the next source; a missing file or a locked
+   Keychain passes on. A named `api_key_file` that does not exist passes
+   on to the Keychain and the rest, as "first found wins" says.
+3. **Step 1: the Keychain is not watched.** A running daemon re-reads the
+   key files when they change; a key set in the Keychain is read at the
+   next start, or the next re-read of `[llm]` (a change to config.toml or
+   a key file).
+4. **Step 1: `.env` is still loaded, without the key.** `RUST_LOG`,
+   `HERDR_SOCKET_PATH` and the other variables flankr and libherdr read
+   may come from it, so it is loaded as before (never over the
+   environment) but a `GEMINI_API_KEY` line is skipped with a one-line
+   note.
+5. **Steps 1 and 2 in one commit**, so the daemon's version moves once
+   (0.6.2 to 0.7.0, FLANKR RULE 2).
