@@ -4130,3 +4130,16 @@ daemon no longer offers the device code), which Rule 5.4 would make
 0.9.0; it is released as 0.8.1 instead, its `VERSIONS.md` entry saying
 so, and flankr-audio is not bumped (Rule 5.5 does not apply to a patch).
 The app goes 0.7.3 to 0.7.4.
+
+## 2026-11-03 00:17 EST — No pairing from loopback addresses: the mixed link's test
+
+Plan: `docs/design/20261028_01_MULTIPLE_REMOTES_PLAN.md`, the 2026-11-03
+00:07 EST amendment, item 4. Its **Done when:** asks for a mixed link
+"paired at its non-loopback address only". flankr-companion's test daemon
+listens only on 127.0.0.1, so the integration test
+(`a_mixed_link_drops_its_loopback_addresses_on_a_phone`) gives a link of
+the daemon's loopback address and `box.invalid:7347`: the daemon is never
+connected to and the pairing ends as `PairUnreachable` for
+`box.invalid:7347` alone, named `box`. That the remaining addresses are
+then paired as any link's are is covered by `scan`'s unit test
+(`a_link_drops_its_loopback_addresses`) and the unchanged pairing path.
