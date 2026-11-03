@@ -387,3 +387,26 @@ address, so it can never complete.
 amendment (no QR code or URL for an offer only the machine can reach),
 being built. The phone side, for a link that names only loopback addresses
 (from an older daemon, or pasted), is handed to a subagent.
+
+## 2026-11-03 00:20 EST — Owner: the 127.0.0.1 pairing code and the device code, done
+
+This follows the entry "a pairing code for 127.0.0.1 offers a device code
+that cannot work".
+
+**Cause.** The device code only adds the phone's key on the computer; the
+pairing completes when the phone then reaches the daemon at the same
+addresses from the same link. With none reachable, the code could never
+complete.
+
+**Done.**
+- **Computer** (daemon 0.7.1, the link VPN plan's 23:53 EST amendment):
+  `flankr pair` shows no QR code or link when the daemon is reachable only
+  from that machine, and says how to make it reachable; with Tailscale it
+  now adds the forward itself.
+- **Phone** (client 0.8.1, app 0.7.4, the multiple remotes plan's
+  2026-11-03 00:07 EST amendment): a code that names only 127.0.0.1, ::1 or
+  localhost is refused without connecting: *This pairing code only works on
+  the computer that made it…*, with the two fixes; loopback addresses in a
+  mixed code are dropped; when no address takes a connection the phone says
+  *Can't reach …* and offers no device code. The device code is kept only
+  where it can work.
