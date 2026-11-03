@@ -306,3 +306,22 @@ Adds to decision 1:
    `--foreground` refused, and the stale-daemon line (a replaced file, a
    different path, an unreadable one); `install.sh --restart` restarts
    the MacBook's daemon onto the installed build.
+
+## Amendment — 2026-11-03 11:53 EST: `serve --restart`, not `serve --replace`
+
+On the owner's instruction (Rule 1.5), 2026-11-03: "that might be
+confusing, since pair also launches serve and --replace has a different
+meaning there", then, offered `--restart`, "yes, write it and build with
+--restart". This replaces the flag's name in the 2026-11-03 11:51 EST
+amendment, items 1, 2, 3 and 5:
+
+1. **The flag is `flankr serve --restart`**, everywhere that amendment
+   says `serve --replace`, with the same behaviour. `--restart` goes with
+   neither `--stop` nor `--foreground`.
+2. **The stale-daemon line** ends `run flankr serve --restart to restart
+   it.`
+3. **`scripts/install.sh --restart`** runs `~/.local/bin/flankr serve
+   --restart`.
+4. **`flankr pair`** keeps `--replace` for a paired name only (the link
+   and companion plan's 2026-11-03 11:40 EST amendment); it does not take
+   `--restart`, and neither flag is passed to a daemon it starts.
