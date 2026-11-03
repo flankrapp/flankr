@@ -4171,3 +4171,14 @@ binary's copy. When it runs another copy, `pair` prints the same two
 lines `serve` does (`flankr is already running on <socket> (pid <pid>)`
 and the stale line), so the stale line is never shown without the line
 it follows, then pairs with the running daemon as before.
+
+## 2026-11-03 12:01 EST — the background daemon plan's serve --restart, checked on the MacBook
+
+Plan 20261102_01, the 2026-11-03 11:51 EST amendment as renamed at 11:53
+EST, item 5's last check: `scripts/install.sh --restart --remote
+timothys-macbook-pro-1` installed flankr 0.7.4 (b9d1b0d) there and ran
+`serve --restart`; the MacBook's daemon went from pid 68786 to 89145, on
+the new build, with its Tailscale forward and key file as before. On the
+Mac mini, a plain install left the running daemon (pid 58981) on 0.7.3,
+and `flankr serve` said: "It runs an older copy of
+/Users/tmeade/.local/bin/flankr; run flankr serve --restart to restart it."
