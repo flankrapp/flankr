@@ -4402,3 +4402,9 @@ result carries only the command's output, with no exit code at all
 (Claude Code writes `Exit code <n>` only when the command fails), so
 `parse_command_exit_code` found none and `fails_tests` went on to read
 the counts.
+
+## 2026-11-03 15:26 EST — workspace groups in the drawer, step 3: checked on the S23
+
+Plan 20261103_02, step 3. With app 0.7.11 or later and daemon 0.7.6 or
+later on both Macs, the owner checked the drawer on the Galaxy S23 Ultra
+and reported (2026-11-03): "grouping works".
