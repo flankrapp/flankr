@@ -398,3 +398,25 @@ items 5 and 6 stand.
    submit types the message into the agent's terminal: the text and Enter
    go to the pane, so it shows in the terminal, and the view stays on the
    terminal. Gemini's card still goes to Gemini.
+
+## Amendment — 2026-11-03 17:47 EST: Claude Code's input bar is its prompt's box, a titled rule included
+
+On the owner's report of 2026-11-03 17:34 EST in `docs/OWNER_REPORTS.md`:
+"The keyboard should still be shown when the input line is tapped", and,
+asked whether a tap on the input line had failed to raise it, "Yes". This
+replaces decision 3's Claude Code item ("the rows between the two
+full-width horizontal rules (`─`) nearest the bottom that enclose a line
+starting `>` or `❯` after optional box characters"); the other items, and
+decision 4, stand.
+
+1. **A rule may carry a title.** Today's Claude Code writes the session's
+   name into the rule above its prompt (`───── Fix the build ─`), so in a
+   named session no pair of plain rules enclosed the prompt and no input
+   bar was found; Claude Code hides the terminal cursor, so decision 4's
+   cursor row did not stand in. A titled rule is a row whose text,
+   trimmed, starts and ends with `─`, has one run of other text between,
+   and is at least four fifths of the frame's width, as a plain rule is.
+   Either of the two rules may be one.
+2. **The bar is the box, rules included.** Claude Code's input bar is the
+   two rules and the rows between them, so an empty prompt is three rows
+   to tap and not one (at a phone's fit, one row is about 3 mm high).
