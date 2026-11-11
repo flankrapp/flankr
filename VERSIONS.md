@@ -1279,3 +1279,17 @@ amendment, item 1):
   question after it. Unlike `status`, every delivery carries it as it
   stands, so a delivery without it says the agent is not thinking. The
   thinking text is never sent. An older daemon never sends it.
+
+## flankr-companion 0.8.5 — 2026-11-11 (the commit tagged `flankr-companion-v0.8.5`)
+
+Additive (a field appended to a variant of the `#[non_exhaustive]`
+`Event`, by the owner's ruling that appending is additive; plan
+20261023_03, the 2026-11-11 16:27 EST amendment). A pattern that names
+every field of `Event::AgentView` without `..` has to name the new one.
+It takes libflankr_proto 0.5.13, additive.
+
+- **Added:** `Event::AgentView::thinking: bool`: the agent is thinking,
+  as the view's last `session.delivery` said (`SessionDelivery::thinking`);
+  the view is given again when it changes. Never kept: `false` for a view
+  with no session, restored from the cache, parked, or whose
+  subscription went with its connection.

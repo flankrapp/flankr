@@ -254,9 +254,13 @@ fn print_event(event: Event) {
             children: _,
             cached,
             ended,
+            thinking,
         } => {
             if cached {
                 println!("* cached");
+            }
+            if thinking {
+                println!("* thinking");
             }
             if ended {
                 println!("* this session has ended");

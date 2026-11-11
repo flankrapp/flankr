@@ -908,6 +908,13 @@ pub enum Event {
         /// and the app says *This session has ended* (item 4). Added in
         /// 0.7.3.
         ended: bool,
+        /// The agent is thinking, as the session's last delivery said
+        /// (`SessionDelivery::thinking`): the app shows a temporary line
+        /// at the list's end (plan 20261023_03, the 2026-11-11 16:27 EST
+        /// amendment). Never kept: `false` in a view restored from the
+        /// cache, once parked, and once its subscription is gone. Added in
+        /// 0.8.5.
+        thinking: bool,
     },
     /// An agent finished a turn: a new Finished card, on the overview's
     /// list or in the agent view (plan 20261024_02, decision 3). Play the
@@ -1819,6 +1826,8 @@ struct AgentView {
     /// Restored, and then the session was no longer listed or the
     /// subscription said there is none: *This session has ended* (item 4).
     ended: bool,
+    /// The agent is thinking, as the last delivery said.
+    thinking: bool,
 }
 
 impl AgentView {
@@ -1858,6 +1867,7 @@ impl AgentView {
             session_id: None,
             cached: false,
             ended: false,
+            thinking: false,
         }
     }
 
@@ -1965,6 +1975,7 @@ impl AgentView {
     /// reopens at the bottom (the 12:12 EDT amendment, items 1 and 3).
     fn park(&mut self) {
         self.subscription = None;
+        self.thinking = false;
         self.subscribing = false;
         self.history = false;
         self.in_flight = 0;
@@ -2181,6 +2192,7 @@ fn same_view(a: &Event, b: &Event) -> bool {
                 children,
                 cached,
                 ended,
+                thinking,
             },
             Event::AgentView {
                 name: name_b,
@@ -2201,6 +2213,7 @@ fn same_view(a: &Event, b: &Event) -> bool {
                 children: children_b,
                 cached: cached_b,
                 ended: ended_b,
+                thinking: thinking_b,
             },
         ) => {
             name == name_b
@@ -2219,6 +2232,7 @@ fn same_view(a: &Event, b: &Event) -> bool {
                 && children == children_b
                 && cached == cached_b
                 && ended == ended_b
+                && thinking == thinking_b
                 && sections == sections_b
         }
         _ => a == b,
@@ -2807,6 +2821,7 @@ impl State {
         // connection, and its approvals are withdrawn.
         if let Some(v) = self.view.as_mut() {
             v.subscription = None;
+            v.thinking = false;
             v.subscribing = false;
             v.history = false;
             v.in_flight = 0;
@@ -3662,6 +3677,7 @@ impl State {
                 .unwrap_or_default(),
             cached: v.cached,
             ended: v.ended,
+            thinking: v.thinking,
         })
     }
 
@@ -6191,6 +6207,8 @@ impl State {
         if let Some(question) = d.pending_question.take() {
             v.pending_question = question;
         }
+        // Every delivery says whether the agent thinks.
+        v.thinking = d.thinking && d.session.is_some();
         if d.epoch.is_some() && !v.outline_mode {
             log::info!("view: the daemon sends outlines");
             v.outline_mode = true;
@@ -8856,6 +8874,45 @@ mod tests {
         let v = s.view.as_ref().unwrap();
         assert_eq!(v.status, "working");
         assert!(v.pending_question.is_none(), "null clears it");
+    }
+
+    /// Plan 20261023_03, the 2026-11-11 16:27 EST amendment: every
+    /// delivery says whether the agent thinks, and the view gives it on.
+    #[test]
+    fn the_view_thinks_while_its_deliveries_say_so() {
+        let mut s = viewing("working", asking());
+        let thinking = |s: &State| match s.agent_view() {
+            Some(Event::AgentView { thinking, .. }) => thinking,
+            other => panic!("{other:?}"),
+        };
+        assert!(!thinking(&s));
+        let think = |s: &mut State, on: bool| {
+            s.incoming(note(
+                "session.delivery",
+                json!({"subscription_id": 1, "pane_id": "w2:pZ", "agent": "claude",
+                    "session": {"session_id": "s1", "matched": "id"}, "reason": null,
+                    "thinking": on}),
+            ))
+        };
+        let out = think(&mut s, true);
+        assert!(
+            out.iter()
+                .any(|o| matches!(o, Output::Event(Event::AgentView { thinking: true, .. }))),
+            "the view is given again: {out:?}"
+        );
+        assert!(thinking(&s));
+        // A delivery without it: no longer.
+        deliver(&mut s, vec![text_at(3, 0, "Here it is.")], vec![]);
+        assert!(!thinking(&s));
+        think(&mut s, true);
+        assert!(thinking(&s));
+        // No session: not thinking.
+        s.incoming(note(
+            "session.delivery",
+            json!({"subscription_id": 1, "pane_id": "w2:pZ", "agent": "claude",
+                "session": null, "reason": "no_session", "thinking": true}),
+        ));
+        assert!(!thinking(&s));
     }
 
     /// The sections, as (line, slot, kind), in the order the view holds.
