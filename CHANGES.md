@@ -4555,3 +4555,41 @@ so it is the notice. Two readings, within the amendment:
    already types its text and Enter into the pane, and the view stays on
    the terminal; only the typed-response box, which the terminal now
    shows for itself, is left out over it.
+
+## 2026-11-11 16:43 EST — A thinking Claude Code session shows a temporary spinner line; libflankr_proto 0.5.13, daemon 0.7.11, flankr-companion 0.8.5, app 0.7.20
+
+Plan: the session subscriptions plan (20261023_03), by its 2026-11-11
+16:27 EST amendment (items 1 to 6); A1's "thinking forms no section"
+stands. Versions in their series, as the owner asked: libflankr_proto
+0.5.13 (`SessionDelivery::thinking`, appended), the daemon 0.7.11 with no
+`UPDATES.md` entry (the person running `flankr` sees nothing new),
+flankr-companion 0.8.5 (`Event::AgentView::thinking`, appended) and the
+app 0.7.20 with its `apps/UPDATES.md` entry.
+
+How it is read, within the amendment:
+
+1. **Where the word comes from.** `LineReader::parse_line_noting` gives,
+   beside a line's entries, what it says of thinking. Claude Code's
+   readers say *thinking* for an assistant line whose last block that
+   shows is `thinking` or `redacted_thinking`; *not* for one ending in
+   text or a tool call, for the user's lines (a prompt, a tool's result,
+   an interruption) and for `turn_duration`, the turn's end; and nothing
+   for the rest (`isMeta` lines, attachments, other system lines,
+   bookkeeping, other subagents' lines), which leave it as it was. The
+   tailer keeps the newest line's word as it reads, through every file
+   of a continued session, so the newest file's lines decide.
+2. **Item 3's "the turn ends"** is also herdr's word: the field is
+   cleared while herdr says idle or done, and while a question is
+   pending.
+3. **Every delivery carries it as it stands**, unlike `status` and
+   `pending_question`, which are carried only when they change: a
+   delivery without it says the agent is not thinking. A change of it
+   alone makes a delivery.
+4. **The spinner's clock** is the view's own, started when the line
+   comes and run on by the view's tick while the line shows in the list,
+   with the drawer's frames and 80 ms; so it is not in step with the
+   drawer's rows, which the drawer is never shown beside. A frame is
+   asked for only when it steps.
+5. The line's height is part of the list's end, so a view at its end
+   follows it into view, and one scrolled back does not move, as item 2
+   asks.
