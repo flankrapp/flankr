@@ -940,3 +940,31 @@ the same time):
    button back to the overview, instead of an empty view.
 5. **Versions.** flankr-companion takes the next patch (additive); the
    app's version is moved by the settings plan's amendment.
+
+## Amendment — 2026-11-11 16:27 EST: a thinking Claude Code session shows a temporary spinner line
+
+On the owner's instruction (Rule 1.5), 2026-11-03: "we should probably show
+thinking as a temporary text section just the statusor braille spinner";
+then, offered the items below, "Approve the plan". This adds to A1's
+"Entries of other kinds (thinking, system lines the readers already drop)
+form no section", which stands: thinking still forms no section.
+
+1. **The daemon notices thinking.** When a Claude Code session's newest
+   entry is a `thinking` or `redacted_thinking` block with no text, tool
+   call or question after it in the same turn, the session's live activity
+   carries `thinking: true` (an added optional field, absent when false).
+   The thinking text is never sent.
+2. **The app shows a temporary line** at the end of the list view while it
+   is set: the Braille spinner (the drawer's, 80 ms frames) and *Thinking…*,
+   dim, in the transcript's type. It is not a section, not kept in the
+   view's history or cache, has no card, and is not scrolled to unless the
+   view is already at its end.
+3. **It goes** as soon as the next text, tool call or question arrives, or
+   the turn ends; a later thinking block brings it back.
+4. **Terminal view** shows nothing for it; the agent's screen shows its own
+   thinking.
+5. **Claude Code only** for now; other readers may set the field later.
+6. **Versions,** in their series: libflankr_proto a patch for the field,
+   the daemon a patch with no `UPDATES.md` entry unless the person running
+   `flankr` sees it, flankr-companion a patch if it changes, and the app a
+   patch with its `apps/UPDATES.md` entry.
