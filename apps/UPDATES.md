@@ -370,3 +370,8 @@ These changes came before the app had version numbers.
 **Changed**
 - In terminal view the agent's own screen is where you answer it. When Claude asks a question, a one-line notice above the terminal says so ("Claude is asking — answer in the terminal") in place of the question card; it goes once the question is answered.
 - Over the terminal, only a Finished card's line and an approval flankr needs from you still show. Something broke, *While you spoke* and the message you just sent no longer show over the terminal; the terminal shows the message itself. Switch to the list view to see them.
+
+## 0.7.20 — 2026-11-11
+
+**Added**
+- While Claude is thinking, the session shows a spinner and Thinking… at its end.

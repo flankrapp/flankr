@@ -146,6 +146,7 @@ pub(super) fn view(card: AgentCard) -> Event {
         children: Vec::new(),
         cached: false,
         ended: false,
+        thinking: false,
     }
 }
 

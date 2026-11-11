@@ -171,6 +171,7 @@ fn view(child: Option<&str>, children: Vec<ChildInfo>) -> Event {
         children,
         cached: false,
         ended: false,
+        thinking: false,
     }
 }
 

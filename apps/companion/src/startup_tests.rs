@@ -195,6 +195,7 @@ fn view(cached: bool, ended: bool) -> Event {
         children: Vec::new(),
         cached,
         ended,
+        thinking: false,
     }
 }
 

@@ -1216,6 +1216,7 @@ impl App {
                 children,
                 cached,
                 ended,
+                thinking,
             } => {
                 // Paths and commit hashes as preview links (plan
                 // 20261028_05, decision 10.1).
@@ -1240,6 +1241,10 @@ impl App {
                     // 15:20 EDT amendment, items 3 and 4).
                     agent.set_cached(cached);
                     agent.set_ended(ended);
+                    // A temporary line at the list's end while the agent
+                    // thinks (plan 20261023_03, the 2026-11-11 16:27 EST
+                    // amendment).
+                    agent.set_thinking(thinking);
                 }
             }
             // The audio played the chime.

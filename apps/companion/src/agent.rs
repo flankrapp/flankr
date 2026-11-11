@@ -121,9 +121,16 @@ pub fn accent(kind: CardKind) -> [f32; 4] {
     }
 }
 
+/// The temporary line at the list's end while the agent is thinking (plan
+/// 20261023_03, the 2026-11-11 16:27 EST amendment, item 2), after the
+/// drawer's spinner.
+pub const THINKING: &str = "Thinking\u{2026}";
+
 /// Type sizes, in points.
 const TEXT_PT: f32 = 15.0;
 const TOOL_PT: f32 = 13.0;
+/// The space above the thinking line, as above an entry's text.
+const THINKING_GAP: f32 = 10.0;
 const TITLE_PT: f32 = 15.0;
 const CARD_PT: f32 = 19.0;
 const NAME_PT: f32 = 18.0;
@@ -2838,6 +2845,13 @@ pub struct AgentScreen {
     keys_row: bool,
     /// CTRL and ALT latched on the keys row, for the next key.
     term_latch: Latch,
+    /// The agent is thinking (`Event::AgentView::thinking`): a temporary
+    /// line at the list's end, not a section, not kept.
+    thinking: bool,
+    /// The thinking line's spinner clock, run on while the line shows,
+    /// and the frame last drawn.
+    spin: Duration,
+    spin_frame: usize,
     /// Blocks laid out, counted for the tests.
     #[cfg(test)]
     block_layouts: usize,
@@ -3307,11 +3321,60 @@ impl AgentScreen {
     /// padding.
     fn ribbon_height(&self) -> f32 {
         let s = self.scale();
-        let end = match (self.tops.last(), self.slots.last()) {
-            (Some(top), Some(slot)) => top + slot.height,
-            _ => ribbon_top(s),
+        let end = self.blocks_end();
+        let thinking = if self.thinking_shown() {
+            THINKING_GAP * s + term_h(TEXT_PT * s)
+        } else {
+            0.0
         };
-        end + 16.0 * s
+        end + thinking + 16.0 * s
+    }
+
+    /// The end of the last block in the flow, or of the marker row.
+    fn blocks_end(&self) -> f32 {
+        match (self.tops.last(), self.slots.last()) {
+            (Some(top), Some(slot)) => top + slot.height,
+            _ => ribbon_top(self.scale()),
+        }
+    }
+
+    /// Whether the thinking line is in the list: while the agent thinks,
+    /// in a session that has not ended.
+    fn thinking_shown(&self) -> bool {
+        self.thinking && !self.ended
+    }
+
+    /// The agent is thinking, or no longer (plan 20261023_03, the
+    /// 2026-11-11 16:27 EST amendment, items 2 and 3): the line at the
+    /// list's end comes or goes. A view at its end follows it into view;
+    /// one scrolled back stays where it is.
+    pub fn set_thinking(&mut self, on: bool) {
+        if on == self.thinking {
+            return;
+        }
+        self.thinking = on;
+        self.spin = Duration::ZERO;
+        self.spin_frame = 0;
+        self.flow_stale = true;
+        self.settle();
+    }
+
+    /// The thinking line, in flow coordinates, with its spinner's frame
+    /// now, while it shows in the list.
+    pub fn thinking_line(&self) -> Option<Row> {
+        if !self.thinking_shown() {
+            return None;
+        }
+        let s = self.scale();
+        let glyph = crate::drawer::spinner::glyph_at(self.spin);
+        Some(Row {
+            text: format!("{glyph} {THINKING}"),
+            x: PAD * s,
+            y: self.blocks_end() + THINKING_GAP * s,
+            px: TEXT_PT * s,
+            color: theme().dim,
+            mono: true,
+        })
     }
 
     /// The marker row's text: "loading earlier…", "start of session", or
@@ -6131,6 +6194,7 @@ impl AgentScreen {
         let moved = self.step(dt);
         self.step_bar(dt);
         self.step_pull(dt);
+        self.step_spin(dt);
         // The prompt overlay's slide and its history's fling.
         if self.prompts.tick(dt) {
             self.dirty = true;
@@ -6151,6 +6215,20 @@ impl AgentScreen {
             self.dirty = true;
         }
         moved
+    }
+
+    /// The thinking line's spinner: a frame each time it steps (80 ms),
+    /// and only while the line shows in the list; none in terminal view.
+    fn step_spin(&mut self, dt: Duration) {
+        if !self.thinking_shown() || self.term_shown {
+            return;
+        }
+        self.spin += dt;
+        let frame = crate::drawer::spinner::frame_at(self.spin);
+        if frame != self.spin_frame {
+            self.spin_frame = frame;
+            self.dirty = true;
+        }
     }
 
     /// The scrollbar: fully visible while scrolling and `BAR_HOLD` after,
@@ -6294,6 +6372,14 @@ impl AgentScreen {
                 if inactive && is_answer(b.hit) {
                     crate::settings::dim_since(list, start);
                 }
+            }
+        }
+        // The thinking line, dim, at the list's end (the 2026-11-11 16:27
+        // EST amendment, item 2).
+        if let Some(row) = self.thinking_line() {
+            let h = term_h(row.px);
+            if visible(row.y, h) {
+                link_spans::draw(list, ctx, term, &row, &[], [row.x, row.y + dy]);
             }
         }
         if let Some(button) = self.ended_button() {
@@ -7164,6 +7250,78 @@ mod tests {
             2.0,
         );
         assert!(finished.buttons.is_empty());
+    }
+
+    /// Plan 20261023_03, the 2026-11-11 16:27 EST amendment, items 2 to 4.
+    #[test]
+    fn thinking_is_a_temporary_spinning_line_at_the_lists_end() {
+        use crate::drawer::spinner::FRAMES;
+        let mut a = screen(conversation(20), vec![], None);
+        let slots = a.slots.len();
+        let texts = a.flow_texts();
+        let end = a.max_offset();
+        assert!(a.thinking_line().is_none());
+        a.set_thinking(true);
+        let row = a.thinking_line().expect("the line while it thinks");
+        assert_eq!(row.text, format!("{} {THINKING}", FRAMES[0]));
+        assert!(row.mono && row.color == theme().dim);
+        assert_eq!(row.px, TEXT_PT * a.scale(), "in the transcript's type");
+        // Not a section, and not among the flow's rows.
+        assert_eq!(a.slots.len(), slots);
+        assert_eq!(a.flow_texts(), texts);
+        // After the last section, and followed into view from the end.
+        assert!(row.y >= a.blocks_end());
+        assert!(row.y + term_h(row.px) <= a.ribbon_height());
+        assert!(a.max_offset() > end);
+        assert_eq!(a.offset(), a.max_offset());
+        assert!(a.draw(&mut DrawList::new(), &DrawContext::default(), None));
+        // A frame each time the spinner steps, at 80 ms.
+        a.dirty = false;
+        a.tick(Duration::from_millis(40));
+        assert!(!a.dirty);
+        a.tick(Duration::from_millis(40));
+        assert!(a.dirty);
+        assert!(a.thinking_line().unwrap().text.starts_with(FRAMES[1]));
+        // Gone with the field: the list as before, and no more frames.
+        a.set_thinking(false);
+        assert!(a.thinking_line().is_none());
+        assert_eq!(a.max_offset(), end);
+        assert_eq!(a.offset(), end);
+        a.dirty = false;
+        for _ in 0..20 {
+            a.tick(Duration::from_millis(80));
+        }
+        assert!(!a.dirty, "no frames once it has gone");
+    }
+
+    #[test]
+    fn thinking_does_not_move_a_view_scrolled_back_nor_spin_over_the_terminal() {
+        let mut a = screen(conversation(20), vec![], None);
+        let t = drag(&mut a, 1000.0, 1400.0, 10, Duration::ZERO);
+        a.touch(
+            1,
+            TouchPhase::Ended,
+            540.0,
+            1400.0,
+            t + Duration::from_millis(200),
+        );
+        assert!(!a.following());
+        let back = a.offset();
+        a.set_thinking(true);
+        assert!(a.thinking_line().is_some());
+        assert_eq!(a.offset(), back, "not scrolled to");
+        // In terminal view: nothing drawn for it, and no frames.
+        a.set_thinking(false);
+        a.set_terminal_shown(true);
+        a.set_thinking(true);
+        for _ in 0..30 {
+            a.tick(Duration::from_millis(80));
+        }
+        a.dirty = false;
+        for _ in 0..20 {
+            a.tick(Duration::from_millis(80));
+        }
+        assert!(!a.dirty, "no spinner frames over the terminal");
     }
 
     #[test]
