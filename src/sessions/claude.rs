@@ -293,6 +293,10 @@ impl LineReader for ClaudeCode {
     fn parse_line(&self, line: &str) -> Vec<Item> {
         parse_line(line, false)
     }
+
+    fn parse_line_noting(&self, line: &str) -> (Vec<Item>, Option<bool>) {
+        parse_line_noting(line, false)
+    }
 }
 
 /// The reader of a subagent's own transcript
@@ -311,6 +315,10 @@ impl LineReader for ClaudeChild {
 
     fn parse_line(&self, line: &str) -> Vec<Item> {
         parse_line(line, true)
+    }
+
+    fn parse_line_noting(&self, line: &str) -> (Vec<Item>, Option<bool>) {
+        parse_line_noting(line, true)
     }
 }
 
@@ -332,10 +340,65 @@ pub fn is_child_path(path: &Path) -> bool {
 /// skips the lines of subagents (`isSidechain`); a subagent's own
 /// transcript (`sidechain`) is made of them.
 fn parse_line(line: &str, sidechain: bool) -> Vec<Item> {
+    match serde_json::from_str::<Value>(line) {
+        Ok(v) => parse_value(&v, sidechain),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// As [`parse_line`], with what the line says of thinking
+/// ([`thinking_of`]), from one parse.
+fn parse_line_noting(line: &str, sidechain: bool) -> (Vec<Item>, Option<bool>) {
+    match serde_json::from_str::<Value>(line) {
+        Ok(v) => (parse_value(&v, sidechain), thinking_of(&v, sidechain)),
+        Err(_) => (Vec::new(), None),
+    }
+}
+
+/// What a transcript line says of thinking (plan 20261023_03, the
+/// 2026-11-11 16:27 EST amendment, items 1 and 3): `Some(true)` for an
+/// assistant line whose last block that shows is a `thinking` or
+/// `redacted_thinking` block; `Some(false)` for one whose last is text or
+/// a tool call, for the user's lines (a prompt, a tool's result, an
+/// interruption) and for the turn's end (`turn_duration`); `None` for
+/// lines that say nothing of it (the harness's own, other subagents',
+/// attachments and the rest), which leave it as it was.
+fn thinking_of(v: &Value, sidechain: bool) -> Option<bool> {
+    let flag = |k: &str| v.get(k).and_then(|f| f.as_bool()) == Some(true);
+    if flag("isSidechain") && !sidechain {
+        return None;
+    }
+    match v.get("type").and_then(|t| t.as_str())? {
+        "assistant" => {
+            let blocks = v.get("message")?.get("content")?;
+            let Value::Array(blocks) = blocks else {
+                return Some(false);
+            };
+            blocks
+                .iter()
+                .rev()
+                .find_map(|b| match b.get("type").and_then(|t| t.as_str())? {
+                    "thinking" | "redacted_thinking" => Some(true),
+                    "text" => b
+                        .get("text")
+                        .and_then(|t| t.as_str())
+                        .filter(|t| !t.trim().is_empty())
+                        .map(|_| false),
+                    "tool_use" => Some(false),
+                    _ => None,
+                })
+        }
+        "user" if !flag("isMeta") => Some(false),
+        "system" => {
+            (v.get("subtype").and_then(|s| s.as_str()) == Some("turn_duration")).then_some(false)
+        }
+        _ => None,
+    }
+}
+
+/// The entries of one parsed line ([`parse_line`]).
+fn parse_value(v: &Value, sidechain: bool) -> Vec<Item> {
     {
-        let Ok(v) = serde_json::from_str::<Value>(line) else {
-            return Vec::new();
-        };
         let flag = |k: &str| v.get(k).and_then(|f| f.as_bool()) == Some(true);
         if flag("isSidechain") && !sidechain {
             return Vec::new();
@@ -348,8 +411,8 @@ fn parse_line(line: &str, sidechain: bool) -> Vec<Item> {
         let role = match v.get("type").and_then(|t| t.as_str()) {
             Some("user") => Role::User,
             Some("assistant") => Role::Assistant,
-            Some("attachment") => return queued_item(&v, &ts).into_iter().collect(),
-            Some("system") => return system_item(&v, &ts).into_iter().collect(),
+            Some("attachment") => return queued_item(v, &ts).into_iter().collect(),
+            Some("system") => return system_item(v, &ts).into_iter().collect(),
             _ => return Vec::new(),
         };
         let Some(content) = v.get("message").and_then(|m| m.get("content")) else {
@@ -1642,6 +1705,87 @@ mod tests {
         let activity = crate::sessions::activity(codex, &at, now);
         assert_eq!(activity.subagents_running, None);
         assert!(activity.idle_ms.is_some());
+    }
+
+    fn assistant(blocks: Value) -> String {
+        serde_json::json!({"type": "assistant", "timestamp": "t", "isSidechain": false,
+            "message": {"role": "assistant", "content": blocks}})
+        .to_string()
+    }
+
+    fn thinking_of_line(line: &str) -> Option<bool> {
+        reader().parse_line_noting(line).1
+    }
+
+    #[test]
+    fn a_thinking_block_last_says_thinking_and_what_comes_after_it_does_not() {
+        let thinking = serde_json::json!({"type": "thinking", "thinking": "hmm", "signature": "s"});
+        let text = serde_json::json!({"type": "text", "text": "Done."});
+        let call = serde_json::json!({"type": "tool_use", "id": "c1", "name": "Bash",
+                                      "input": {"command": "ls"}});
+        // Thinking last, as its own line or after text: thinking. It is
+        // no entry, and its text goes nowhere.
+        let line = assistant(serde_json::json!([thinking]));
+        let (items, noted) = reader().parse_line_noting(&line);
+        assert!(items.is_empty());
+        assert_eq!(noted, Some(true));
+        assert_eq!(
+            thinking_of_line(&assistant(serde_json::json!([text, thinking]))),
+            Some(true)
+        );
+        let redacted = serde_json::json!({"type": "redacted_thinking", "data": "x"});
+        assert_eq!(
+            thinking_of_line(&assistant(serde_json::json!([redacted]))),
+            Some(true)
+        );
+        // Text or a tool call after it: not.
+        assert_eq!(
+            thinking_of_line(&assistant(serde_json::json!([thinking, text]))),
+            Some(false)
+        );
+        assert_eq!(
+            thinking_of_line(&assistant(serde_json::json!([thinking, call]))),
+            Some(false)
+        );
+        // Empty text after it says nothing.
+        let empty = serde_json::json!({"type": "text", "text": "  "});
+        assert_eq!(
+            thinking_of_line(&assistant(serde_json::json!([thinking, empty]))),
+            Some(true)
+        );
+        // A new prompt, a tool's result and the turn's end: not.
+        let prompt = serde_json::json!({"type": "user", "timestamp": "t",
+            "message": {"role": "user", "content": "go on"}})
+        .to_string();
+        assert_eq!(thinking_of_line(&prompt), Some(false));
+        let result = serde_json::json!({"type": "user", "timestamp": "t",
+            "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "c1", "content": "ok"}]}})
+        .to_string();
+        assert_eq!(thinking_of_line(&result), Some(false));
+        let end = serde_json::json!({"type": "system", "subtype": "turn_duration",
+                                     "durationMs": 1000})
+        .to_string();
+        assert_eq!(thinking_of_line(&end), Some(false));
+        // The harness's own lines, other kinds and a subagent's say nothing.
+        let meta = serde_json::json!({"type": "user", "isMeta": true,
+            "message": {"role": "user", "content": "context"}})
+        .to_string();
+        assert_eq!(thinking_of_line(&meta), None);
+        let other = serde_json::json!({"type": "system", "subtype": "informational",
+                                       "content": "hi"})
+        .to_string();
+        assert_eq!(thinking_of_line(&other), None);
+        assert_eq!(
+            thinking_of_line(r#"{"type":"file-history-snapshot"}"#),
+            None
+        );
+        assert_eq!(thinking_of_line("not json"), None);
+        let side = serde_json::json!({"type": "assistant", "isSidechain": true,
+            "message": {"role": "assistant", "content": [thinking]}})
+        .to_string();
+        assert_eq!(thinking_of_line(&side), None);
+        assert_eq!(CHILD_READER.parse_line_noting(&side).1, Some(true));
     }
 }
 

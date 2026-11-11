@@ -293,6 +293,20 @@ pub fn read_lines(
     from: u32,
     to: u32,
 ) -> std::io::Result<Vec<(u32, Vec<Item>)>> {
+    read_lines_noting(reader, path, index, from, to, &mut None)
+}
+
+/// As [`read_lines`], noting in `thinking` what the newest line read that
+/// says anything of thinking says ([`LineReader::parse_line_noting`]);
+/// left as it was when none does.
+pub fn read_lines_noting(
+    reader: &dyn LineReader,
+    path: &Path,
+    index: &LineIndex,
+    from: u32,
+    to: u32,
+    thinking: &mut Option<bool>,
+) -> std::io::Result<Vec<(u32, Vec<Item>)>> {
     let mut out = Vec::new();
     if from > to {
         return Ok(out);
@@ -332,7 +346,10 @@ pub fn read_lines(
         if text.is_empty() {
             continue;
         }
-        let items = reader.parse_line(&String::from_utf8_lossy(text));
+        let (items, noted) = reader.parse_line_noting(&String::from_utf8_lossy(text));
+        if noted.is_some() {
+            *thinking = noted;
+        }
         if !items.is_empty() {
             out.push((line, items));
         }
@@ -349,6 +366,10 @@ pub struct LiveState {
     pub quiet: bool,
     pub pending_question: Option<PendingQuestion>,
     pub blocked_at: Option<u32>,
+    /// The agent is thinking, as subscribers are told
+    /// (`SessionDelivery::thinking`): the newest line that says anything
+    /// of it is thinking, and herdr does not say the turn is over.
+    pub thinking: bool,
 }
 
 impl Default for LiveState {
@@ -359,6 +380,7 @@ impl Default for LiveState {
             quiet: false,
             pending_question: None,
             blocked_at: None,
+            thinking: false,
         }
     }
 }
@@ -825,6 +847,8 @@ pub struct Batch {
     pub too_long: bool,
     /// The pending question now.
     pub pending_question: Option<PendingQuestion>,
+    /// Whether the agent is thinking now ([`LiveState::thinking`]).
+    pub thinking: bool,
     /// The outline was kept when this was made: `sections` carry their
     /// indexes, and the three fields below are set (plan 20261024_01).
     pub outlined: bool,
@@ -893,6 +917,9 @@ struct TailState {
     /// The cards have been found once since the state was read: before
     /// that, only the newest Finished card is new.
     primed: bool,
+    /// The newest line read that says anything of thinking says the
+    /// agent is thinking ([`LineReader::parse_line_noting`]).
+    thinking: bool,
 }
 
 /// One session file, tailed for its subscribers.
@@ -1023,20 +1050,23 @@ impl Tailer {
         // starts `REACH` lines earlier, so what it continues is grouped as
         // a read from the file's start groups it.
         let mut back = 2 * REACH;
-        let (builder, window) = loop {
+        let (builder, window, thinking) = loop {
             let from = last.saturating_sub(back) + 1;
             let mut builder = Builder::new(file, linker.clone());
             builder.add_secrets(&secrets);
             let mut window: VecDeque<Placed> = VecDeque::new();
             let start = from.saturating_sub(REACH).max(1);
-            for (line, items) in read_lines(reader, path, &index, start, last)? {
+            let mut thinking = None;
+            for (line, items) in
+                read_lines_noting(reader, path, &index, start, last, &mut thinking)?
+            {
                 let placed = builder.feed(line, items);
                 if line >= from {
                     window.extend(placed);
                 }
             }
             if window.len() >= KEEP_ITEMS / 4 || from <= 1 || back >= 64 * REACH {
-                break (builder, window);
+                break (builder, window, thinking == Some(true));
             }
             back *= 4;
         };
@@ -1064,6 +1094,7 @@ impl Tailer {
             summaries_seen: 0,
             suggestions_seen: 0,
             primed: false,
+            thinking,
         })
     }
 
@@ -1118,6 +1149,7 @@ impl Tailer {
             summaries_seen: 0,
             suggestions_seen: 0,
             primed: false,
+            thinking: false,
         })
     }
 
@@ -1483,7 +1515,20 @@ impl Tailer {
                             let TailBackend::Line(ref index) = st.backend else {
                                 unreachable!()
                             };
-                            match read_lines(reader, &self.path, index, first, last) {
+                            let mut thinking = None;
+                            let read = read_lines_noting(
+                                reader,
+                                &self.path,
+                                index,
+                                first,
+                                last,
+                                &mut thinking,
+                            );
+                            if let Some(thinking) = thinking {
+                                st.thinking = thinking;
+                                st.dirty = true;
+                            }
+                            match read {
                                 Ok(lines) => {
                                     for (line, items) in lines {
                                         let placed = st.builder.feed(line, items);
@@ -1645,6 +1690,14 @@ impl Tailer {
         }
         let question_changed = question != st.live.pending_question;
         st.live.pending_question = question.clone();
+        // Thinking, until text, a tool call or a question comes, or herdr
+        // says the turn is over (the 2026-11-11 16:27 EST amendment, items
+        // 1 and 3).
+        let thinking = st.thinking
+            && question.is_none()
+            && !matches!(st.live.status, AgentStatus::Idle | AgentStatus::Done);
+        let thinking_changed = thinking != st.live.thinking;
+        st.live.thinking = thinking;
         let managed = st.window.front().map_or(1, |p| p.line);
         let approvals: Vec<ApprovalCard> = approval_cards(st)
             .into_iter()
@@ -1694,7 +1747,7 @@ impl Tailer {
             removed.push(c.serial);
             false
         });
-        if out.is_empty() && removed.is_empty() && !question_changed {
+        if out.is_empty() && removed.is_empty() && !question_changed && !thinking_changed {
             return None;
         }
         let mut sections: Vec<Section> = out.into_values().collect();
@@ -1720,6 +1773,7 @@ impl Tailer {
             truncated: false,
             too_long: false,
             pending_question: question,
+            thinking,
             outlined,
             slots,
             removed_index,

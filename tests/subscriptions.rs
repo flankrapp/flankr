@@ -1695,3 +1695,66 @@ async fn agents_list_gives_the_latest_finished_cards_summary_once_known() {
     let p1 = listed_p1(&c.call("agents.list", json!({})).await);
     assert!(p1.get("summary").is_none(), "{p1}");
 }
+
+fn thinking(n: u32) -> String {
+    json!({"type": "assistant", "timestamp": ts(n), "isSidechain": false,
+        "message": {"role": "assistant", "type": "message",
+                    "content": [{"type": "thinking", "thinking": "private musing",
+                                 "signature": "s"}]}})
+    .to_string()
+}
+
+/// Plan 20261023_03, the 2026-11-11 16:27 EST amendment: a thinking
+/// Claude Code session's deliveries say so, without the thinking, until
+/// what comes after it.
+#[tokio::test]
+async fn a_thinking_session_says_so_until_its_text_comes() {
+    let env = start(false).await;
+    env.pane(|panes| panes[0].agent_status = Some(flankr::transport::AgentStatus::Working))
+        .await;
+    let mut c = Client::unix(&env.socket, "flankr.companion").await;
+    for outline in [false, true] {
+        let r = c
+            .subscribe(json!({"pane_id": "p1", "sections": 50, "outline": outline}))
+            .await;
+        let sub = r["subscription_id"].as_u64().unwrap();
+        assert!(r["delivery"].get("thinking").is_none(), "{}", r["delivery"]);
+        let n = if outline { 300 } else { 200 };
+        append_lines(
+            &env.session(SESSION_A),
+            &[user(n, "think hard"), thinking(n + 1)],
+        );
+        let d = c
+            .delivery(WAIT, |d| {
+                d["subscription_id"] == sub && d["thinking"] == true
+            })
+            .await
+            .expect("a delivery saying it thinks");
+        assert!(!d.to_string().contains("private musing"), "{d}");
+        append_lines(
+            &env.session(SESSION_A),
+            &[reply(n + 2, "Thought it through.")],
+        );
+        let d = c
+            .delivery(WAIT, |d| {
+                d["subscription_id"] == sub && d.to_string().contains("Thought it through")
+            })
+            .await
+            .expect("the reply");
+        assert!(d.get("thinking").is_none(), "{d}");
+        // A new subscription on a thinking session is told at once.
+        append_lines(&env.session(SESSION_A), &[thinking(n + 3)]);
+        c.delivery(WAIT, |d| {
+            d["subscription_id"] == sub && d["thinking"] == true
+        })
+        .await
+        .expect("thinking again");
+        let r = c
+            .subscribe(json!({"pane_id": "p1", "outline": outline}))
+            .await;
+        assert_eq!(r["delivery"]["thinking"], true, "{}", r["delivery"]);
+        append_lines(&env.session(SESSION_A), &[reply(n + 4, "Done.")]);
+        c.drain(Duration::from_millis(600)).await;
+        c.seen.clear();
+    }
+}

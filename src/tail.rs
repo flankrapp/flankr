@@ -571,6 +571,7 @@ mod tests {
             first: 0,
             last: None,
             epoch: None,
+            thinking: false,
         }
     }
 

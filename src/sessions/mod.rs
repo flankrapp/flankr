@@ -403,6 +403,16 @@ pub trait LineReader: Send + Sync {
     /// The entries one line holds. Unknown and malformed lines give none.
     fn parse_line(&self, line: &str) -> Vec<Item>;
 
+    /// As [`LineReader::parse_line`], with what the line says of the
+    /// agent thinking: `Some(true)` when its newest block is thinking,
+    /// `Some(false)` when something after thinking came (text, a tool
+    /// call, a prompt, the turn's end), `None` when it says nothing of it
+    /// (plan 20261023_03, the 2026-11-11 16:27 EST amendment). Only
+    /// Claude Code's readers know thinking.
+    fn parse_line_noting(&self, line: &str) -> (Vec<Item>, Option<bool>) {
+        (self.parse_line(line), None)
+    }
+
     /// Whether a line is bookkeeping that holds no entry, known cheaply
     /// from its first bytes.
     fn is_bookkeeping(&self, _line: &[u8]) -> bool {

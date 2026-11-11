@@ -113,6 +113,8 @@ struct Waiting {
     session_changed: bool,
     status: Option<String>,
     question: Option<Option<PendingQuestion>>,
+    /// Whether the agent thinks changed (every delivery carries it).
+    thinking: bool,
 }
 
 impl Waiting {
@@ -125,6 +127,7 @@ impl Waiting {
             && !self.session_changed
             && self.status.is_none()
             && self.question.is_none()
+            && !self.thinking
     }
 
     fn bytes(&self) -> usize {
@@ -177,6 +180,8 @@ struct Task {
     /// What the client has, or will with the waiting delivery.
     status: String,
     question: Option<PendingQuestion>,
+    /// The agent is thinking (`SessionDelivery::thinking`).
+    thinking: bool,
     /// The queue position of the last delivery written to the connection.
     last_seq: u64,
     last_sent: Option<Instant>,
@@ -266,6 +271,7 @@ pub(super) async fn subscribe(
         waiting: Waiting::default(),
         status,
         question: None,
+        thinking: false,
         last_seq: 0,
         last_sent: None,
         sections: p.sections,
@@ -488,6 +494,7 @@ impl Task {
         self.reason = None;
         self.question = snap.live.pending_question.clone();
         self.waiting.question = Some(self.question.clone());
+        self.thinking = snap.live.thinking;
         if self.outline {
             return self.open_outline(&tailer, after, from).await;
         }
@@ -514,6 +521,7 @@ impl Task {
         self.outline_next = None;
         self.reason = Some(reason.to_string());
         self.question = None;
+        self.thinking = false;
         self.waiting = Waiting {
             reset: true,
             session_changed: true,
@@ -679,6 +687,7 @@ impl Task {
             first: 0,
             last: self.outline_last.filter(|_| outlined),
             epoch: self.opened.filter(|_| outlined).map(|(_, e)| wire_epoch(e)),
+            thinking: self.thinking,
         }
     }
 
@@ -695,6 +704,10 @@ impl Task {
         if batch.pending_question != self.question {
             self.question = batch.pending_question.clone();
             self.waiting.question = Some(self.question.clone());
+        }
+        if batch.thinking != self.thinking {
+            self.thinking = batch.thinking;
+            self.waiting.thinking = true;
         }
         if self.outline {
             return self.take_outline_batch(batch).await;

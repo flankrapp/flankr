@@ -1421,3 +1421,98 @@ fn a_tailer_carries_on_into_the_successor_with_later_serials() {
     assert!(batch.truncated);
     assert_eq!(texts(&all(&t)), ["one", "two", "again"]);
 }
+
+fn thinking_line(n: u32) -> String {
+    serde_json::json!({"type": "assistant", "timestamp": ts(n), "isSidechain": false,
+        "message": {"role": "assistant", "type": "message",
+                    "content": [{"type": "thinking", "thinking": "secret musing",
+                                 "signature": "s"}]}})
+    .to_string()
+}
+
+/// The batches of one check, folded: whether the agent thinks after it,
+/// if a batch said.
+fn thinking_after(t: &Tailer) -> Option<bool> {
+    t.check().map(|b| b.thinking)
+}
+
+#[test]
+fn thinking_shows_while_it_is_the_turns_newest_entry() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("s.jsonl");
+    write(&path, &[user(1, "go"), thinking_line(2)]);
+    let t = tailer(dir.path(), "claude", &path);
+    t.set_live("Claude", &AgentStatus::Working);
+    // Read at the start: thinking last.
+    assert_eq!(thinking_after(&t), Some(true));
+    assert!(t.snapshot().live.thinking);
+    // Thinking forms no section, and its text is not sent.
+    let sections = all(&t);
+    assert!(texts(&sections).iter().all(|s| !s.contains("musing")));
+    // Text after it: not.
+    append_lines(&path, &[reply(3, "Here it is.")]);
+    assert_eq!(thinking_after(&t), Some(false));
+    // Thinking again, then a tool call: back, then gone.
+    append_lines(&path, &[thinking_line(4)]);
+    assert_eq!(thinking_after(&t), Some(true));
+    append_lines(&path, &[calls(5, &[("c1", "ls")])]);
+    assert_eq!(thinking_after(&t), Some(false));
+    // A line that says nothing of it leaves it as it was.
+    append_lines(
+        &path,
+        &[results(6, &[("c1", "ok", false)]), thinking_line(7)],
+    );
+    assert_eq!(thinking_after(&t), Some(true));
+    append_lines(&path, &[blob()]);
+    assert!(t.check().is_none_or(|b| b.thinking));
+    assert!(t.snapshot().live.thinking);
+    // A new turn: not.
+    append_lines(&path, &[user(8, "stop that")]);
+    assert_eq!(thinking_after(&t), Some(false));
+    // herdr saying the turn is over clears it, too.
+    append_lines(&path, &[thinking_line(9)]);
+    assert_eq!(thinking_after(&t), Some(true));
+    t.set_live("Claude", &AgentStatus::Idle);
+    assert_eq!(thinking_after(&t), Some(false));
+    // A fresh tailer on a file ending in a turn's end does not think.
+    append_lines(&path, &[reply(10, "Done.")]);
+    let again = tailer(dir.path(), "claude", &path);
+    again.set_live("Claude", &AgentStatus::Working);
+    again.check();
+    assert!(!again.snapshot().live.thinking);
+}
+
+#[test]
+fn a_continued_session_thinks_in_its_newest_file() {
+    let (_home, dir, sessions) = continued_home();
+    let a = dir.join(format!("{ID_A}.jsonl"));
+    let b = dir.join(format!("{ID_B}.jsonl"));
+    // The old file ended thinking; the new one goes on from there.
+    let mut lines = old_lines();
+    lines.push(thinking_line(3));
+    write(&a, &lines);
+    let journal = Journal::new(sessions.state.clone());
+    let t = Tailer::open(
+        Arc::clone(&sessions),
+        "claude",
+        &located(&a),
+        Linker::default(),
+        &journal,
+    )
+    .unwrap();
+    t.set_live("Claude", &AgentStatus::Working);
+    t.check();
+    assert!(t.snapshot().live.thinking);
+    // Continued: the new file's own reply is the newest entry.
+    write(&b, &new_lines(ID_B, &[("three", "u-3"), ("four", "u-4")]));
+    append_lines(&a, &[cost_state(ID_A), continued_in(ID_A, ID_B)]);
+    for _ in 0..3 {
+        t.check();
+    }
+    assert_eq!(texts(&all(&t)), ["one", "two", "three", "four"]);
+    assert!(!t.snapshot().live.thinking);
+    // Thinking in the new file shows.
+    append_lines(&b, &[thinking_line(20)]);
+    assert_eq!(thinking_after(&t), Some(true));
+    assert!(t.snapshot().live.thinking);
+}
