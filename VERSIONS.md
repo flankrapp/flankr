@@ -1266,3 +1266,16 @@ new methods; plan 20261103_02, decision 3.4). It takes libflankr_proto
 - **Added:** `RemoteState::collapsed_workspaces()` and
   `RemoteState::set_collapsed_workspaces(&[String])`: the `drawer`
   table's `collapsed` entry, a JSON list; an empty list deletes it.
+
+## libflankr_proto 0.5.13 — 2026-11-11 (the commit tagged `libflankr_proto-v0.5.13`)
+
+Additive (an appended field, by the owner's ruling that appending to a
+struct is additive; plan 20261023_03, the 2026-11-11 16:27 EST
+amendment, item 1):
+
+- **Added:** `SessionDelivery::thinking: bool` (appended, default
+  `false`, not written when `false`): the session's agent is thinking,
+  its turn's newest entry a thinking block with no text, tool call or
+  question after it. Unlike `status`, every delivery carries it as it
+  stands, so a delivery without it says the agent is not thinking. The
+  thinking text is never sent. An older daemon never sends it.

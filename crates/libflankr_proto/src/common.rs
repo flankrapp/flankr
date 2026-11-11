@@ -1594,6 +1594,18 @@ pub struct SessionDelivery {
     /// drops only the outline: contents stay valid by serial.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub epoch: Option<u64>,
+    /// The agent is thinking: the newest entry of its turn is a thinking
+    /// block, with no text, tool call or question after it (plan
+    /// 20261023_03, the 2026-11-11 16:27 EST amendment). Unlike `status`,
+    /// every delivery carries it as it stands: absent is `false`. The
+    /// thinking itself is never sent. Only Claude Code's sessions set it
+    /// for now. Added in 0.5.13.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub thinking: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 /// An `Option<Option<T>>` field: absent is `None`, null is `Some(None)`.
@@ -2271,6 +2283,7 @@ mod tests {
             first: 0,
             last: None,
             epoch: None,
+            thinking: false,
         };
         round_trip(full.clone());
         round_trip(SessionSubscribeResult {
@@ -2313,6 +2326,14 @@ mod tests {
         .unwrap();
         assert_eq!(read.pending_question, Some(None));
         assert!(!read.reset && read.sections.is_empty() && read.removed.is_empty());
+        // Thinking is carried when set, and absent, read as not, when not.
+        assert!(!read.thinking);
+        let thinking = SessionDelivery {
+            thinking: true,
+            ..bare.clone()
+        };
+        round_trip(thinking.clone());
+        assert_eq!(serde_json::to_value(&thinking).unwrap()["thinking"], true);
         round_trip(SessionUnsubscribeParams { subscription_id: 3 });
         round_trip(SessionHistoryParams {
             subscription_id: 3,
@@ -2392,6 +2413,7 @@ mod tests {
             first: 0,
             last: Some(7),
             epoch: Some(0x5eed),
+            thinking: false,
         };
         round_trip(d.clone());
         let v = serde_json::to_value(&d).unwrap();
