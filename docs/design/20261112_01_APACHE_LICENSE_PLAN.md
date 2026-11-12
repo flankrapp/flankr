@@ -302,3 +302,80 @@ amendment that sets `status: Implemented` lists the commits for each step.
    attribution where the app's user sees it. This plan only documents
    that requirement. A screen in the app's settings would be a separate
    plan, with an app version bump.
+
+## Amendment — 2026-11-12 15:55 EST: approved, with the risk section in the main README and recommended answers
+
+The owner approved this plan on 2026-11-12 ("yes"). They also said the
+section on how approvals reach an agent "needs to be in the main app, and it
+should reference the license Apache-2 and its disclaimer instead", that MIT's
+wording and Apache-2.0's both serve to disclaim warranty, and that they will
+review the recommended changes here. Implementation has not started; the
+status stays `Draft` until step 1's first commit. This amendment adds to and
+replaces the earlier text as follows.
+
+1. **A "Use at your own risk" section in the main README (new decision 9).**
+   It goes before `## Licence`, and lands in step 4's commit. Its text:
+
+   > ## Use at your own risk
+   >
+   > flankr is a tool for one person to run their own coding agents on
+   > their own computer. It relays what you say and type to those agents,
+   > from the voice session or the companion app, and relays their
+   > questions and replies back; it does not judge their work.
+   >
+   > Approvals and answers do not go through any interface of the agents'
+   > own. The daemon types them into the agent's terminal pane as keyboard
+   > input, through herdr, and it decides where that input goes
+   > heuristically: it recognises the agent's prompt or question from the
+   > text on screen, and picks the keys to send from what it recognised. If
+   > the screen is not what the daemon took it to be, for example because
+   > the agent changed its layout or the screen changed while the keys were
+   > in flight, the keys can land somewhere other than intended. Approving
+   > or answering through flankr has the same effect as typing at the
+   > keyboard, so what the agents then do is yours to review.
+   >
+   > flankr is licensed under the Apache License, Version 2.0, and is
+   > provided on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+   > KIND, as section 7 (Disclaimer of Warranty) of the licence states.
+   > Section 8 (Limitation of Liability) limits the contributors' liability
+   > for damages arising from its use, which includes what an agent does
+   > with input flankr sent it. See [LICENSE](LICENSE) for the full terms.
+
+   The app's README has no disclaimer of its own (this replaces the draft's
+   "For personal use" section, which quoted MIT's warranty text). It has a
+   short **Use at your own risk** section that says the app's approvals
+   reach agents as the daemon's keyboard input and links to
+   `../../README.md#use-at-your-own-risk`. Step 4's **Done when:** gains:
+   the section is present, before `## Licence`, and its link to `LICENSE`
+   resolves. Step 3's gains: the app's README links to it.
+
+2. **Licence text file names (replaces decision 6's `OFL-1.1.txt` and "a
+   font Apache text").** The copies are
+   `apps/companion/licenses/FONTS-LICENSE-APACHE.txt` and
+   `apps/companion/licenses/FONTS-LICENSE-OFL.txt`, named as libmsdf names
+   them, each a byte-for-byte copy that keeps libmsdf's per-font copyright
+   notices above the licence text.
+
+3. **Recommended answers to the open questions, for the owner's review:**
+   1. libherdr_term: Apache-2.0 with its own `LICENSE` and `NOTICE`, as
+      decision 3 has it. No different licence.
+   2. No copyright line beyond what the `NOTICE` says of herdr.
+   3. No licence screen in this plan. The CC-BY-4.0 credit Kyutai's model
+      requires goes in the app's README now, and an in-app screen (with an
+      app version bump) is a later plan.
+
+4. **Recommended handling of the draft README's open items (step 3):**
+   1. The STT model's `tokenizer.model` and `config.json`: confirmed from
+      the licence stated in their Hugging Face repository
+      (`kyutai/stt-1b-en_fr-candle`) before step 3's commit. If it is
+      stated for the repository as a whole, the README says that.
+   2. Kyutai's attribution: worded as the model card asks. Where it asks
+      nothing specific, the README uses the CC-BY-4.0 form: the model's
+      name, "by Kyutai", a link to the model, and "CC BY 4.0" with a link
+      to the licence.
+   3. No full crates.io licence list in this plan: the README keeps its
+      one-sentence summary and the `cargo about` suggestion. A generated
+      list, which would keep rqrr's ISC notice, is a later plan.
+   4. The launcher icon's line ("from a source image made with Gemini")
+      stays: it records where the icon came from, which bears on its
+      licence.
