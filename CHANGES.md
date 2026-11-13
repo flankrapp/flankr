@@ -4966,3 +4966,37 @@ Small departures (Rule 1.7):
    with no agent folds (it has no children to fold). A project's line
    folds its plans. **Not on a plan** keeps its agent lines, since it has
    no plan row to carry them.
+
+## 2026-11-13 12:06 EST — A Claude Code goal links its pane, closed plans, the agent's step: departures
+
+Plans: the active plans home view plan (20261112_03), its 2026-11-13
+11:58 EST amendment; and, through it, the plan policy agent plan
+(20261112_02). Small departures (Rule 1.7):
+
+1. **The plan policy agent plan's matching changes without an amendment
+   of its own.** Its 2.3 item 5, as its 22:31 EST amendment's item 5
+   orders it, put the pane's task first. The owner's change was agreed
+   as one amendment, to the active plans home view plan, and that
+   amendment names this text as replaced: the policy's matching is now
+   goal, task, the reply's path, the title. That plan is not edited.
+2. **The `status` rule meets fewer plans.** A task whose plan is now
+   Implemented, Superseded, Retired or Consolidated no longer matches
+   (the match follows past it), so the policy's `status` rule, which
+   also switched that task's autocontinue off, now only meets a plan on
+   Hold. The task is left as it is; nothing is sent for it.
+3. **The policy plugin is a patch, 0.1.4,** although `overview`'s rows
+   and links change in ways a caller sees (Critical Rule 5.4 would make
+   it 0.2.0): the owner keeps the current version series with patch
+   bumps for now.
+4. **How a goal ends.** Only a goal being set was seen in a real
+   transcript (a `goal_status` attachment with `met: false`, and the
+   `Goal set: ` text). A goal met or cleared is taken from a
+   `goal_status` with `met: true` or no `condition`, or a text starting
+   `Goal cleared` or `Goal removed`, as the amendment says; if Claude
+   Code records the end some other way, the goal keeps counting until a
+   newer goal is set.
+5. **When the goal is read.** The goal is read when a Finished card
+   from the pane arrives, as the other links are; the first read of a
+   long transcript reads the whole file once, off the async threads (a
+   373 MB transcript took about 5 s in a debug build), and later reads
+   only what was added.
