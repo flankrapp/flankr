@@ -1,0 +1,183 @@
+Fonts bundled with libmsdf under the SIL Open Font License 1.1
+
+libmsdf itself is not under this licence: it is MIT OR Apache-2.0 (see
+README.md). The font files below, and the MSDF atlases baked from them, are
+licensed under the SIL Open Font License, Version 1.1, reproduced in full
+after this list. They are compiled into libmsdf only when the cargo feature
+named with each one is enabled.
+
+  fonts/GrenzeGotisch[wght]-subset.ttf, and the atlas grenze-gotisch-48.atlas
+  baked from it
+    Feature: font-ofl-grenze-gotisch (or fonts-ofl-ledger)
+    Grenze Gotisch
+    Copyright 2020 The Grenze Gotisch Project Authors (https://github.com/Omnibus-Type/Grenze-Gotisch)
+    Source: https://github.com/google/fonts/tree/main/ofl/grenzegotisch
+    No Reserved Font Name.
+    Modified Version: subset by libmsdf (fonts/ofl_subset.py) to
+    U+0020-007E, U+00A0-017F, U+2010-2015, U+2018-2022, U+2026, U+2030,
+    U+2032-2033, U+2039-203A, U+2070, U+2074-208E, U+20AC, U+20B4, U+20BA,
+    U+20BD-20BE, U+2116, U+2122, U+212E, U+2153-215E, U+2202, U+2205-2209,
+    U+220F, U+2211-2213, U+221A, U+221E, U+2229-222B, U+2248, U+2260,
+    U+2264-2265, U+2282-2283; hinting, gasp and DSIG removed; outlines,
+    metrics, layout tables and variation data otherwise unchanged.
+    Upstream: google/fonts 98931f43a8dcf8ca908949780e0d03a6e4195227,
+    ofl/grenzegotisch/GrenzeGotisch[wght].ttf,
+    sha256 701b299d8dc002a2b4bea2ff0f1272c0e4081a2835914354804565c410d0c637
+    This file: sha256 19f01d3ccd8d1abcc29db790d3e94f68166797e05727dc798b3045086042f9e7
+
+  fonts/Texturina[opsz,wght]-subset.ttf, and the atlas texturina-48.atlas
+  baked from it
+    Feature: font-ofl-texturina (or fonts-ofl-ledger)
+    Texturina
+    Copyright 2020 The Texturina Project Authors (https://github.com/Omnibus-Type/Texturina)
+    Source: https://github.com/google/fonts/tree/main/ofl/texturina
+    No Reserved Font Name.
+    Modified Version: subset by libmsdf (fonts/ofl_subset.py) to the same
+    codepoints as above; hinting, gasp and DSIG removed; outlines, metrics,
+    layout tables and variation data otherwise unchanged.
+    Upstream: google/fonts f4a8ff8c122abc147e5fd19fc46cb2396b67b2bb,
+    ofl/texturina/Texturina[opsz,wght].ttf,
+    sha256 478a15d7145cf94565cfc1aeb33596aeb0118c7d86a84d061ddf46de3d7dfda3
+    This file: sha256 399fd6669e246d50d47ec89904fb4df9efea7597768663b391f3847f4614737e
+
+  fonts/NotoSansMono-Regular-subset.ttf and fonts/NotoSansMono-Bold-subset.ttf,
+  and the atlas noto-sans-mono-48.atlas baked from them
+    Feature: font-ofl-noto-sans-mono (or fonts-ofl-terminal)
+    Noto Sans Mono
+    Copyright 2022 The Noto Project Authors (https://github.com/notofonts/latin-greek-cyrillic)
+    Source: https://github.com/google/fonts/tree/main/ofl/notosansmono
+    No Reserved Font Name.
+    Modified Version: static instances by libmsdf (fonts/ofl_subset.py
+    --instance) at wght=400,wdth=100 (Regular) and wght=700,wdth=100 (Bold),
+    each subset to the same codepoints as above; hinting, gasp and DSIG
+    removed; outlines, metrics and layout tables of the instance otherwise
+    unchanged.
+    Upstream: google/fonts e7db6ca603fd4862010383ff17ffd6cc4ffac1c0,
+    ofl/notosansmono/NotoSansMono[wdth,wght].ttf,
+    sha256 2cb2adb378a8f574213e23df697050b83c54c27df465a2015552740b2769a081
+    Regular: sha256 436c580a03128211bf11c4ef1cb10d2f5ab31473829ee4585f8ebdb75313c37e
+    Bold: sha256 b77c8dee8ec3fb5e01553b9d4323e1723dc686f77bd9eb7cd31918316c82a06f
+
+  fonts/LibmsdfTerminalSymbols-Regular.ttf ("Libmsdf Terminal Symbols"), and
+  the atlas terminal-symbols-48.atlas baked from it
+    Feature: font-ofl-noto-terminal-symbols (or fonts-ofl-terminal)
+    A Modified Version merged by libmsdf (fonts/terminal_symbols.py) from
+    five Noto faces, each under the SIL Open Font License 1.1 with no
+    Reserved Font Name:
+      Noto Sans Mono: Copyright 2022 The Noto Project Authors
+        (https://github.com/notofonts/latin-greek-cyrillic);
+        ofl/notosansmono/NotoSansMono[wdth,wght].ttf,
+        sha256 2cb2adb378a8f574213e23df697050b83c54c27df465a2015552740b2769a081
+      Noto Sans Symbols 2: Copyright 2022 The Noto Project Authors
+        (https://github.com/notofonts/symbols);
+        ofl/notosanssymbols2/NotoSansSymbols2-Regular.ttf,
+        sha256 7d5fb73b7ca67a6798101741f5d280a3d016a56a197afcd4199dbb57b4b82a21
+      Noto Sans Symbols: Copyright 2022 The Noto Project Authors
+        (https://github.com/notofonts/symbols);
+        ofl/notosanssymbols/NotoSansSymbols[wght].ttf,
+        sha256 f7e7e04b4a24b6c78893d50cbfd2b2f6cae49617ab047bfef668d252adb128f7
+      Noto Sans Math: Copyright 2022 Google LLC;
+        ofl/notosansmath/NotoSansMath-Regular.ttf,
+        sha256 3f495fe933c06786e4d5f6d86b8ee70b6753a68ee3b9d87528726de0f6e2c47d
+      Noto Emoji: Copyright 2013 Google LLC;
+        ofl/notoemoji/NotoEmoji[wght].ttf,
+        sha256 de6c18832938afc99caf132b39d6a30a19bac7f2e812e28db2535b4608d27551
+    All from google/fonts e7db6ca603fd4862010383ff17ffd6cc4ffac1c0. The
+    variable faces are instanced at wght 400 (and wdth 100); the glyphs of
+    the terminal symbol groups in fonts/coverage-groups.txt are taken from
+    them, scaled to 1000 units per em, remapped and fitted onto Noto Sans
+    Mono's 600-unit cell, and renamed; no layout tables or hinting are kept.
+    This file: sha256 0d91232725e03887601f6ea857300ea9c384ab6b89b05e171060246966640cca
+
+-----------------------------------------------------------------------------
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+This license is copied below, and is also available with a FAQ at:
+http://scripts.sil.org/OFL
+
+
+-----------------------------------------------------------
+SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
+-----------------------------------------------------------
+
+PREAMBLE
+The goals of the Open Font License (OFL) are to stimulate worldwide
+development of collaborative font projects, to support the font creation
+efforts of academic and linguistic communities, and to provide a free and
+open framework in which fonts may be shared and improved in partnership
+with others.
+
+The OFL allows the licensed fonts to be used, studied, modified and
+redistributed freely as long as they are not sold by themselves. The
+fonts, including any derivative works, can be bundled, embedded, 
+redistributed and/or sold with any software provided that any reserved
+names are not used by derivative works. The fonts and derivatives,
+however, cannot be released under any other type of license. The
+requirement for fonts to remain under this license does not apply
+to any document created using the fonts or their derivatives.
+
+DEFINITIONS
+"Font Software" refers to the set of files released by the Copyright
+Holder(s) under this license and clearly marked as such. This may
+include source files, build scripts and documentation.
+
+"Reserved Font Name" refers to any names specified as such after the
+copyright statement(s).
+
+"Original Version" refers to the collection of Font Software components as
+distributed by the Copyright Holder(s).
+
+"Modified Version" refers to any derivative made by adding to, deleting,
+or substituting -- in part or in whole -- any of the components of the
+Original Version, by changing formats or by porting the Font Software to a
+new environment.
+
+"Author" refers to any designer, engineer, programmer, technical
+writer or other person who contributed to the Font Software.
+
+PERMISSION & CONDITIONS
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of the Font Software, to use, study, copy, merge, embed, modify,
+redistribute, and sell modified and unmodified copies of the Font
+Software, subject to the following conditions:
+
+1) Neither the Font Software nor any of its individual components,
+in Original or Modified Versions, may be sold by itself.
+
+2) Original or Modified Versions of the Font Software may be bundled,
+redistributed and/or sold with any software, provided that each copy
+contains the above copyright notice and this license. These can be
+included either as stand-alone text files, human-readable headers or
+in the appropriate machine-readable metadata fields within text or
+binary files as long as those fields can be easily viewed by the user.
+
+3) No Modified Version of the Font Software may use the Reserved Font
+Name(s) unless explicit written permission is granted by the corresponding
+Copyright Holder. This restriction only applies to the primary font name as
+presented to the users.
+
+4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font
+Software shall not be used to promote, endorse or advertise any
+Modified Version, except to acknowledge the contribution(s) of the
+Copyright Holder(s) and the Author(s) or with their explicit written
+permission.
+
+5) The Font Software, modified or unmodified, in part or in whole,
+must be distributed entirely under this license, and must not be
+distributed under any other license. The requirement for fonts to
+remain under this license does not apply to any document created
+using the Font Software.
+
+TERMINATION
+This license becomes null and void if any of the above conditions are
+not met.
+
+DISCLAIMER
+THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT
+OF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
+DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
+OTHER DEALINGS IN THE FONT SOFTWARE.

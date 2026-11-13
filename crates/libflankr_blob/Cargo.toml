@@ -3,6 +3,7 @@ name = "libflankr_blob"
 version = "0.1.0"
 edition = "2024"
 description = "Binary transfers over flankr's link (kind 2): the byte encoding, namespaces, refusal codes, transfer ids, the sender and receiver state machines, image sniffing, git requests and read patterns"
+license = "Apache-2.0"
 
 [dependencies]
 # The SHA-256 of every transfer (docs/design/20261028_05_BINARY_FILES_PLAN.md,

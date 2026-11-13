@@ -3,6 +3,7 @@ name = "flankr-audio"
 version = "0.3.0"
 edition = "2021"
 description = "Audio for the companion front ends: libvoicexn speech in and out, joined to flankr-companion"
+license = "Apache-2.0"
 
 # Built with `-p flankr-audio` only: the root manifest leaves it out of
 # `default-members`, so the root build never compiles xn, ptts or cpal

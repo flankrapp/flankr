@@ -3,6 +3,7 @@ name = "flankr-companion"
 version = "0.8.12"
 edition = "2024"
 description = "The companion client: connection, sessions, keys and turn logic, without audio"
+license = "Apache-2.0"
 
 [dependencies]
 libflankr_proto = { path = "../libflankr_proto", features = ["link"] }

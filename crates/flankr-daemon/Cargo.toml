@@ -3,6 +3,7 @@ name = "flankr-daemon"
 version = "0.1.0"
 edition = "2024"
 description = "Start a program detached from the terminal that started it: a one-shot job in the user's GUI launchd domain on macOS, else a new session"
+license = "Apache-2.0"
 
 [dependencies]
 libc = "0.2"

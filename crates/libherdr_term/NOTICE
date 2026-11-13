@@ -1,0 +1,8 @@
+libherdr_term, part of flankr.
+Licensed under the Apache License, Version 2.0 (LICENSE).
+
+This crate compiles code generated from herdr
+(https://github.com/herdrdev/herdr), Copyright the herdr authors,
+licensed under the Apache License, Version 2.0. The generated code is
+herdr's own definitions with the changes listed in this crate's
+README.md, "How herdr's source is used".

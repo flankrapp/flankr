@@ -3,6 +3,7 @@ name = "libherdr"
 version = "0.3.2"
 edition = "2024"
 description = "Transport layer and client for herdr terminal multiplexer"
+license = "Apache-2.0"
 
 
 [dependencies]
