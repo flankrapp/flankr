@@ -545,3 +545,37 @@ disagree, this amendment wins.
 8. **Versions (adds to 2.6).** Item 4 and item 7 add a libflankr_proto
    patch (0.5.14) before the daemon's; the daemon, flankr-companion and
    app bumps stay patches in the current series.
+
+## Amendment — 2026-11-12 22:03 EST: a Gemini best-effort match by title, and Build as the plan's fourth action
+
+The owner, on 2026-11-12: "right, Gemini prompt making best effort match
+against active plans in context by title. for now, the autoapprove can
+only respond to the coding agent asking which asks things like \"continue
+wuth step 2\", the owner still has to approve and request build if a
+specific plan (could have build as fourth option on plan)". The plan
+stays `Draft`.
+
+1. **Matching is a Gemini prompt (replaces the 21:58 amendment's item 5).**
+   For each pane whose session has a new Finished turn, `overview` makes
+   one call on `[llm.uses.policy]` with a new prompt, `plan_match`, in
+   `ADDITIONAL_PROMPTS.md`: given the session's recent prompts (the
+   owner's messages to the agent, newest first), its newest reply and
+   summary, and the titles of the active plans in context (`Draft` or
+   `In implementation`, in the projects the daemon knows, each with its
+   path), it returns the best-matching plan's path, or none, as JSON
+   `{ "plan": <path or null>, "matched": <the text it matched on> }`. It
+   is best effort: a call that fails or returns a path not in the list
+   leaves the pane's previous link, or **Not on a plan**. The result is
+   kept per pane until the next Finished turn, so one turn costs at most
+   one call. A pin still wins. `linked_by` is `"gemini"`. As before, this
+   link only places a pane in the view; the policy acts on its own rules.
+2. **The plan's four actions (adds to the 21:58 amendment's item 6).** The
+   plan's header offers **Approve** (arm), **Autocontinue** (on or off,
+   only when armed), **Open** (the plan's text, in the preview), and
+   **Build**: the owner's request that the plan's agent start building
+   it. Build is enabled once the plan is armed and a pane is linked to
+   it; it sends `approve and build <plan path>` to that pane as the
+   owner's own message, through `agents.send` and its usual checks and
+   confirmation, never through the policy plugin. Autocontinue then only
+   answers that agent's own "continue with step N?" questions (the plan
+   policy agent plan's 22:03 amendment).

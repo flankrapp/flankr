@@ -442,3 +442,31 @@ disagree.
 3. **Yes and No are unchanged:** a confirmation card's Yes approves one
    command, as the broker does today; neither arming nor autocontinue
    approves a command for the owner.
+
+## Amendment — 2026-11-12 22:03 EST: autocontinue only answers the agent's own continue question; building is the owner's
+
+The owner, on 2026-11-12: "for now, the autoapprove can only respond to
+the coding agent asking which asks things like \"continue wuth step 2\",
+the owner still has to approve and request build if a specific plan
+(could have build as fourth option on plan)". The plan stays `Draft`.
+This narrows 2.4 and 2.5 and the 21:58 amendment's item 2; where they
+disagree, this amendment wins.
+
+1. **What autocontinue may answer.** Only a question from the coding
+   agent, at the end of its Finished turn, asking whether to go on to the
+   next step of the plan (for example "Continue with step 2?"). It is
+   recognised from the pane's pending question, or from the turn's reply
+   and summary, by the `plan_policy` judgement, which must also name the
+   step asked about. Every other turn, including a turn that ends without
+   a question and any other question, is `ask` or `stop`; autocontinue
+   sends nothing for it.
+2. **The answer.** For a choice question, the option that accepts
+   continuing, chosen by the screen-driver path the choice questions use;
+   for a free-text question, `continue_command` (default `continue`).
+   Both go through 2.5's allow list and the confirmation broker as
+   before.
+3. **Never the start of a build.** Autocontinue never starts work on a
+   plan, never answers an agent asking whether to build one, and never
+   sends a plan's name or path. Approving a plan and asking an agent to
+   build it stays the owner's: the Active plans home view's **Build**
+   action (that plan's 22:03 amendment) or the owner's own message.
