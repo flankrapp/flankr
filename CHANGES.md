@@ -4694,3 +4694,30 @@ one crate per commit, patch bumps only:
 3. App: the Settings row Home view, saved as `home_view`.
 4. App: the Active tasks list, without events.
 5. App: events in place, Build on the plans screen; app 0.7.22.
+
+## 2026-11-12 23:36 EST — Active plans home view: departures so far
+
+Plan: the active plans home view plan (20261112_03), frozen. Small
+departures needed to build its first steps (Rule 1.7), and two for the
+owner.
+
+1. **`plan_match` reads the reply and summary only** (step 1, the 22:03
+   amendment's item 1): the card summary the plugin is handed carries no
+   owner messages from the transcript, so "the session's recent prompts"
+   are not in the prompt yet. The plans offered are the pane's own
+   project's active plans; plans in other repositories are not offered
+   (the 21:58 amendment's item 2's cross-repository grouping is not
+   built yet).
+2. **The `question` link is not a separate source**: the 21:58
+   amendment folded it into the prompt match, and the 22:03 amendment
+   replaced that with `plan_match`, which sees the reply's question.
+3. **`at` on `confirm.requested`** (0b): libflankr_proto 0.5.14 added it
+   to `common::ConfirmRequested`, which non-companion clients get; the
+   phone's `companion::ConfirmRequested` has no `at` yet. Adding it is
+   another additive libflankr_proto patch (0.5.15), past the numbers the
+   owner set for this work, so it waits for the owner. The time sent is
+   when the confirmation is announced.
+4. **Step 3 without an app version bump**, as the plan's step 3 says,
+   though FLANKR RULE 1.3 asks a bump for every user-visible commit: the
+   Settings row shows but changes nothing until the Active tasks list
+   lands. For the owner to rule on.
