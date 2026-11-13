@@ -4763,3 +4763,30 @@ departures needed to build its steps 4 and 5 (Rule 1.7):
 5. **flankr-companion 0.8.9** adds `Input::RespondTo` and
    `Input::SendMessage`, so the list's buttons and Build answer any
    listed pane without opening its view; and `policy::build_message`.
+
+## 2026-11-13 00:26 EST — Active plans home view: the owner's Build report, and its decisions
+
+Plan: the active plans home view plan (20261112_03), its 2026-11-13
+00:09 EST amendment. The owner's report of 2026-11-13: "one of the
+agents has a plan that still shows as Draft in the plans list dropdiwn,
+build should approve and build whivh updatws the frontmatter as first
+step". It concerned a plan in another of the owner's repositories:
+Build was tapped three times and sent its message three times, and the
+agent recorded its approval but left `status: Draft`.
+
+Decisions, as the lead agreed:
+
+1. **`once` instead of a minor bump.** Making the policy plugin's
+   `build` idempotent for every caller would change behaviour a caller
+   can observe, a minor bump (0.2.0) under Critical Rule 5.4. Instead
+   `build` takes an optional `once: true` and answers `existing`;
+   without it, it is as before. Plugin 0.1.2, a patch. Whether `build`
+   should become idempotent outright, as 0.2.0, is left for the owner.
+2. **`build_message` is kept** as it was, and flankr-companion 0.8.10
+   adds `build_request` with the status clause (additive); 0.8.11 fixes
+   its symbols to what the daemon's filter takes unchanged.
+3. **No daemon version change** (FLANKR RULE 2): the person running
+   `flankr` sees only a log line; the app's 0.7.23 entry says what
+   changed.
+4. The optional "Build sent" mark in the plans list is not built; the
+   plan page's Building covers it.
