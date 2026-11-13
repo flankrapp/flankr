@@ -1,5 +1,5 @@
 //! Generates `$OUT_DIR/herdr_wire.rs`, `libherdr_term::herdr`, from herdr's
-//! own source in the `vendor/herdr` submodule (or `HERDR_SRC`)
+//! own source in the `external/herdr` submodule (or `HERDR_SRC`)
 //! (docs/design/20261027_08_HERDR_TERMINAL_CRATE_PLAN.md, decision 2).
 
 #[path = "build/extract.rs"]

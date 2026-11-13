@@ -103,7 +103,7 @@ fn a_missing_submodule_says_how_to_fetch_it() {
     let dir = tempfile::tempdir().unwrap();
     let err = extract::extract(dir.path()).unwrap_err().to_string();
     assert!(
-        err.contains("git submodule update --init vendor/herdr"),
+        err.contains("git submodule update --init external/herdr"),
         "{err}"
     );
     assert!(err.contains("HERDR_SRC"), "{err}");

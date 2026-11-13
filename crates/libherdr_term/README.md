@@ -5,22 +5,28 @@ herdr's own shell clients, over herdr's stable endpoint contract
 (generation 1) on `herdr-client.sock`. It hands the daemon the session
 pane's cells, cursor, size and mouse mode, and sends the pane keys, text,
 paste, mouse and wheel events. herdr is not changed: its protocol types are
-compiled from its own source in the `vendor/herdr` submodule.
+compiled from its own source in the `external/herdr` submodule.
 
 The plan is
 [libherdr_term, attaching to herdr as a client from herdr's own protocol types](../../docs/design/20261027_08_HERDR_TERMINAL_CRATE_PLAN.md).
 
 ## Building
 
-`build.rs` generates herdr's protocol types from the `vendor/herdr`
+`build.rs` generates herdr's protocol types from the `external/herdr`
 submodule (or from `HERDR_SRC`) into `$OUT_DIR/herdr_wire.rs`, which the
 crate includes as `libherdr_term::herdr`.
 [How herdr's source is used](#how-herdrs-source-is-used) says exactly what
 it takes. Without the submodule the build stops with the fix:
 
 ```text
-git submodule update --init vendor/herdr
+git submodule update --init external/herdr
 ```
+
+The submodule moved to `external/herdr` on 2026-11-13. A checkout made
+before then runs `git submodule sync` and
+`git submodule update --init external/herdr`, then deletes the old
+submodule's directory and its directory under `.git/modules` by hand, as
+[docs/HERDR_WIRE.md](../../docs/HERDR_WIRE.md)'s 2026-11-13 section says.
 
 To review the extracted types when the pin moves:
 
@@ -62,7 +68,7 @@ generates them from herdr's own source on every build, through
 the workspace excludes its checkout, so herdr is never built or linked: five
 of its files are read, and nothing else.
 
-**Source.** The pinned herdr checkout in `vendor/herdr`, or the directory in
+**Source.** The pinned herdr checkout in `external/herdr`, or the directory in
 `HERDR_SRC`.
 
 **Files read.**

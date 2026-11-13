@@ -2,7 +2,7 @@
 name = "libherdr_term"
 version = "0.2.0"
 edition = "2024"
-description = "Attaching to the local herdr as one of herdr's own shell clients, with herdr's protocol types extracted from the vendor/herdr submodule"
+description = "Attaching to the local herdr as one of herdr's own shell clients, with herdr's protocol types extracted from the external/herdr submodule"
 license = "Apache-2.0"
 # The crate's own code is flankr's; build.rs generates `libherdr_term::herdr`
 # from herdr's Apache-2.0 source (see README.md).
