@@ -619,3 +619,9 @@ checked by the same filter before it is sent, as any owner message. If
 the date and title match more than one active plan in the pane's
 project, Build is disabled for that plan with a note, and the owner sends
 their own message.
+
+## Amendment — 2026-11-12 22:18 EST: a correction to the previous amendment's time
+
+The amendment headed "2026-11-12 22:21 EST: Build names the plan by its
+date and title" was written at 2026-11-12 22:18 EST by the system clock;
+its heading's time was typed wrongly. Its content is unchanged.
