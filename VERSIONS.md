@@ -1513,3 +1513,16 @@ Strictly additive (fields and rows added to `overview`'s answer).
   the projects it has read, with no pane and no task as well (its
   `agents` empty); an Implemented plan still shows only while it has a
   task.
+
+## flankr-companion 0.8.15 — 2026-11-13 (the commit tagged `flankr-companion-v0.8.15`)
+
+Plan 20261112_03, the 2026-11-13 01:52 EST amendment. Strictly additive
+(fields appended to `PolicyPlanGroup`, and new types and a method).
+
+- **Added:** `PolicyPlanGroup::project` (`PolicyProject { root, name }`)
+  and `PolicyPlanGroup::open_questions`, from the policy plugin 0.1.3's
+  `overview`.
+- **Added:** `PolicyOverview::by_project(agents, order)` and
+  `ProjectGroup` (`project`, `plans`, `key`, `idle_ms`): the Active tasks
+  view's groups, one per project, a kept order first, then by most recent
+  activity, **Not on a plan** last.

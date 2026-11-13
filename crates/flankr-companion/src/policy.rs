@@ -230,6 +230,52 @@ pub struct PolicyPlanGroup {
     pub current_step: Option<u32>,
     #[serde(default)]
     pub agents: Vec<PolicyAgentLink>,
+    /// The project the plan lives in (the policy plugin 0.1.3; the plan's
+    /// 2026-11-13 01:52 EST amendment). Added in 0.8.15.
+    #[serde(default)]
+    pub project: Option<PolicyProject>,
+    /// Its open questions no amendment answered (plan 20261113_02).
+    /// Added in 0.8.15.
+    #[serde(default)]
+    pub open_questions: Option<u32>,
+}
+
+/// A plan's project in `overview`: its root and its folder's name. Added
+/// in 0.8.15.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PolicyProject {
+    #[serde(default)]
+    pub root: String,
+    #[serde(default)]
+    pub name: String,
+}
+
+/// A project's group for the Active tasks view (plan 20261112_03, the
+/// 2026-11-13 01:52 EST amendment): its plans, each joined to its agents.
+/// `project` is `None` for **Not on a plan**, whose one group has no
+/// plan. Added in 0.8.15.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectGroup {
+    pub project: Option<PolicyProject>,
+    pub plans: Vec<PlanGroup>,
+}
+
+impl ProjectGroup {
+    /// The key a view keeps it by: the project's root, or empty for
+    /// **Not on a plan**.
+    pub fn key(&self) -> &str {
+        self.project.as_ref().map_or("", |p| p.root.as_str())
+    }
+
+    /// How long since anything of it moved: the least `idle_ms` of its
+    /// plans' agents; `None` with no agent.
+    pub fn idle_ms(&self) -> Option<u64> {
+        self.plans
+            .iter()
+            .flat_map(|g| g.agents.iter())
+            .filter_map(|(a, _)| a.idle_ms)
+            .min()
+    }
 }
 
 /// `overview`'s result and notice (plan 20261112_03, 2.2 item 1).
@@ -284,6 +330,76 @@ impl PolicyOverview {
             agents: rest,
         });
         out
+    }
+
+    /// [`Self::join`] grouped by project (plan 20261112_03, the
+    /// 2026-11-13 01:52 EST amendment, items 1 and 2): one group per
+    /// project, in `order` (the projects' roots, as a view keeps them)
+    /// and then the rest by most recent activity (least `idle_ms`)
+    /// first, those with no agent after by name; within a project, plans
+    /// with agents first by their activity, then the rest newest path
+    /// first; **Not on a plan** last. A plan with no project goes under
+    /// one with an empty root. Added in 0.8.15.
+    pub fn by_project(&self, agents: &[AgentInfo], order: &[String]) -> Vec<ProjectGroup> {
+        let mut groups = self.join(agents);
+        let rest = groups.pop().filter(|g| g.plan.is_none());
+        let idle = |g: &PlanGroup| g.agents.iter().filter_map(|(a, _)| a.idle_ms).min();
+        let mut projects: Vec<ProjectGroup> = Vec::new();
+        for g in groups {
+            let project = g
+                .plan
+                .as_ref()
+                .and_then(|p| p.project.clone())
+                .unwrap_or_default();
+            match projects
+                .iter_mut()
+                .find(|p| p.project.as_ref() == Some(&project))
+            {
+                Some(p) => p.plans.push(g),
+                None => projects.push(ProjectGroup {
+                    project: Some(project),
+                    plans: vec![g],
+                }),
+            }
+        }
+        for p in &mut projects {
+            p.plans.sort_by(|a, b| {
+                let (ia, ib) = (idle(a), idle(b));
+                match (ia, ib) {
+                    (Some(x), Some(y)) => x.cmp(&y),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => {
+                        let path = |g: &PlanGroup| g.plan.as_ref().map(|p| p.path.clone());
+                        path(b).cmp(&path(a))
+                    }
+                }
+            });
+        }
+        projects.sort_by(|a, b| {
+            let pos = |g: &ProjectGroup| order.iter().position(|k| k == g.key());
+            match (pos(a), pos(b)) {
+                (Some(x), Some(y)) => x.cmp(&y),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => match (a.idle_ms(), b.idle_ms()) {
+                    (Some(x), Some(y)) => x.cmp(&y),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => {
+                        let name = |g: &ProjectGroup| g.project.as_ref().map(|p| p.name.clone());
+                        name(a).cmp(&name(b))
+                    }
+                },
+            }
+        });
+        if let Some(rest) = rest {
+            projects.push(ProjectGroup {
+                project: None,
+                plans: vec![rest],
+            });
+        }
+        projects
     }
 }
 
@@ -564,6 +680,57 @@ mod tests {
             params: json!({"paused": true}),
         };
         assert!(matches!(PolicyNotice::of(&note), Some(PolicyNotice::Overview(o)) if o.paused));
+    }
+
+    #[test]
+    fn the_overview_by_project() {
+        let plan = |path: &str, root: &str, agents: &[&str]| {
+            json!({
+                "path": path, "status": "Draft",
+                "project": {"root": root, "name": root.rsplit('/').next().unwrap()},
+                "open_questions": 2,
+                "agents": agents.iter().map(|p| json!({"pane_id": p, "linked_by": "pinned"})).collect::<Vec<_>>(),
+            })
+        };
+        let o: PolicyOverview = serde_json::from_value(json!({
+            "plans": [
+                plan("docs/design/20261113_01_A_PLAN.md", "/r/alpha", &[]),
+                plan("docs/design/20261112_01_B_PLAN.md", "/r/alpha", &["p1"]),
+                plan("docs/design/20261111_01_C_PLAN.md", "/r/beta", &["p2"]),
+                plan("docs/design/20261110_01_D_PLAN.md", "/r/gamma", &[]),
+            ],
+            "unlinked": ["p3"],
+        }))
+        .unwrap();
+        assert_eq!(o.plans[0].open_questions, Some(2));
+        let idle = |pane: &str, ms: u64| {
+            let mut a = agent(pane, "claude");
+            a.idle_ms = Some(ms);
+            a
+        };
+        let agents = [idle("p1", 60_000), idle("p2", 1_000), idle("p3", 5)];
+        let groups = o.by_project(&agents, &[]);
+        let keys: Vec<&str> = groups.iter().map(ProjectGroup::key).collect();
+        // beta moved last; gamma has no agent; Not on a plan last.
+        assert_eq!(keys, ["/r/beta", "/r/alpha", "/r/gamma", ""]);
+        let alpha: Vec<&str> = groups[1]
+            .plans
+            .iter()
+            .map(|g| g.plan.as_ref().unwrap().path.as_str())
+            .collect();
+        assert_eq!(
+            alpha,
+            [
+                "docs/design/20261112_01_B_PLAN.md",
+                "docs/design/20261113_01_A_PLAN.md"
+            ],
+            "the plan with an agent first"
+        );
+        assert_eq!(groups[3].plans[0].agents[0].0.pane_id, "p3");
+        // A kept order holds while the activity changes.
+        let kept = o.by_project(&agents, &["/r/alpha".into(), "/r/beta".into()]);
+        let keys: Vec<&str> = kept.iter().map(ProjectGroup::key).collect();
+        assert_eq!(keys, ["/r/alpha", "/r/beta", "/r/gamma", ""]);
     }
 
     /// The characters the daemon's arbitrary-command filter takes as

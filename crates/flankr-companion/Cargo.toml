@@ -1,6 +1,6 @@
 [package]
 name = "flankr-companion"
-version = "0.8.14"
+version = "0.8.15"
 edition = "2024"
 description = "The companion client: connection, sessions, keys and turn logic, without audio"
 license = "Apache-2.0"
