@@ -4817,3 +4817,34 @@ Departure (Rule 1.7): the branch's commits came before the plan's status
 change, which is made here, after the merge, with the amendment recording
 the owner's text rules and the steps' commits. Step 1 (the submodule
 move) is still to do.
+
+## 2026-11-13 01:41 EST — plan 20261112_01 (flankr under Apache-2.0): step 1, departures
+
+[flankr under Apache-2.0](docs/design/20261112_01_APACHE_LICENSE_PLAN.md),
+step 1 (the submodule moves to `external/herdr`), done on the owner's
+instruction of 2026-11-13 ("move the herdr submodule to external and
+complete the other steps before fully merging"). Small departures
+(Rule 1.7):
+
+1. **The plan's status, its marker, its README row and the addendum
+   starting it** were not in step 1's second commit, as the step says:
+   they were made with the merge of steps 2 to 5 (the 01:33 EST entry
+   above).
+2. **Where `vendor/herdr` is still named.** Step 1's **Done when:**
+   excepts `docs/design/`, `CHANGES.md` and `docs/HERDR_WIRE.md`'s
+   earlier sections. These also keep it, as records of the past:
+   - `docs/HERDR_WIRE.md`'s new section, which says how a checkout from
+     before the move deletes its leftover `vendor/herdr` (decision 5);
+   - the README decision-table rows of the libherdr_term plan
+     (20261027_08) and the protocol adapters plan (20261029_03), which
+     summarise those plans as written;
+   - `tests/fixtures/planning/README.md`, a fixed copy of the README that
+     the planning plugin's tests read.
+   libherdr_term's README says how an older checkout updates by pointing
+   to `docs/HERDR_WIRE.md`'s section rather than naming the old path.
+3. **libherdr**, not listed in decision 5, had one doc comment naming
+   `vendor/herdr/src/api/schema/worktrees.rs`; it now names
+   `external/herdr`, in its own commit.
+4. **The font licence copies** in `apps/companion/licenses/` now come
+   from the libmsdf revision the app pins (`bd7383d`), closing that
+   open item; only `FONTS-LICENSE-APACHE.txt` differed.
