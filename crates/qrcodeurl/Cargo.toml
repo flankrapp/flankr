@@ -3,6 +3,7 @@ name = "qrcodeurl"
 version = "0.1.0"
 edition = "2024"
 description = "A string as a QR code: terminal text, a 1-bit PNG, a data: URL, and inline kitty or iTerm2 images"
+license = "Apache-2.0"
 
 [dependencies]
 # The matrix only; its image, svg and pic renderers are left out.
