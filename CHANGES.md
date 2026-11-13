@@ -4739,3 +4739,27 @@ previous entry:
    Active tasks view. No build after `ec60d99` is installed before
    0.7.22.
 3. No daemon bump for `worktree_create`, as proposed.
+
+## 2026-11-12 23:58 EST — Active plans home view: departures in steps 4 and 5
+
+Plan: the active plans home view plan (20261112_03), frozen. Small
+departures needed to build its steps 4 and 5 (Rule 1.7):
+
+1. **Steps 4 and 5 in one app commit** (`2d82738`): the list, its events
+   and Build share the overview's wiring in `lib.rs`, and the app's one
+   bump, 0.7.22, carries them and the Home view row.
+2. **Order** (the 21:58 amendment, items 2 and 3): groups come in the
+   daemon's order (tasks first, then newest plan first), and agents in
+   the daemon's link order, without the re-sort by recent activity or
+   the per-project sub-headers; an agent's project is not yet shown as
+   its own header. The list does not move under the owner's finger.
+3. **Events**: one open question per pane, from `agents.list`, shown
+   last; confirmations reach the list one at a time, as the client asks
+   them (`Event::Confirm` is given for the front of its queue only).
+   Subagents' questions are not listed under their parent.
+4. **Build** is on the planning plugin's plan page, not yet in the
+   file preview; it uses the agent view's pane, and with no agent view
+   open it says to open one first.
+5. **flankr-companion 0.8.9** adds `Input::RespondTo` and
+   `Input::SendMessage`, so the list's buttons and Build answer any
+   listed pane without opening its view; and `policy::build_message`.
