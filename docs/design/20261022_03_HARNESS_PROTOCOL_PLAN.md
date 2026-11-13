@@ -2057,3 +2057,35 @@ a session; nothing earlier is replaced.
    Fixed line, and, since the app's user sees the list view keep up, the
    app's next patch with an `apps/UPDATES.md` Fixed line (FLANKR RULE 2
    item 4).
+
+## Amendment — 2026-11-13 01:50 EST: an answered question card goes, and a drag never answers it again (living section L3)
+
+On the owner's explicit instruction (Rule 1.5), 2026-11-13, in
+`docs/OWNER_REPORTS.md` (01:42 EST): "no, don't revert, th3 card wasnt
+dismissed after aporoving". On app 0.7.24 a tap on a question card's
+Yes sent "yes", but the pinned card stayed; dragging it away then
+counted, under the 2026-10-30 15:20 EDT entry's item 3 ("A yes/no
+question: answered **No**"), as an answer, and sent "no" to the same
+session. This adds to that entry and to the 2026-10-23 tap-dismiss
+("tapping yes/no on a card should dismiss the card on the phone side"),
+which held only when the session's pending question matched the card:
+
+1. **An answered question card goes at once.** Once any answer to the
+   pinned live question card is sent from the phone (its Yes or No, a
+   plan's approve or implement, one of the daemon's answers that sends,
+   a message, typed or spoken, to that agent, or the Active tasks list's
+   Yes or No for the agent whose view is open), the card leaves the view
+   until the session resolves it, whether or not the session gave a
+   pending question to match. It comes back if the send is refused, as
+   before. A later question in the same words, once the first is no
+   longer live, shows.
+2. **A drag never answers twice.** A question card already answered from
+   the phone, if it is still pinned when dragged away, only goes: no
+   **No**, no daemon answer, no dim line; its queued speech is dropped
+   as before.
+3. **Unchanged:** an unanswered yes/no question dragged away is still
+   answered **No** with its dim line, as item 3 of the 15:20 EDT entry
+   says; the other kinds are as that entry has them.
+4. **Versions.** flankr-companion 0.8.14, a patch (0.8.13 is reserved
+   for another plan), with no public API change; the app 0.7.26, a patch
+   with its `apps/UPDATES.md` entry (0.7.25 is another branch's).

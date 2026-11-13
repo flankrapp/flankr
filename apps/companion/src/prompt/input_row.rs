@@ -8,9 +8,9 @@
 //! - The **+** is drawn as two 2 pt strokes 18 pt long in the accent, no
 //!   background. Gemini's card has it for Paste text (the 23:39 EDT
 //!   amendment), on the desktop too (the owner, 2026-10-29: "Show
-//!   Gemini's + on desktop"); the message card only on a phone while the
-//!   daemon offers `images` (the binary files plan), which it does not
-//!   yet (11.2).
+//!   Gemini's + on desktop"); the message card on a phone, whether or not
+//!   the daemon offers `images` (the add images plan, 20261113_01,
+//!   decision 2), and not on the desktop (11.2).
 //! - The **toggle** is the keyboard glyph with a down chevron under it
 //!   while the soft keyboard is up (hide), the glyph alone while it is down
 //!   (show); dim and taking no taps while a physical keyboard types. Not on
@@ -38,11 +38,11 @@ pub const ROW_GAP: f32 = 4.0;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct InputTools {
     /// A phone: the keyboard toggle is drawn, and the message card's +
-    /// with `images` (decisions 11.2 and 11.3). Gemini's + is drawn
-    /// everywhere.
+    /// (decisions 11.2 and 11.3; the add images plan, decision 2).
+    /// Gemini's + is drawn everywhere.
     pub mobile: bool,
-    /// The daemon offers the `images` namespace: the message card's + and
-    /// its Attach image… (the binary files plan; not yet).
+    /// The daemon offers the `images` namespace: the + menu's Attach
+    /// image… is enabled (the add images plan, decisions 4 and 5).
     pub images: bool,
     /// The soft keyboard is up for the typed card: the toggle hides it.
     pub keyboard_up: bool,
@@ -57,7 +57,7 @@ impl InputTools {
     pub fn attach(&self, kind: PromptKind) -> bool {
         match kind {
             PromptKind::GeneralAgent => true,
-            PromptKind::Message => self.mobile && self.images,
+            PromptKind::Message => self.mobile,
         }
     }
 
@@ -224,15 +224,23 @@ mod tests {
                 .map(|r| r.y),
             Some(600.0)
         );
-        // The message card: no + until the daemon offers images.
+        // The message card on a phone: the + at the row's left edge
+        // whether or not the daemon offers images (the add images plan,
+        // decisions 1 and 2), the microphone and the toggle at its right.
         let m = InputRow::lay_out(PromptKind::Message, 100.0, 500.0, 800.0, s, &PHONE).unwrap();
-        assert!(m.attach.is_none() && m.ime.is_some());
+        assert_eq!(m.attach, Some(Rect::new(100.0, 500.0, 88.0, 88.0)));
+        assert_eq!(m.ime, Some(Rect::new(900.0 - 88.0, 500.0, 88.0, 88.0)));
+        assert_eq!(m.mic, Some(Rect::new(900.0 - 176.0, 500.0, 88.0, 88.0)));
+        assert_eq!(
+            m.hit(110.0, 510.0, 0.0),
+            Some(AgentHit::PromptAttach(PromptKind::Message))
+        );
         let images = InputTools {
             images: true,
             ..PHONE
         };
-        let m = InputRow::lay_out(PromptKind::Message, 100.0, 500.0, 800.0, s, &images).unwrap();
-        assert!(m.attach.is_some());
+        let m2 = InputRow::lay_out(PromptKind::Message, 100.0, 500.0, 800.0, s, &images).unwrap();
+        assert_eq!(m2.attach, m.attach);
         assert_eq!(PHONE.grows(PromptKind::Message, s), 96.0, "48 pt");
     }
 
@@ -280,17 +288,23 @@ mod tests {
         let s = 2.0;
         let physical = InputTools {
             physical: true,
-            // The microphone off too, so the whole row is dim.
+            // The microphone off too, so the whole row is dim but the +,
+            // which still takes taps.
             microphone: false,
             ..PHONE
         };
         let r = InputRow::lay_out(PromptKind::Message, 0.0, 0.0, 800.0, s, &physical).unwrap();
         let ime = r.ime.unwrap();
         assert_eq!(r.hit(ime.x + 5.0, ime.y + 5.0, 0.0), None);
+        assert_eq!(
+            r.hit(5.0, 5.0, 0.0),
+            Some(AgentHit::PromptAttach(PromptKind::Message))
+        );
         let mut list = DrawList::new();
         r.draw(&mut list, 0.0);
+        let plus = 2;
         assert!(
-            list.instances
+            list.instances[plus..]
                 .iter()
                 .all(|i| (i.color[3] - theme().fg[3] * settings::DISABLED_ALPHA).abs() < 1e-6)
         );

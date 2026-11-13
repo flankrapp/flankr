@@ -251,18 +251,67 @@ pub fn volume_items(
     out
 }
 
-/// The + menu (plan 20261028_06, decision 8 and the 23:39 EDT amendment):
-/// **Paste text**, enabled while the clipboard holds text (`clipboard`,
-/// libmorph's `clipboard_has_text`), and, where `images` are taken (the message card, while
-/// the daemon offers `images`), **Attach image…**.
-pub fn attach_items(images: bool, clipboard: bool) -> Vec<PopupItem> {
+/// The + menu's **Attach image…** (the add images plan, 20261113_01,
+/// decision 4): left out, enabled, or dim with its reason.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImageItem {
+    /// Not in the menu: Gemini's card, which takes no images.
+    Absent,
+    /// Enabled: the daemon offers `images` and fewer than four are
+    /// attached.
+    Ready,
+    /// Dim: the daemon does not offer `images`.
+    NotOffered,
+    /// Dim: four images are attached already.
+    Full,
+}
+
+impl ImageItem {
+    /// The item on the message card or the terminal: `offered`, the
+    /// daemon's `images`; `attached`, the images attached for the open
+    /// session.
+    pub fn of(offered: bool, attached: usize) -> ImageItem {
+        if !offered {
+            ImageItem::NotOffered
+        } else if attached >= IMAGES_MAX {
+            ImageItem::Full
+        } else {
+            ImageItem::Ready
+        }
+    }
+
+    /// The one-line reason a dim item gives under the menu.
+    fn reason(self) -> Option<&'static str> {
+        match self {
+            ImageItem::NotOffered => Some(copy::MENU_ATTACH_NOT_OFFERED.text),
+            ImageItem::Full => Some(copy::MENU_ATTACH_FULL.text),
+            ImageItem::Absent | ImageItem::Ready => None,
+        }
+    }
+}
+
+/// The most images one message takes (`libflankr_blob`'s
+/// `IMAGES_PER_SEND`).
+pub const IMAGES_MAX: usize = libflankr_blob::IMAGES_PER_SEND;
+
+/// The + menu (plan 20261028_06, decision 8 and the 23:39 EDT amendment;
+/// the add images plan, decision 4): **Paste text**, enabled while the
+/// clipboard holds text (`clipboard`, libmorph's `clipboard_has_text`),
+/// and on the message card and the terminal **Attach image…**, enabled or
+/// dim as `image` says; a dim one has its reason under it, after a
+/// separator, as a line that takes no taps.
+pub fn attach_items(clipboard: bool, image: ImageItem) -> Vec<PopupItem> {
     let mut out =
         vec![PopupItem::action(PASTE_TEXT, copy::MENU_PASTE_TEXT.text).with_enabled(clipboard)];
-    if images {
-        out.push(PopupItem::action(
-            ATTACH_IMAGE,
-            copy::MENU_ATTACH_IMAGE.text,
-        ));
+    if image != ImageItem::Absent {
+        out.push(
+            PopupItem::action(ATTACH_IMAGE, copy::MENU_ATTACH_IMAGE.text)
+                .with_enabled(image == ImageItem::Ready),
+        );
+    }
+    if let Some(reason) = image.reason() {
+        out.push(PopupItem::separator());
+        out.push(PopupItem::heading(reason));
     }
     out
 }
@@ -725,14 +774,40 @@ mod tests {
 
     #[test]
     fn the_plus_menu_has_paste_text_disabled_until_the_clipboard_call() {
-        let i = attach_items(false, false);
+        let i = attach_items(false, ImageItem::Absent);
         assert_eq!(ids(&i), [PASTE_TEXT]);
         assert_eq!(i[0].label, "Paste text");
         assert!(!i[0].enabled);
-        assert!(attach_items(false, true)[0].enabled);
-        assert_eq!(ids(&attach_items(true, false)), [PASTE_TEXT, ATTACH_IMAGE]);
+        assert!(attach_items(true, ImageItem::Absent)[0].enabled);
         assert_eq!(Choice::parse(PASTE_TEXT), Some(Choice::PasteText));
         assert_eq!(Choice::parse(ATTACH_IMAGE), Some(Choice::AttachImage));
+    }
+
+    #[test]
+    fn attach_image_is_dim_with_its_reason_without_images_or_when_full() {
+        // The daemon offers images: enabled, and no reason.
+        let i = attach_items(false, ImageItem::of(true, 0));
+        assert_eq!(ids(&i), [PASTE_TEXT, ATTACH_IMAGE]);
+        assert_eq!(i[1].label, "Attach image\u{2026}");
+        assert!(i[1].enabled);
+        assert_eq!(ImageItem::of(true, 3), ImageItem::Ready);
+        // Without images: dim, the reason under it.
+        let i = attach_items(true, ImageItem::of(false, 0));
+        assert!(i[0].enabled && !i[1].enabled && !i[1].is_choosable());
+        assert_eq!(
+            ids(&i),
+            [
+                PASTE_TEXT,
+                ATTACH_IMAGE,
+                "---",
+                "# This flankr can't take images."
+            ]
+        );
+        assert!(!i[3].is_choosable());
+        // Four attached: dim, with its own reason.
+        let i = attach_items(true, ImageItem::of(true, 4));
+        assert!(!i[1].enabled);
+        assert_eq!(i[3].label, "Only 4 images can go in one message.");
     }
 
     #[test]

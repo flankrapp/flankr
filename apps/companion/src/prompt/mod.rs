@@ -16,6 +16,7 @@
 pub mod bars;
 pub mod card;
 pub mod catch_up;
+pub mod grid;
 pub mod history;
 pub mod input_row;
 pub mod keyboard;
@@ -34,6 +35,7 @@ use crate::settings;
 pub use bars::Bars;
 pub use card::{PromptCard, Reply};
 pub use catch_up::CatchUpCard;
+pub use grid::{Grid, Thumb, Tile};
 pub use history::{History, Sent};
 pub use input_row::{InputRow, InputTools};
 pub use overlay::{OverlayTouch, PromptOverlay};
@@ -269,6 +271,12 @@ impl Prompts {
         a || b
     }
 
+    /// The images attached to the message, its grid's tiles (the add
+    /// images plan, decision 10). Returns whether they changed.
+    pub fn set_tiles(&mut self, tiles: Vec<Tile>) -> bool {
+        self.message.set_tiles(tiles)
+    }
+
     /// Gemini's typed prompt, while one is open. Returns whether it
     /// changed.
     pub fn set_gemini_input(&mut self, input: Option<PromptInput>) -> bool {
@@ -439,6 +447,8 @@ impl Prompts {
             let keyboard = card.input().is_some_and(PromptInput::keyboard);
             let row = Some((kind, card.tools()));
             let voice = card.by_voice().then_some(kind);
+            let tiles = card.tiles().to_vec();
+            self.overlay.set_tiles(tiles);
             self.overlay
                 .set_input(&header, colour, &text, &placeholder, keyboard, row);
             self.overlay.set_voice(voice);
@@ -481,6 +491,7 @@ impl Prompts {
             AgentHit::PromptAttach(kind)
             | AgentHit::PromptIme(kind)
             | AgentHit::PromptMic(kind)
+            | AgentHit::PromptDetach(kind, _)
                 if self.overlay.is_open() && self.expanded() == Some(kind) =>
             {
                 self.overlay.row_rect(hit)

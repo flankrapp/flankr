@@ -20,6 +20,7 @@ use libmorph::TouchPhase;
 use libmsdf::drawlist::DrawList;
 
 use super::PromptKind;
+use super::grid::{GAP as GRID_GAP, Grid, Tile};
 use super::history::History;
 use super::input_row::{InputRow, InputTools, ROW_GAP};
 use crate::agent::AgentHit;
@@ -80,6 +81,10 @@ pub struct PromptOverlay {
     /// as placed (where it opens to).
     row_for: Option<(PromptKind, InputTools)>,
     row: Option<InputRow>,
+    /// The typed message's attached images, and their grid above the
+    /// input area (the add images plan, 20261113_01, decision 10).
+    tiles: Vec<Tile>,
+    grid: Option<Grid>,
     /// The expanded card's kind while it takes voice: the keyboard glyph
     /// at the header's right, which goes on typed (plan 20261028_06, the
     /// 2026-11-03 13:27 EST amendment), and where it opens to.
@@ -122,6 +127,8 @@ impl PromptOverlay {
             text_area: None,
             row_for: None,
             row: None,
+            tiles: Vec::new(),
+            grid: None,
             history: Rect::default(),
             voice: None,
             keyboard: None,
@@ -169,6 +176,15 @@ impl PromptOverlay {
         self.place();
     }
 
+    /// The expanded message's attached images, drawn above its input
+    /// area while it is typed.
+    pub fn set_tiles(&mut self, tiles: Vec<Tile>) {
+        if tiles != self.tiles {
+            self.tiles = tiles;
+            self.place();
+        }
+    }
+
     /// The expanded card's kind while it takes voice, for the keyboard
     /// glyph; `None` while typed or with nothing being taken.
     pub fn set_voice(&mut self, voice: Option<PromptKind>) {
@@ -209,11 +225,29 @@ impl PromptOverlay {
         let row_h = self
             .row_for
             .map_or(0.0, |(kind, tools)| tools.grows(kind, s));
-        let history_h = (a.h - head - input_h - row_h - 2.0 * pad).max(0.0);
+        let grid_kind = self
+            .row_for
+            .map(|(kind, _)| kind)
+            .filter(|k| *k == PromptKind::Message);
+        let grid_h = match grid_kind.map(|_| Grid::height(self.tiles.len(), a.w - 2.0 * pad, s)) {
+            Some(h) if h > 0.0 => h + GRID_GAP * s,
+            _ => 0.0,
+        };
+        let history_h = (a.h - head - input_h - row_h - grid_h - 2.0 * pad).max(0.0);
         self.history = Rect::new(a.x, a.y + head, a.w, history_h);
+        self.grid = grid_kind.filter(|_| grid_h > 0.0).map(|kind| {
+            Grid::lay_out(
+                kind,
+                &self.tiles,
+                a.x + pad,
+                a.y + head + history_h + pad,
+                a.w - 2.0 * pad,
+                s,
+            )
+        });
         let r = Rect::new(
             a.x + pad,
-            a.y + head + history_h + pad,
+            a.y + head + history_h + pad + grid_h,
             a.w - 2.0 * pad,
             input_h,
         );
@@ -245,6 +279,9 @@ impl PromptOverlay {
         {
             return Some(AgentHit::PromptIme(kind));
         }
+        if let Some(hit) = self.grid.as_ref().and_then(|g| g.hit(x, y, self.drop())) {
+            return Some(hit);
+        }
         self.row.as_ref()?.hit(x, y, self.drop())
     }
 
@@ -254,6 +291,9 @@ impl PromptOverlay {
             && hit == AgentHit::PromptIme(kind)
         {
             return Some(Self::moved(r, self.drop()));
+        }
+        if let AgentHit::PromptDetach(..) = hit {
+            return self.grid.as_ref()?.rect_of(hit, self.drop());
         }
         self.row.as_ref()?.rect_of(hit, self.drop())
     }
@@ -458,6 +498,9 @@ impl PromptOverlay {
         }
         if let Some(row) = &self.row {
             row.draw(list, drop);
+        }
+        if let Some(grid) = &self.grid {
+            grid.draw(list, ctx, drop);
         }
         if let Some(k) = self.keyboard {
             ime_glyph(list, Self::moved(k, drop), s, theme().fg, false);

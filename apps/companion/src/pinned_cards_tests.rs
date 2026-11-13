@@ -20,7 +20,8 @@ use libmorph::{GpuError, MorphError};
 use super::App;
 use super::probe::{self, PinProbe, Probe};
 use crate::agent::{
-    AgentHit, BUTTON_H, DENIED_BY_DISMISSING, DISMISSED_THE_QUESTION, PIN_LESS, PIN_MORE,
+    AgentHit, BUTTON_H, DENIED_BY_DISMISSING, DISMISSED_THE_QUESTION, NO_BY_DISMISSING, PIN_LESS,
+    PIN_MORE,
 };
 
 pub(super) const READY: u32 = 4;
@@ -376,6 +377,47 @@ fn an_approval_dragged_away_is_denied_with_its_line_in_the_flow() {
         p.drawer
             .flow_notes
             .contains(&format!("-- {DENIED_BY_DISMISSING}")),
+        "{:?}",
+        p.drawer.flow_notes
+    );
+}
+
+#[test]
+fn a_question_answered_by_its_yes_dragged_away_only_goes() {
+    // Owner report, 2026-11-13 01:42 EST: Yes was sent, the card stayed,
+    // and dragging it away then sent No.
+    let card = live(CardKind::Question, "Claude is asking", "Ship it?");
+    let Some((open, at, s)) = open_view(&card) else {
+        return;
+    };
+    let yes = at.drawer.yes.expect("the card's Yes");
+    // The fake client leaves the card live, as the phone's did.
+    let script = format!(
+        "{open}{}frames 6
+",
+        tap(yes)
+    );
+    let answered = run(&script, &card).unwrap();
+    assert_eq!(
+        inputs_with(&answered, "Respond(Yes)"),
+        1,
+        "{:?}",
+        answered.inputs
+    );
+    let p = run(
+        &format!("{script}{}", sideways(&answered, 60.0 * s, 6, 0)),
+        &card,
+    )
+    .unwrap();
+    assert_eq!(inputs_with(&p, "Respond(Yes)"), 1, "{:?}", p.inputs);
+    assert_eq!(inputs_with(&p, "Respond(No)"), 0, "{:?}", p.inputs);
+    assert_eq!(inputs_with(&p, "Suggested("), 0, "{:?}", p.inputs);
+    assert_eq!(inputs_with(&p, "DropSpeech(Card("), 1, "{:?}", p.inputs);
+    assert!(p.drawer.pin.is_none(), "out of the pinned place");
+    assert!(
+        !p.drawer
+            .flow_notes
+            .contains(&format!("-- {NO_BY_DISMISSING}")),
         "{:?}",
         p.drawer.flow_notes
     );

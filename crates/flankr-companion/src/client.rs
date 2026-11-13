@@ -1801,6 +1801,12 @@ struct AgentView {
     /// The time of the pending question a tapped Yes or No answered: its
     /// card goes at once, before the session shows the answer.
     replied_to: Option<String>,
+    /// The text of the live question card answered from the view, as it
+    /// was pinned when the answer went: it goes at once, whether or not
+    /// the session gave a pending question to match, until the card is no
+    /// longer live (owner report, 2026-11-13 01:42 EST: "th3 card wasnt
+    /// dismissed after aporoving").
+    replied_card: Option<String>,
     /// The response sent, until the session shows it or the agent works.
     typed: Option<String>,
     /// The event as last given.
@@ -1862,6 +1868,33 @@ struct AgentView {
 }
 
 impl AgentView {
+    /// The live question card pinned as the view was last shown is
+    /// answered: it goes at once ([`AgentView::replied_card`]).
+    fn answer_pinned(&mut self) {
+        let Some(Event::AgentView {
+            sections,
+            pinned: Some(pinned),
+            ..
+        }) = &self.shown
+        else {
+            return;
+        };
+        let text = sections
+            .iter()
+            .find(|s| s.serial == *pinned)
+            .and_then(|s| match &s.shows {
+                crate::view::Shows::Card(c)
+                    if c.live && c.kind == crate::view::CardKind::Question =>
+                {
+                    Some(c.text.clone())
+                }
+                _ => None,
+            });
+        if text.is_some() {
+            self.replied_card = text;
+        }
+    }
+
     fn new(pane_id: String, child: Option<String>, status: String) -> Self {
         AgentView {
             pane_id,
@@ -1877,6 +1910,7 @@ impl AgentView {
             answered: false,
             seen_replies: Default::default(),
             replied_to: None,
+            replied_card: None,
             typed: None,
             shown: None,
             outline_mode: false,
@@ -2016,6 +2050,7 @@ impl AgentView {
         self.shown = None;
         self.typed = None;
         self.replied_to = None;
+        self.replied_card = None;
         self.pressure = None;
         if self.apply_incoming() {
             self.reflatten();
@@ -3623,14 +3658,28 @@ impl State {
 
     /// The agent view as it stands, if one is open.
     pub fn agent_view(&self) -> Option<Event> {
+        self.view_event().map(|(event, _)| event)
+    }
+
+    /// The agent view as it stands, and whether the live question card
+    /// answered from it ([`AgentView::replied_card`]) is still there.
+    fn view_event(&self) -> Option<(Event, bool)> {
         let v = self.view.as_ref()?;
         // A question answered from the view goes at once.
         let answered = v
             .replied_to
             .as_ref()
             .is_some_and(|ts| v.pending_question.as_ref().is_some_and(|q| &q.ts == ts));
+        let replied_live = std::cell::Cell::new(false);
         let hide = |c: &crate::view::AgentCard| {
-            answered && c.live && c.kind == crate::view::CardKind::Question
+            if !c.live || c.kind != crate::view::CardKind::Question {
+                return false;
+            }
+            let replied = v.replied_card.as_deref() == Some(c.text.as_str());
+            if replied {
+                replied_live.set(true);
+            }
+            answered || replied
         };
         let (sections, pinned) = if v.outline_mode {
             let newer = v
@@ -3675,7 +3724,7 @@ impl State {
             .filter(|f| f.pane_id != v.pane_id)
             .map(|f| f.name.clone())
             .filter(|n| !n.is_empty());
-        Some(Event::AgentView {
+        let event = Event::AgentView {
             name: self.agent_name(&v.pane_id),
             status: v.status.clone(),
             sections,
@@ -3720,7 +3769,8 @@ impl State {
             cached: v.cached,
             ended: v.ended,
             thinking: v.thinking,
-        })
+        };
+        Some((event, replied_live.get()))
     }
 
     /// The open view's bookends (plan 20261022_03, the L3 amendment of
@@ -4262,11 +4312,16 @@ impl State {
 
     /// Gives the agent view if it changed since it was last given.
     fn show_view(&mut self, out: &mut Vec<Output>) {
-        let Some(event) = self.agent_view() else {
+        let Some((event, replied_live)) = self.view_event() else {
             return;
         };
         self.view_ding(&event, out);
         let v = self.view.as_mut().expect("a view");
+        // The card answered from the view is no longer live: a later
+        // question with the same words is a new one.
+        if !replied_live {
+            v.replied_card = None;
+        }
         if !v
             .shown
             .as_ref()
@@ -4953,7 +5008,19 @@ impl State {
             }
             _ => word.to_string(),
         };
+        // An answer to the open view's agent: its question card goes too.
+        let viewed = self
+            .view
+            .as_ref()
+            .is_some_and(|v| v.pane_id == pane_id && v.child.is_none());
+        let online = self.online();
         self.send_to(pane_id, response.label(), text, kind, out);
+        if viewed && online && response.answers() {
+            if let Some(v) = self.view.as_mut() {
+                v.answer_pinned();
+            }
+            self.recompute_view(out);
+        }
     }
 
     /// `agents.send` of `text` to `pane_id`, confirmed by the tap, with
@@ -5247,6 +5314,7 @@ impl State {
         if let Some(v) = self.view.as_mut() {
             if answers {
                 v.replied_to = v.pending_question.as_ref().map(|q| q.ts.clone());
+                v.answer_pinned();
             }
             v.typed = Some(text.clone());
         }
@@ -5381,6 +5449,9 @@ impl State {
                 && let Some(v) = self.view.as_mut()
                 && d.target.as_ref().is_some_and(|t| t.pane_id == v.pane_id)
             {
+                // A message to the agent answers the question it asked:
+                // its card goes too.
+                v.answer_pinned();
                 v.typed = Some(d.text());
                 self.show_view(out);
             }
@@ -5757,6 +5828,7 @@ impl State {
                     // Not sent: the card comes back and the input goes.
                     if let Some(v) = self.view.as_mut() {
                         v.replied_to = None;
+                        v.replied_card = None;
                         v.typed = None;
                     }
                     self.recompute_view(out);
@@ -10649,6 +10721,76 @@ mod tests {
         assert_eq!(typed(&out), Some(None));
     }
 
+    /// The view of w2:pZ with a live question card at line 3 and no
+    /// pending question for it (owner report, 2026-11-13 01:42 EST).
+    fn asking_unmatched() -> State {
+        let mut session = asking();
+        session["pending_question"] = json!(null);
+        let mut s = viewing("idle", session);
+        deliver(&mut s, vec![question_section(3, true)], vec![]);
+        s
+    }
+
+    fn question_section(line: u32, live: bool) -> Value {
+        json!({"serial": serial(line, 128), "kind": "card",
+               "card": {"card": "question", "live": live,
+                        "title": "the flankr agent is asking", "text": "Ship it?"}})
+    }
+
+    fn live_questions(out: &[Output]) -> Option<usize> {
+        view_of(out).map(|(_, cards, _)| {
+            cards
+                .iter()
+                .filter(|c| c.live && c.kind == crate::view::CardKind::Question)
+                .count()
+        })
+    }
+
+    #[test]
+    fn an_answered_question_card_goes_with_no_pending_question_to_match() {
+        let mut s = asking_unmatched();
+        assert_eq!(
+            live_questions(&[s.agent_view().map(Output::Event).unwrap()]),
+            Some(1)
+        );
+        // The suggestion's Yes: the card goes at once.
+        let out = s.input(Input::Respond(Suggestion::Yes));
+        assert_eq!(requests(&out, "agents.send").len(), 1);
+        assert_eq!(live_questions(&out), Some(0), "{out:?}");
+        // The daemon gives it again, still live: still gone.
+        deliver(&mut s, vec![question_section(3, true)], vec![]);
+        assert_eq!(
+            live_questions(&[s.agent_view().map(Output::Event).unwrap()]),
+            Some(0)
+        );
+        // Resolved, then a new question in the same words: that one shows.
+        deliver(&mut s, vec![question_section(3, false)], vec![]);
+        let out = deliver(&mut s, vec![question_section(5, true)], vec![]);
+        assert_eq!(live_questions(&out), Some(1), "{out:?}");
+    }
+
+    #[test]
+    fn an_answer_from_active_tasks_takes_the_viewed_agents_card() {
+        let mut s = asking_unmatched();
+        let out = s.input(Input::RespondTo {
+            pane_id: "w2:pZ".into(),
+            response: Suggestion::Yes,
+        });
+        assert_eq!(requests(&out, "agents.send").len(), 1);
+        assert_eq!(live_questions(&out), Some(0), "{out:?}");
+        // Another pane's answer leaves the view's card.
+        let mut s = asking_unmatched();
+        let out = s.input(Input::RespondTo {
+            pane_id: "w9:p1".into(),
+            response: Suggestion::Yes,
+        });
+        assert_eq!(live_questions(&out), None, "{out:?}");
+        assert_eq!(
+            live_questions(&[s.agent_view().map(Output::Event).unwrap()]),
+            Some(1)
+        );
+    }
+
     #[test]
     fn a_refused_yes_brings_its_card_back() {
         let mut s = viewing("idle", asking());
@@ -10727,6 +10869,16 @@ mod tests {
             _ => None,
         });
         assert_eq!(typed.as_deref(), Some("please run the tests"));
+    }
+
+    #[test]
+    fn a_message_sent_to_the_viewed_agent_takes_its_question_card() {
+        let mut s = asking_unmatched();
+        s.input(Input::StartDictation);
+        speak(&mut s, 110.0, 112.0, "yes but run the tests first");
+        let send = message_send(&s.input(Input::Submit)).unwrap();
+        let out = s.incoming(response(send.id, json!({"status": "sent"})));
+        assert_eq!(live_questions(&out), Some(0), "{out:?}");
     }
 
     // ── The overview's list (plan 20261023_04, step 2) ───────────────────
