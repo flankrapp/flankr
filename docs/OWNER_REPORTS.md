@@ -707,3 +707,24 @@ front-matter `status: Draft`, which is what the plans list shows.
 asks the agent to set the plan's status first; one Build per plan until
 the task is removed, with the button showing it was sent; recorded as an
 amendment to the Active plans home view plan.
+
+## 2026-11-13 01:42 EST — Owner: an answered question card stays, and dragging it away answers No
+
+Device: Galaxy S23 Ultra (app 0.7.24, daemon 0.7.13).
+
+**Report.** After approving a plan from a question card, "no, don't
+revert, th3 card wasnt dismissed after aporoving": the card stayed, and
+the "no" that followed the "yes" was not meant as an answer.
+
+**Seen** (the phone's log). At 01:40:47 a tap on the card's suggestion
+sent Yes (`agent_hit: Suggest(Yes)`), but the pinned Question card stayed
+on screen. At 01:40:51 the owner dragged it away, which the app took as
+`AnsweredNo` and sent "no" to the same session. So two faults: answering
+by a suggestion does not dismiss the pinned question card, and dragging
+away a card that was already answered answers it again, with No.
+
+**In hand.** Handed to a subagent in a new worktree: dismiss the pinned
+question card once any answer (suggestion, Yes/No, typed) has been sent
+for it, and make dragging a card away only dismiss it, never answer No,
+once it has been answered, recorded as an amendment to the plan that
+covers the pinned question card.
