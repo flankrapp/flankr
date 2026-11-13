@@ -4848,3 +4848,30 @@ complete the other steps before fully merging"). Small departures
 4. **The font licence copies** in `apps/companion/licenses/` now come
    from the libmsdf revision the app pins (`bd7383d`), closing that
    open item; only `FONTS-LICENSE-APACHE.txt` differed.
+
+## 2026-11-13 01:51 EST — Active tasks grouped by project, and plans' open questions counted
+
+Plans: the active plans home view plan (20261112_03), by an amendment
+the owner approved on 2026-11-13 ("approve the amendments"); and the
+plan questions plan (20261113_02), approved and starting with the step
+the count needs. Steps, in order:
+
+1. docs: the amendment to the active plans home view plan, quoting the
+   owner's two messages: projects at the top level, each plan one row in
+   its stage, a plan being built showing its subagents, no agent row,
+   events under the plan row, and an open-questions count.
+2. flankr (the plan questions plan, step 1): the planning plugin's reader
+   finds a plan's open questions; `plans.show` carries `questions` and
+   `plans.list`'s rows `open_questions`. Planning plugin 0.1.3; daemon
+   0.7.14 with its `UPDATES.md` entry. The plan's status, immutable
+   marker and README row go in this commit.
+3. flankr: the policy plugin's `overview` gives each plan row its project
+   and open-question count, and lists the project's plans in their
+   stages (Draft, In implementation, and Implemented while a task).
+   Policy plugin 0.1.3.
+4. flankr-companion 0.8.13: the overview's new fields, and the grouping
+   by project for the view.
+5. companion: the Active tasks view by project (app 0.7.27).
+
+Steps 2 to 4 of the plan questions plan (the answers message, the plan
+page's answers, the plans table's badge) are not part of this work.
