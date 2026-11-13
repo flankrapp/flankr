@@ -4721,3 +4721,21 @@ owner.
    though FLANKR RULE 1.3 asks a bump for every user-visible commit: the
    Settings row shows but changes nothing until the Active tasks list
    lands. For the owner to rule on.
+
+## 2026-11-12 23:41 EST — Active plans home view: the lead's rulings on the open items
+
+Plan: the active plans home view plan (20261112_03). The owner said
+"continue and keep building"; the lead's rulings on the items of the
+previous entry:
+
+1. The phone's confirmation time: libflankr_proto 0.5.15 adds `at` to
+   `companion::ConfirmRequested`, the daemon fills it, and
+   flankr-companion 0.8.8 carries it on `Event::Confirm` with the pane
+   and requester. The daemon's version does not change for it (FLANKR
+   RULE 2: only the phone shows it).
+2. FLANKR RULE 1.3 stands: commit `ec60d99` (the Home view Settings
+   row) made a visible change without its bump. App 0.7.22, at step 5,
+   carries it, and its `apps/UPDATES.md` entry lists the row with the
+   Active tasks view. No build after `ec60d99` is installed before
+   0.7.22.
+3. No daemon bump for `worktree_create`, as proposed.
