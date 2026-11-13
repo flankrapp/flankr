@@ -160,6 +160,34 @@ impl HerdrClient {
         self.send_request(&req).await
     }
 
+    /// `worktree.list`: herdr's JSON (see [`crate::WorktreeList::from_reply`]).
+    pub async fn worktree_list(
+        &self,
+        workspace_id: Option<&str>,
+        cwd: Option<&str>,
+    ) -> HerdrResult<Value> {
+        self.send_request(&HerdrRequest::worktree_list(workspace_id, cwd))
+            .await
+    }
+
+    /// `worktree.create`: herdr's JSON.
+    pub async fn worktree_create(&self, params: &crate::WorktreeCreate) -> HerdrResult<Value> {
+        self.send_request(&HerdrRequest::worktree_create(params))
+            .await
+    }
+
+    /// `worktree.open`: herdr's JSON.
+    pub async fn worktree_open(&self, params: &crate::WorktreeOpen) -> HerdrResult<Value> {
+        self.send_request(&HerdrRequest::worktree_open(params))
+            .await
+    }
+
+    /// `worktree.remove`: herdr's JSON.
+    pub async fn worktree_remove(&self, workspace_id: &str, force: bool) -> HerdrResult<Value> {
+        self.send_request(&HerdrRequest::worktree_remove(workspace_id, force))
+            .await
+    }
+
     /// Execute a tool call dynamically based on tool name and JSON argument object.
     pub async fn execute_tool_call(&self, name: &str, args: &Value) -> HerdrResult<Value> {
         let request =

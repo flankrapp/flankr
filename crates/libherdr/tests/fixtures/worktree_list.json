@@ -1,0 +1,35 @@
+{
+  "id": "req-7",
+  "result": {
+    "type": "worktree_list",
+    "source": {
+      "repo_key": "/Users/x/src/flankr",
+      "repo_name": "flankr",
+      "repo_root": "/Users/x/src/flankr",
+      "source_checkout_path": "/Users/x/src/flankr",
+      "source_workspace_id": "w1"
+    },
+    "worktrees": [
+      {
+        "path": "/Users/x/src/flankr",
+        "branch": "main",
+        "is_bare": false,
+        "is_detached": false,
+        "is_prunable": false,
+        "is_linked_worktree": false,
+        "open_workspace_id": "w1",
+        "label": "flankr"
+      },
+      {
+        "path": "/Users/x/src/flankr/.claude/worktrees/plan-policy",
+        "branch": "plan/20261112_02",
+        "is_bare": false,
+        "is_detached": false,
+        "is_prunable": false,
+        "is_linked_worktree": true,
+        "open_workspace_id": "w3",
+        "label": "plan-policy"
+      }
+    ]
+  }
+}

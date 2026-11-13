@@ -1293,3 +1293,23 @@ It takes libflankr_proto 0.5.13, additive.
   the view is given again when it changes. Never kept: `false` for a view
   with no session, restored from the cache, parked, or whose
   subscription went with its connection.
+
+## libherdr 0.3.2 — 2026-11-12 (the commit tagged `libherdr-v0.3.2`)
+
+Strictly additive (new functions and types; plan 20261112_02, step 6):
+herdr's `worktree.*` API, sent as JSON-RPC through
+`HerdrRequest::Custom`, so `HerdrRequest` gains no variant.
+
+- **Added:**
+  - the module `worktrees`, re-exported from the crate root:
+    `WorktreeCreate { workspace_id, cwd, branch, base, path, label, focus }`
+    and `WorktreeOpen { workspace_id, cwd, path, branch, label, focus }`
+    (each `Default`; `None` fields are not sent), `WorktreeInfo`,
+    `WorktreeSource` and `WorktreeList { source, worktrees }` with
+    `WorktreeList::from_reply(&Value)`;
+  - `HerdrRequest::worktree_list(workspace_id, cwd)`,
+    `HerdrRequest::worktree_create(&WorktreeCreate)`,
+    `HerdrRequest::worktree_open(&WorktreeOpen)` and
+    `HerdrRequest::worktree_remove(workspace_id, force)`;
+  - `HerdrClient::worktree_list`, `worktree_create`, `worktree_open` and
+    `worktree_remove`, each returning herdr's JSON.
