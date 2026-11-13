@@ -419,3 +419,24 @@ approval stays a separate act (Build).
    opened in a mode that returns its text to a plugin instead of sending
    (step 3 adds it if not); and the app crate's exact name for `cargo
    test -p` in step 3.
+
+## Amendment — 2026-11-13 01:40 EST: approved by the owner, with the open questions settled
+
+The owner approved this plan on 2026-11-13 ("yes", in answer to its
+summary and open questions). Implementation has not started; the status
+stays `Draft` until the first implementing commit. The open questions are
+settled by the plan's own recommendations, and where it gave none, by
+what its decisions already say:
+
+1. A written answer is typed in the message card, in an answer mode that
+   returns the text to the plan page and sends nothing.
+2. A set of answers over 4000 characters is refused, not split.
+3. Alternatives ("A or B") stay plain text; choice options are not built.
+4. With no agent view open, answers fall back to the policy plugin's
+   linked pane, as the decisions say; Build is unchanged by this plan.
+5. The closing clause stays as written ("please record these answers as
+   one amendment quoting them. this does not approve the plan").
+6. The count shows in the plans table's status cell, `Draft · N`, and
+   under the plan's header in Active tasks.
+7. The details not confirmed while writing are settled while building,
+   and any departure is recorded in `CHANGES.md`.
