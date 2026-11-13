@@ -321,6 +321,35 @@ impl PolicyNotice {
     }
 }
 
+/// Build's message (plan 20261112_03, the 22:21 EST amendment): "approve
+/// and build the <date> plan, <title>", the date the front matter's
+/// without its dashes, the title with every character the daemon's
+/// arbitrary-command filter refuses made a space, a `,` or `:` kept only
+/// where a space follows, and runs of spaces folded. `None` when the date
+/// is not `YYYY-MM-DD` or the title has no words left.
+pub fn build_message(date: &str, title: &str) -> Option<String> {
+    let digits: String = date.chars().filter(|c| *c != '-').collect();
+    if digits.len() != 8 || !digits.bytes().all(|b| b.is_ascii_digit()) || date.len() != 10 {
+        return None;
+    }
+    let chars: Vec<char> = title.chars().collect();
+    let mut cleaned = String::with_capacity(title.len());
+    for (i, &c) in chars.iter().enumerate() {
+        let next_space = chars.get(i + 1).is_none_or(|n| *n == ' ');
+        let keep = c.is_ascii_alphanumeric()
+            || c == ' '
+            || matches!(c, '.' | '\'' | '?')
+            || (matches!(c, ',' | ':') && next_space);
+        cleaned.push(if keep { c } else { ' ' });
+    }
+    let title = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    let title = title.trim_end_matches([',', ':']).trim();
+    if !title.chars().any(|c| c.is_ascii_alphanumeric()) {
+        return None;
+    }
+    Some(format!("approve and build the {digits} plan, {title}"))
+}
+
 /// The params of a call on one plan: `{ path }`, with `pane_id` for
 /// `build` and `worktree_create`.
 pub fn plan_params(path: &str, pane_id: Option<&str>) -> Value {
@@ -447,6 +476,24 @@ mod tests {
             params: json!({"paused": true}),
         };
         assert!(matches!(PolicyNotice::of(&note), Some(PolicyNotice::Overview(o)) if o.paused));
+    }
+
+    #[test]
+    fn build_messages_pass_the_filter() {
+        assert_eq!(
+            build_message("2026-11-12", "Active plans, a plan-grouped home view").as_deref(),
+            Some("approve and build the 20261112 plan, Active plans, a plan grouped home view")
+        );
+        assert_eq!(
+            build_message("2026-11-12", "`libherdr`: worktree/API [v2]").as_deref(),
+            Some("approve and build the 20261112 plan, libherdr : worktree API v2")
+        );
+        assert_eq!(
+            build_message("2026-11-12", "a,b:c").as_deref(),
+            Some("approve and build the 20261112 plan, a b c")
+        );
+        assert_eq!(build_message("20261112", "x"), None);
+        assert_eq!(build_message("2026-11-12", "-- / --"), None);
     }
 
     #[test]

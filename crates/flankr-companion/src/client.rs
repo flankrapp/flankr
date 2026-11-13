@@ -169,6 +169,23 @@ pub enum Input {
     /// A suggested response under the agent view: sent to the view's pane
     /// with `agents.send`, which the daemon confirms as any other.
     Respond(Suggestion),
+    /// [`Input::Respond`] for any listed pane, not only the view's: Yes or
+    /// No answering its pending question, or `continue` (the Active tasks
+    /// view's rows, plan 20261112_03, 2.4). The tap is the approval, as
+    /// the agent view's. Added in 0.8.9.
+    RespondTo {
+        pane_id: String,
+        response: Suggestion,
+    },
+    /// A message the owner chose to send to a pane, the tap its approval:
+    /// the Active tasks view's Build (plan 20261112_03, the 22:21 EST
+    /// amendment), "approve and build the <date> plan, <title>". `label`
+    /// names it in the handle. Added in 0.8.9.
+    SendMessage {
+        pane_id: String,
+        text: String,
+        label: String,
+    },
     /// One of a question's answers from the daemon (plan 20261027_06,
     /// step 4), tapped: its `sends` sent confirmed, or the message card
     /// opened with its `starts`.
@@ -2973,6 +2990,12 @@ impl State {
                 approve,
             } => self.answer_id(confirm_id, approve, &mut out),
             Input::Respond(response) => self.respond(response, &mut out),
+            Input::RespondTo { pane_id, response } => self.respond_to(pane_id, response, &mut out),
+            Input::SendMessage {
+                pane_id,
+                text,
+                label,
+            } => self.send_to(pane_id, &label, text, common::SendKind::Message, &mut out),
             Input::Suggested(answer) => self.suggested(answer, &mut out),
             Input::Choose { id, answers } => self.choose(id, answers, &mut out),
             Input::CancelChoice { id } => self.cancel_choice(id, &mut out),
@@ -4896,6 +4919,77 @@ impl State {
             response.answers(),
             out,
         );
+    }
+
+    /// [`Input::RespondTo`]: Yes, No or Continue to a listed pane, its
+    /// question as `agents.list` last gave it.
+    fn respond_to(&mut self, pane_id: String, response: Suggestion, out: &mut Vec<Output>) {
+        if !matches!(
+            response,
+            Suggestion::Yes | Suggestion::No | Suggestion::Continue
+        ) {
+            return;
+        }
+        let (word, kind) = response.send();
+        let question = self
+            .agents
+            .iter()
+            .find(|a| a.pane_id == pane_id)
+            .and_then(|a| a.session.as_ref())
+            .and_then(|s| s.pending_question.as_ref())
+            .map(|q| q.text.clone());
+        let text = match (response, question) {
+            (Suggestion::Yes | Suggestion::No, Some(q)) => {
+                answer_text(response == Suggestion::Yes, &q)
+            }
+            _ => word.to_string(),
+        };
+        self.send_to(pane_id, response.label(), text, kind, out);
+    }
+
+    /// `agents.send` of `text` to `pane_id`, confirmed by the tap, with
+    /// no view changed: [`Input::RespondTo`] and [`Input::SendMessage`].
+    fn send_to(
+        &mut self,
+        pane_id: String,
+        label: &str,
+        text: String,
+        kind: common::SendKind,
+        out: &mut Vec<Output>,
+    ) {
+        if !self.online() {
+            out.push(event(Event::Say(
+                "I'm not connected to flankr.".to_string(),
+            )));
+            return;
+        }
+        self.interact(&pane_id);
+        let agent = self.agents.iter().find(|a| a.pane_id == pane_id);
+        let target = common::FocusInfo {
+            pane_id: pane_id.clone(),
+            project: agent.and_then(|a| a.project.clone()),
+            agent: agent.map(|a| a.agent.clone()),
+            tab_label: None,
+            tab_number: None,
+            name: String::new(),
+            spoken: String::new(),
+        };
+        let mut params = serde_json::json!({
+            "pane_id": pane_id,
+            "text": text,
+            "handle": label_handle(&target, label),
+            "confirmed": true,
+        });
+        if kind == common::SendKind::Message {
+            params["kind"] = serde_json::json!(kind);
+        }
+        self.tapped.push(Tapped {
+            pane_id,
+            text: text.clone(),
+            confirm_id: None,
+        });
+        let sent = Sent::Respond(label.to_string(), text);
+        out.push(self.request(methods::AGENTS_SEND, params, sent));
     }
 
     /// Sends a tapped answer of the open view's question (plan
@@ -12107,6 +12201,52 @@ mod tests {
         let list = requests(&out, "agents.list")[0].id.clone();
         let out = s.incoming(response(list, json!({"agents": agents})));
         (s, out)
+    }
+
+    /// Plan 20261112_03, 2.4: the Active tasks view answers any listed
+    /// pane, and sends Build's message, the tap the approval.
+    #[test]
+    fn a_listed_pane_is_answered_and_sent_to_without_its_view() {
+        let (mut s, _) = listed(json!([{
+            "pane_id": "w1:p2", "agent": "claude", "status": "blocked", "focused": false,
+            "session": {"path": "/s.jsonl", "matched": "cwd",
+                        "pending_question": {"text": "Shall I run the tests?", "ts": "t"}}
+        }]));
+        let out = s.input(Input::RespondTo {
+            pane_id: "w1:p2".into(),
+            response: Suggestion::Yes,
+        });
+        let send = requests(&out, "agents.send")[0].clone();
+        assert_eq!(send.params["pane_id"], "w1:p2");
+        assert_eq!(send.params["confirmed"], true);
+        assert_eq!(
+            send.params["text"],
+            answer_text(true, "Shall I run the tests?")
+        );
+        let out = s.input(Input::RespondTo {
+            pane_id: "w1:p2".into(),
+            response: Suggestion::Continue,
+        });
+        let send = requests(&out, "agents.send")[0].clone();
+        assert_eq!(send.params["text"], "continue");
+        assert!(send.params.get("kind").is_none(), "a command");
+        let out = s.input(Input::SendMessage {
+            pane_id: "w1:p2".into(),
+            text: "approve and build the 20261112 plan, Plan policy agent".into(),
+            label: "build".into(),
+        });
+        let send = requests(&out, "agents.send")[0].clone();
+        assert_eq!(send.params["kind"], "message");
+        assert_eq!(
+            send.params["text"],
+            "approve and build the 20261112 plan, Plan policy agent"
+        );
+        // Not the other suggestions.
+        let out = s.input(Input::RespondTo {
+            pane_id: "w1:p2".into(),
+            response: Suggestion::Discuss,
+        });
+        assert!(requests(&out, "agents.send").is_empty());
     }
 
     /// The next list, due at `at` seconds, answered with `agents`.

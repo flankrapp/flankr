@@ -1421,3 +1421,17 @@ has to name the new ones. It takes libflankr_proto 0.5.15, additive.
 - **Added:** `Event::Confirm::pane_id` (a handle), `requested_by` (a
   device's principal, or `plugin:policy`) and `at` (`Option<String>`,
   when the daemon announced it).
+
+## flankr-companion 0.8.9 — 2026-11-12 (the commit tagged `flankr-companion-v0.8.9`)
+
+Strictly additive (variants on the `#[non_exhaustive]` `Input`, a new
+function; plan 20261112_03, 2.4 and the 22:21 EST amendment):
+
+- **Added:** `Input::RespondTo { pane_id, response }`: Yes, No (answering
+  the pane's pending question as `agents.list` gave it) or Continue, sent
+  to any listed pane with `agents.send`, confirmed by the tap; other
+  suggestions are ignored. `Input::SendMessage { pane_id, text, label }`:
+  a message to a pane, confirmed by the tap.
+- **Added:** `policy::build_message(date, title)`: Build's "approve and
+  build the <date> plan, <title>", the title cleaned to what the daemon's
+  filter takes.
