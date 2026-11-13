@@ -1,4 +1,4 @@
-//! The plan policy plugin's daemon half, `dev.flankr.plugins.policy@0.1.2`
+//! The plan policy plugin's daemon half, `dev.flankr.plugins.policy@0.1.3`
 //! (docs/design/20261112_02_PLAN_POLICY_AGENT_PLAN.md, with its
 //! amendments).
 //!
@@ -628,7 +628,7 @@ impl Plugin for PlanPolicy {
     }
 
     fn version(&self) -> PluginVersion {
-        PluginVersion::Semver("0.1.2")
+        PluginVersion::Semver("0.1.3")
     }
 
     fn menu(&self) -> &'static [MenuItem] {

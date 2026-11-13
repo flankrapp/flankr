@@ -36,6 +36,8 @@ pub struct PlanSeen {
     pub title: String,
     pub status: String,
     pub steps_total: usize,
+    /// Its open questions no amendment answered (plan 20261113_02).
+    pub open_questions: usize,
 }
 
 impl PlanSeen {
@@ -45,8 +47,26 @@ impl PlanSeen {
             title: plan.title.clone(),
             status: plan.status.clone(),
             steps_total: plan.steps.len(),
+            open_questions: crate::plugins::planning::reader::open_question_count(&plan.text),
         }
     }
+
+    /// Whether it shows in the view with no pane and no task: a Draft or
+    /// In implementation plan (the 2026-11-13 01:52 EST amendment, item 2).
+    fn in_a_stage(&self) -> bool {
+        let (base, _) = crate::plugins::planning::reader::split_status(&self.status);
+        super::plans::WORKING.contains(&base.as_str())
+    }
+}
+
+/// A project's row fields: its root and its folder's name.
+fn project_of(root: &str) -> Value {
+    let name = root
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or(root);
+    json!({ "root": root, "name": name })
 }
 
 /// One pane's link to a plan.
@@ -146,9 +166,16 @@ pub fn build(i: &Inputs) -> Value {
         }
         groups.entry(link.path.as_str()).or_default().push(agent);
     }
-    // A task's plan shows with no pane linked yet.
+    // A task's plan shows with no pane linked yet; so does every plan in
+    // a stage, Draft or In implementation (the 2026-11-13 01:52 EST
+    // amendment, items 2 and 4).
     for t in i.tasks {
         groups.entry(t.path.as_str()).or_default();
+    }
+    for (path, seen) in i.plans {
+        if seen.in_a_stage() {
+            groups.entry(path.as_str()).or_default();
+        }
     }
     for p in i.panes {
         if p.agent != crate::config::SHELL_AGENT && !i.links.contains_key(&p.pane_id) {
@@ -173,6 +200,10 @@ pub fn build(i: &Inputs) -> Value {
             });
             if let Some(s) = seen {
                 row["steps_total"] = json!(s.steps_total);
+                row["project"] = project_of(&s.root);
+                row["open_questions"] = json!(s.open_questions);
+            } else if let Some(t) = task {
+                row["project"] = project_of(&t.project_root);
             }
             if let Some(n) = i.steps.get(path) {
                 row["current_step"] = json!(n);

@@ -999,6 +999,34 @@ fn answers_all(subject: &str, body: &str) -> bool {
             .contains("answered the open questions")
 }
 
+/// How many of a plan's open questions no amendment answered, from its
+/// whole text (for the plan policy's `overview`).
+pub fn open_question_count(text: &str) -> usize {
+    let lines: Vec<&str> = text.lines().collect();
+    let body_start = match front_matter(&lines) {
+        Some(Ok((_, after))) => after,
+        _ => 0,
+    };
+    let mut amendments = Vec::new();
+    let mut in_fence = false;
+    for (i, line) in lines.iter().enumerate().skip(body_start) {
+        if fence(line) {
+            in_fence = !in_fence;
+            continue;
+        }
+        if !in_fence && let Some((timestamp, subject)) = amendment_heading(line) {
+            amendments.push(Amendment {
+                index: amendments.len() + 1,
+                line: i + 1,
+                living_section: None,
+                timestamp,
+                subject,
+            });
+        }
+    }
+    open_questions(&lines, body_start, &amendments).map_or(0, |q| q.open())
+}
+
 /// The open questions of a plan's `lines` (decision 2): the last level-2
 /// heading of the body (from `body_start`, before the first amendment)
 /// that names them, its numbered items, and the amendment that answered

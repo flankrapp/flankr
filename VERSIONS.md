@@ -1500,3 +1500,16 @@ Plan 20261113_02, step 1. Strictly additive (fields added on schema 1).
   section. The general agent's `planning_plan_show` tool gets it too.
 - **Added:** each `plans.list` row carries `open_questions`, the count
   of items no amendment answered (`0` with no section).
+
+## dev.flankr.plugins.policy 0.1.3 — 2026-11-13 (the commit tagged `dev.flankr.plugins.policy-v0.1.3`)
+
+Plan 20261112_03, the 2026-11-13 01:52 EST amendment, items 2, 4 and 6.
+Strictly additive (fields and rows added to `overview`'s answer).
+
+- **Added:** each `overview` plan row carries `project` (`root`, and
+  `name`, its folder's name) and `open_questions` (the count of the
+  plan's open questions no amendment answered).
+- **Added:** `overview` lists every Draft or In implementation plan of
+  the projects it has read, with no pane and no task as well (its
+  `agents` empty); an Implemented plan still shows only while it has a
+  task.

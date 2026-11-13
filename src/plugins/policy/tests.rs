@@ -1125,3 +1125,31 @@ async fn build_once_keeps_a_task_it_already_has() {
         .unwrap();
     assert_eq!(rearmed["pane_id"], "w1:p3");
 }
+
+/// Plan 20261112_03, the 2026-11-13 01:52 EST amendment, items 2, 4 and
+/// 6: every plan in a stage shows, with its project and its open
+/// questions; an Implemented plan without a task does not.
+#[tokio::test]
+async fn overview_lists_the_projects_plans_in_their_stages() {
+    let e = env();
+    std::fs::write(
+        e.root.join("docs/design/20261113_01_ASKING_PLAN.md"),
+        "---\ntitle: Asking\nstatus: In implementation\n---\n\n## 4. Open questions\n\n1. **One.** A?\n2. **Two.** B? Recommend B.\n\n## Amendment \u{2014} 2026-11-13 01:00 EST: notes\n\nThis answers open question 2.\n",
+    )
+    .unwrap();
+    let c = ctx_as(&e.root, owner(), on()).await;
+    let o = e.policy.call("overview", json!({}), &c).await.unwrap();
+    let plans = o["plans"].as_array().unwrap();
+    let paths: Vec<&str> = plans.iter().map(|p| p["path"].as_str().unwrap()).collect();
+    assert_eq!(
+        paths,
+        ["docs/design/20261113_01_ASKING_PLAN.md", PLAN_PATH],
+        "newest first; the Implemented plan left out"
+    );
+    assert_eq!(plans[0]["open_questions"], 1);
+    assert_eq!(plans[1]["open_questions"], 0);
+    assert_eq!(plans[0]["agents"], json!([]));
+    assert_eq!(plans[0]["task"], false);
+    assert_eq!(plans[0]["project"]["name"], "proj");
+    assert_eq!(plans[0]["project"]["root"], e.root.display().to_string());
+}
