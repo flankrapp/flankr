@@ -145,6 +145,38 @@ impl PluginCtx {
         }
     }
 
+    /// This context for another folder of the same project: the main
+    /// checkout `git worktree list` gives for a pane in one of its
+    /// worktrees (plan 20261112_02, 2.8 item 2). The same reads, commands
+    /// and principal; `root` must exist.
+    pub(crate) fn rooted_at(&self, root: &Path) -> Result<PluginCtx, PluginError> {
+        let project = self.project()?;
+        let root = std::fs::canonicalize(root).map_err(|e| {
+            PluginError::new(
+                codes::PROJECT_UNAVAILABLE,
+                format!("{} cannot be read: {e}", root.display()),
+            )
+        })?;
+        Ok(PluginCtx {
+            ns: self.ns,
+            principal: self.principal.clone(),
+            project: Ok(Project {
+                name: root
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                root,
+                agent: project.agent.clone(),
+                pane_id: project.pane_id.clone(),
+            }),
+            read: self.read.clone(),
+            plugin_read: self.plugin_read.clone(),
+            commands: self.commands.clone(),
+            config: self.config.clone(),
+            notifier: self.notifier.clone(),
+        })
+    }
+
     /// Who called.
     pub fn principal(&self) -> &Principal {
         &self.principal

@@ -128,6 +128,47 @@ impl Services for DaemonPolicy {
         }
     }
 
+    /// `worktree.create` on the pane's workspace, herdr local only.
+    async fn worktree_create(&self, pane_id: &str, branch: &str) -> Result<String, String> {
+        let daemon = self.daemon().ok_or("the daemon is gone")?;
+        if !matches!(
+            daemon.client.transport(),
+            libherdr::transport::HerdrTransport::LocalSocket { .. }
+                | libherdr::transport::HerdrTransport::Mock { .. }
+        ) {
+            return Err("herdr worktrees are made on the local herdr only".to_string());
+        }
+        let snapshot = daemon
+            .client
+            .list_panes()
+            .await
+            .map_err(|e| e.to_string())?;
+        let pane = crate::core::agents::agents(&snapshot)
+            .into_iter()
+            .find(|a| crate::watch::pane_ids_match(&a.pane_id, pane_id))
+            .ok_or_else(|| format!("no pane {pane_id}"))?;
+        let reply = daemon
+            .client
+            .worktree_create(&libherdr::WorktreeCreate {
+                workspace_id: pane.workspace_id.clone(),
+                cwd: pane
+                    .workspace_id
+                    .is_none()
+                    .then(|| pane.cwd.clone())
+                    .flatten(),
+                branch: Some(branch.to_string()),
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+        let result = reply.get("result").unwrap_or(&reply);
+        result
+            .pointer("/worktree/path")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| "herdr's reply names no worktree".to_string())
+    }
+
     /// One call on `[llm.uses.policy]`: the system text, one user message,
     /// no tools, at most [`JUDGE_TIMEOUT`].
     async fn judge(&self, system: &str, user: &str) -> Result<String, String> {

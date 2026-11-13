@@ -1,4 +1,4 @@
-//! The plan policy plugin's daemon half, `dev.flankr.plugins.policy`
+//! The plan policy plugin's daemon half, `dev.flankr.plugins.policy@0.1.0`
 //! (docs/design/20261112_02_PLAN_POLICY_AGENT_PLAN.md, with its
 //! amendments).
 //!
@@ -14,6 +14,7 @@ pub mod judge;
 pub mod plans;
 pub mod rules;
 pub mod store;
+pub mod worktree;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -171,6 +172,12 @@ pub trait Services: Send + Sync {
         _principal: &crate::core::principal::Principal,
         _confirm_id: u64,
     ) {
+    }
+    /// herdr's `worktree.create` through `pane_id`'s workspace, on the
+    /// local socket only (the 22:17 EST amendment, item 6), with `branch`
+    /// and no `base` (herdr's `HEAD`): the new worktree's path.
+    async fn worktree_create(&self, _pane_id: &str, _branch: &str) -> Result<String, String> {
+        Err("herdr worktrees are not available here".to_string())
     }
     /// One answer of `[llm.uses.policy]` to `system` and `user`, or why
     /// there is none (no model, a timeout, an error).
@@ -510,6 +517,8 @@ pub const NO_STORE: i64 = -32120;
 pub const NO_PLAN: i64 = -32121;
 /// The plan has no task, or its status does not allow one to work.
 pub const NO_TASK: i64 = -32122;
+/// herdr could not make the worktree, or is not reachable for it.
+pub const NO_WORKTREE: i64 = -32123;
 
 /// The project's root, as tasks are kept by.
 fn root_of(ctx: &PluginCtx) -> Result<String, PluginError> {
@@ -566,10 +575,8 @@ impl Plugin for PlanPolicy {
          continue when the agent asks to go on to the next step."
     }
 
-    /// A git hash until its first release, 0.1.0, once its methods are
-    /// all in (plan 20261028_04, decision 3.4).
     fn version(&self) -> PluginVersion {
-        PluginVersion::Hash("4703cb8")
+        PluginVersion::Semver("0.1.0")
     }
 
     fn menu(&self) -> &'static [MenuItem] {
@@ -608,6 +615,8 @@ impl Plugin for PlanPolicy {
             }
             "plans" => {
                 let store = self.store()?;
+                let checkout = worktree::checkout(ctx).await;
+                let ctx = checkout.main.as_ref().unwrap_or(ctx);
                 let root = root_of(ctx)?;
                 let rows: Vec<Value> = plans::list(ctx)
                     .await?
@@ -631,7 +640,13 @@ impl Plugin for PlanPolicy {
             }
             "build" | "task_enable" | "task_disable" | "task_remove" => {
                 need_approver(ctx, method)?;
-                self.task_call(method, &params, ctx).await
+                let checkout = worktree::checkout(ctx).await;
+                self.task_call(method, &params, checkout.main.as_ref().unwrap_or(ctx))
+                    .await
+            }
+            "worktree_create" => {
+                need_approver(ctx, method)?;
+                self.worktree_create(&params, ctx).await
             }
             other => Err(PluginError::no_method(other)),
         }
@@ -666,7 +681,11 @@ impl Plugin for PlanPolicy {
         if !newest || self.paused() {
             return;
         }
+        // 2.8 item 2: a worktree's pane works on the main checkout's plans.
+        let checkout = worktree::checkout(ctx).await;
+        let ctx = checkout.main.as_ref().unwrap_or(ctx);
         if let Some(mut decision) = self.decide(event, ctx, &settings).await {
+            decision.worktree = checkout.worktree.clone();
             match decision.verdict {
                 Verdict::Continue => self.continue_through_the_gate(&mut decision, ctx, &settings),
                 Verdict::Stop => self.clear_counters(&decision, ctx),
@@ -678,6 +697,39 @@ impl Plugin for PlanPolicy {
 }
 
 impl PlanPolicy {
+    /// `worktree_create { path, pane_id? }` (2.8 item 3): only on this
+    /// explicit call, a worktree on `plan/<YYYYMMDD_NN>` through the
+    /// pane's workspace; nothing is started in it.
+    async fn worktree_create(&self, params: &Value, ctx: &PluginCtx) -> Result<Value, PluginError> {
+        let path = path_param(params)?;
+        let checkout = worktree::checkout(ctx).await;
+        plan_of(checkout.main.as_ref().unwrap_or(ctx), &path).await?;
+        let pane_id = params
+            .get("pane_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .map(str::to_string)
+            .or_else(|| ctx.project().ok().map(|p| p.pane_id.clone()))
+            .ok_or_else(|| PluginError::invalid("worktree_create needs a pane."))?;
+        let branch = worktree::branch_for(&path)
+            .ok_or_else(|| PluginError::invalid("Not a plan's path."))?;
+        let services = self.services.as_ref().ok_or_else(|| {
+            PluginError::new(NO_WORKTREE, "herdr worktrees are not available here")
+        })?;
+        let made = services.worktree_create(&pane_id, &branch).await;
+        log::info!(
+            "[policy] worktree_create {path} on {branch} through pane {pane_id} by {}: {}",
+            ctx.principal().id,
+            match &made {
+                Ok(p) => format!("made {p}"),
+                Err(e) => format!("failed: {e}"),
+            }
+        );
+        let worktree_path = made.map_err(|e| PluginError::new(NO_WORKTREE, e))?;
+        Ok(json!({ "worktree_path": worktree_path, "branch": branch }))
+    }
+
     /// The principal its continues are asked as (2.5 item 2): only the
     /// configured agents, never an approver.
     fn principal(settings: &Settings) -> crate::core::principal::Principal {

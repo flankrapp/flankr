@@ -110,6 +110,8 @@ pub(super) struct Fake {
     /// A real broker over a recording sink, and the `[[agents]]`.
     pub(super) broker: Option<Arc<crate::core::confirm::Broker>>,
     pub(super) agents: Vec<crate::config::AgentConfig>,
+    /// The worktrees asked for: (pane, branch).
+    pub(super) worktrees: std::sync::Mutex<Vec<(String, String)>>,
 }
 
 /// What an approved confirmation sent: (pane, command).
@@ -196,6 +198,13 @@ impl Services for Fake {
         if let Some(broker) = &self.broker {
             let _ = broker.cancel(principal, confirm_id);
         }
+    }
+    async fn worktree_create(&self, pane_id: &str, branch: &str) -> Result<String, String> {
+        self.worktrees
+            .lock()
+            .unwrap()
+            .push((pane_id.to_string(), branch.to_string()));
+        Ok(format!("/wt/{branch}"))
     }
     async fn judge(&self, _system: &str, user: &str) -> Result<String, String> {
         self.asked.lock().unwrap().push(user.to_string());
@@ -793,4 +802,142 @@ async fn a_denied_continue_stops_and_the_fourth_asks() {
             .code,
         wire::NOT_PERMITTED
     );
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let out = std::process::Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// A context for a pane whose folder is `folder`, with the declared
+/// `git worktree list`.
+async fn ctx_in(folder: &Path, principal: Principal) -> PluginCtx {
+    let env = crate::plugins::command::CommandEnv::from_process();
+    let git = env.find("git");
+    PluginCtx::build(CtxParts {
+        ns: NS,
+        principal,
+        pane: Some("w1:p1".into()),
+        lookup: Arc::new(FakeLookup(vec![(
+            "w1:p1".into(),
+            "claude".into(),
+            folder.display().to_string(),
+        )])),
+        read: patterns(&["*.md", "docs/**/*.md"]),
+        plugin_read: patterns(&READ),
+        commands: Commands {
+            on: vec![(&COMMANDS[0], git)],
+            env,
+        },
+        config: on(),
+        notifier: None,
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_pane_in_a_worktree_works_on_the_main_checkouts_plans() {
+    if crate::git::binary().is_none() {
+        return;
+    }
+    let e = env();
+    git(&e.root, &["init", "-q", "-b", "main"]);
+    git(&e.root, &["add", "."]);
+    git(
+        &e.root,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "-m",
+            "x",
+        ],
+    );
+    let wt = e.root.parent().unwrap().join("proj-wt");
+    git(
+        &e.root,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "plan/20261112_02",
+            wt.to_str().unwrap(),
+        ],
+    );
+    let wt = std::fs::canonicalize(&wt).unwrap();
+    // The worktree's own copy of the plan changes; the main checkout's
+    // is what is armed and read.
+    std::fs::write(wt.join(PLAN_PATH), plan_text("Hold")).unwrap();
+    let c = ctx_in(&wt, owner()).await;
+    let row = e
+        .policy
+        .call("build", json!({"path": PLAN_PATH, "pane_id": "w1:p1"}), &c)
+        .await
+        .unwrap();
+    assert_eq!(row["status"], "Draft", "the main checkout's plan");
+    let store = e.policy.store().unwrap();
+    assert_eq!(store.load()[0].project_root, e.root.display().to_string());
+    e.policy
+        .on_card_summary(&card(1, "Done.", "Done."), &c)
+        .await;
+    let d = e.fake.notes("decision").pop().unwrap();
+    assert_eq!(d["rule"], "autocontinue_off");
+    assert_eq!(d["worktree"], wt.display().to_string());
+    // In the main checkout, no worktree.
+    let main = ctx_in(&e.root, owner()).await;
+    e.policy
+        .on_card_summary(&card(2, "Done.", "Done."), &main)
+        .await;
+    let d = e.fake.notes("decision").pop().unwrap();
+    assert_eq!(d["worktree"], serde_json::Value::Null);
+}
+
+#[tokio::test]
+async fn worktree_create_only_for_an_approver() {
+    let e = env();
+    let viewer = ctx_as(&e.root, Principal::local("t"), on()).await;
+    let err = e
+        .policy
+        .call("worktree_create", json!({"path": PLAN_PATH}), &viewer)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, wire::NOT_PERMITTED);
+    assert!(e.fake.worktrees.lock().unwrap().is_empty());
+    let c = ctx_as(&e.root, owner(), on()).await;
+    let r = e
+        .policy
+        .call(
+            "worktree_create",
+            json!({"path": PLAN_PATH, "pane_id": "w1:p1"}),
+            &c,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        r,
+        json!({"worktree_path": "/wt/plan/20261112_02", "branch": "plan/20261112_02"})
+    );
+    assert_eq!(
+        *e.fake.worktrees.lock().unwrap(),
+        [("w1:p1".to_string(), "plan/20261112_02".to_string())]
+    );
+    // Never on its own: no decision made one.
+    e.policy
+        .on_card_summary(&card(1, "Done.", "Done."), &c)
+        .await;
+    assert_eq!(e.fake.worktrees.lock().unwrap().len(), 1);
 }

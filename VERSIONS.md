@@ -1313,3 +1313,31 @@ herdr's `worktree.*` API, sent as JSON-RPC through
     `HerdrRequest::worktree_remove(workspace_id, force)`;
   - `HerdrClient::worktree_list`, `worktree_create`, `worktree_open` and
     `worktree_remove`, each returning herdr's JSON.
+
+## dev.flankr.plugins.policy 0.1.0 — 2026-11-12 (the commit tagged `dev.flankr.plugins.policy-v0.1.0`)
+
+Plan 20261112_02 (plan policy agent), steps 1 to 7, with its amendments
+and the owner's rulings of 2026-11-12. The plugin's first release,
+disabled by default (before it, its version was the git hash `4703cb8`):
+
+- **Added:** the methods `state {}` → `{paused, sessions: [{pane_id,
+  agent, project, plan, last_decision, blocked, question}]}`; `pause
+  {paused}`; `stop {pane_id}`; `plans {}` → `{plans: [row]}`, newest
+  first, each row `{path, base, title, status, status_allows, armed,
+  approved, approved_at, approved_by, changed_since_approval,
+  autocontinue, started_at, pane_id, steps: [{n, title}],
+  continues_used, blocked, question}`; `build {path, pane_id?}`,
+  `task_enable {path}`, `task_disable {path}` and `task_remove {path}`,
+  each → the plan's row; `worktree_create {path, pane_id?}` →
+  `{worktree_path, branch}`. All but `state` and `plans` need a principal
+  that may approve (`NOT_PERMITTED`). Errors -32120 (no task store),
+  -32121 (no plan at the path), -32122 (no task, or its status does not
+  allow work) and -32123 (herdr made no worktree).
+- **Added:** the notifications `decision` (`{pane_id, agent, project,
+  plan, plan_title, step, decision, reason, rule, summary_serial,
+  confirm_id, worktree, at}`), `approval` (a plan's row) and `state` (as
+  the `state` result), to every phone while the plugin is enabled.
+- **Added:** the menu item `policy` ("Plan policy", a popup menu, both
+  screens); the read patterns `docs/design/*.md`, `AGENTS.md` and
+  `CLAUDE.md`; the command `worktree_list` (`git worktree list
+  --porcelain`); no general agent tools.
