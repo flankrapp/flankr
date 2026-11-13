@@ -665,3 +665,29 @@ Implementation started with the 21:58 amendment's item 4 (libflankr_proto
 the commit that sets `status: In implementation`. From now on this
 document changes only on the owner's explicit instruction; departures go
 to `CHANGES.md`.
+
+## Amendment — 2026-11-13 00:09 EST: Build asks for the status first, and is sent once per task
+
+The owner, reporting on 2026-11-13 (docs/OWNER_REPORTS.md): "one of the
+agents has a plan that still shows as Draft in the plans list dropdiwn,
+build should approve and build whivh updatws the frontmatter as first
+step". The plan was a plan in another of the owner's repositories; Build
+was tapped three times, each tap sent the build message again, and the
+agent recorded its approval in an amendment but left the front matter at
+`status: Draft`. The owner's instruction to fix it is what allows this
+amendment to the frozen plan. It replaces the 22:21 EST amendment's
+message, and adds to the 23:23 EST amendment's item 2.
+
+1. **The message asks for the status first.** Build sends `approve and
+   build the <date> plan, <title>, setting its status to In
+   implementation first`, with `<date>` and `<title>` as the 22:21
+   amendment makes them. It passes `commands::validate_arbitrary_command`
+   unchanged and is at most 256 characters: a title that would make it
+   longer is shortened at a word boundary; the status clause is never
+   dropped.
+2. **One Build per plan.** While the plan has a task, Build shows
+   *Building* and is inactive, so a second tap sends nothing. The app
+   asks the policy plugin's `build` with `once: true`: a plan that
+   already has a task gets its task back unchanged, marked `existing`,
+   and the app then sends no message; only a new task's answer sends it.
+   Removing the task (`task_remove`) makes Build active again.
