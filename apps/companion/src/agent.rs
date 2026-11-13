@@ -360,6 +360,9 @@ pub enum AgentHit {
     /// The + at the left of a typed card's row (plan 20261028_06,
     /// decision 8 and the 23:39 EDT amendment).
     PromptAttach(crate::prompt::PromptKind),
+    /// The ✕ on an attached image's tile, by its number (the add images
+    /// plan, 20261113_01, decision 10).
+    PromptDetach(crate::prompt::PromptKind, u8),
     /// The soft keyboard's show/hide toggle at the right of a typed card's
     /// row (decision 8).
     PromptIme(crate::prompt::PromptKind),
@@ -3846,6 +3849,14 @@ impl AgentScreen {
         let changed = self.prompts.set_tools(cards) || tools != self.tools;
         self.tools = tools;
         if changed {
+            self.settle();
+        }
+    }
+
+    /// The message card's attached images (the add images plan,
+    /// 20261113_01, decision 10).
+    pub fn set_tiles(&mut self, tiles: Vec<crate::prompt::Tile>) {
+        if self.prompts.set_tiles(tiles) {
             self.settle();
         }
     }

@@ -762,6 +762,20 @@ readable; and CAMERA refused for the chooser's camera entry.
 
 - text: This image can't be read.
 
+Why a message with images is not sent yet, under the message card (the
+add images plan, decision 13): an image its text names is still
+uploading, or its upload failed.
+
+# [Copy] attach_uploading
+
+- [#] n: the image's number
+- text: Image {{ [#] n }} is still uploading.
+
+# [Copy] attach_failed
+
+- [#] n: the image's number
+- text: Image {{ [#] n }} failed; remove it or attach it again.
+
 # [Copy] attach_camera_off
 
 - text: |

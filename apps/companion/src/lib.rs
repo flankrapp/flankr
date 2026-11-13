@@ -542,6 +542,18 @@ pub struct App {
     /// Why picked images were not attached, under the message card
     /// (decision 8), until the next pick or the message goes.
     attach_note: Option<String>,
+    /// Images sent to the client and not yet numbered: their type, size,
+    /// PNG thumbnail and where they go, matched to the next new numbers
+    /// in `Event::Attachments` (decisions 11, 12 and 14).
+    pending_images: Vec<attach::Pending>,
+    /// The PNG thumbnails of attached images, by session and number.
+    thumbs: HashMap<(String, u8), std::sync::Arc<prompt::Thumb>>,
+    /// Uploads' progress, by transfer id: written over size.
+    upload_progress: HashMap<u32, f32>,
+    /// The draft as the app last set it with a token, and the cursor
+    /// after it, until the client's dictation shows it: tokens of images
+    /// numbered together go in one after another.
+    token_draft: Option<(String, usize)>,
     /// The title bars' ⋮ menu (step 7), and a touch that came down on a
     /// title icon or the ⋮ (the plan's 22:03 EDT amendment).
     menu: Menu,
@@ -922,7 +934,18 @@ impl App {
             // The attached images (the add images plan, decisions 10-12).
             Event::Attachments(list) => {
                 log::info!("attachments: {}", list.len());
-                self.attachments = list;
+                self.attachments_changed(list);
+            }
+            // An image's upload going (decision 11); the preview's are its.
+            Event::TransferProgress { id, done, size } => {
+                if self.attachments.iter().any(|a| a.transfer == id) {
+                    let share = if size == 0 {
+                        1.0
+                    } else {
+                        done as f32 / size as f32
+                    };
+                    self.upload_progress.insert(id, share);
+                }
             }
             Event::Connected { server } => {
                 self.blob = None;
@@ -1236,6 +1259,13 @@ impl App {
             Event::Dictation(d) => {
                 if d.active != self.dictation.is_some() {
                     log::info!("dictation: {}", if d.active { "on" } else { "off" });
+                }
+                if self
+                    .token_draft
+                    .as_ref()
+                    .is_some_and(|(t, _)| !d.active || *t == d.text)
+                {
+                    self.token_draft = None;
                 }
                 if !d.active {
                     self.keyboard.close();
@@ -2204,6 +2234,8 @@ impl App {
         match target {
             attach::Target::Message => {
                 for (bytes, mime) in sorted.images {
+                    self.pending_images
+                        .push(attach::Pending::of(&bytes, mime, target));
                     self.send(Input::AttachImage {
                         bytes,
                         mime: mime.to_string(),
@@ -2212,6 +2244,90 @@ impl App {
             }
             attach::Target::Terminal => {}
         }
+    }
+
+    /// The client's attachments changed (decisions 10-12): new numbers
+    /// take their pending thumbnails, and a message's get their tokens at
+    /// the typed card's cursor; the progress and thumbnails of images
+    /// gone go too.
+    fn attachments_changed(&mut self, list: Vec<flankr_companion::Attachment>) {
+        let mut new: Vec<flankr_companion::Attachment> = list
+            .iter()
+            .filter(|a| {
+                !self
+                    .attachments
+                    .iter()
+                    .any(|o| o.n == a.n && o.session == a.session)
+            })
+            .cloned()
+            .collect();
+        new.sort_by_key(|a| a.n);
+        self.attachments = list;
+        let live = &self.attachments;
+        self.thumbs
+            .retain(|(session, n), _| live.iter().any(|a| a.n == *n && &a.session == session));
+        self.upload_progress
+            .retain(|id, _| live.iter().any(|a| a.transfer == *id));
+        for a in new {
+            let Some(at) = self
+                .pending_images
+                .iter()
+                .position(|p| p.mime == a.mime && p.size == a.size)
+            else {
+                continue;
+            };
+            let pending = self.pending_images.remove(at);
+            if let Some(thumb) = pending.thumb {
+                self.thumbs.insert((a.session.clone(), a.n), thumb);
+            }
+            if pending.target == attach::Target::Message {
+                self.insert_token(a.n);
+            }
+        }
+    }
+
+    /// Image `n`'s token at the typed message card's cursor, through the
+    /// keyboard route's commit path as Paste text (decision 12).
+    fn insert_token(&mut self, n: u8) {
+        let card = self.prompts().card(PromptKind::Message);
+        if !card.input().is_some_and(|i| i.keyboard()) {
+            log::info!("attach: image {n} attached with no typed message open");
+            return;
+        }
+        let (text, at) = match &self.token_draft {
+            Some((text, at)) => (text.clone(), *at),
+            None => {
+                let text = card.input_text();
+                let at = card
+                    .text_area()
+                    .map_or(text.len(), |ta| ta.cursor().min(text.len()));
+                (text, at)
+            }
+        };
+        let (next, cursor) = attach::with_token(&text, at, n);
+        log::info!("attach: image {n}'s token in the draft");
+        self.token_draft = Some((next.clone(), cursor));
+        self.send(Input::SetText(next));
+        self.keyboard.restart();
+    }
+
+    /// The open session's attached images as the message card's tiles.
+    fn tiles(&self) -> Vec<prompt::Tile> {
+        self.session_attachments()
+            .into_iter()
+            .map(|a| prompt::Tile {
+                n: a.n,
+                label: prompt::Tile::label_of(&a.mime),
+                thumb: self.thumbs.get(&(a.session.clone(), a.n)).cloned(),
+                progress: self
+                    .upload_progress
+                    .get(&a.transfer)
+                    .copied()
+                    .unwrap_or(0.0),
+                ready: a.ready,
+                failed: a.failed.is_some(),
+            })
+            .collect()
     }
 
     /// Typing's tools for the screens, now (plan 20261028_06, decisions 8,
@@ -3309,6 +3425,15 @@ impl App {
             .flatten()
             .map(|d| d.text.clone());
         let Some(text) = other else {
+            // An image the text names still uploading or failed: the
+            // client refuses the send, and the card says why (decision
+            // 13).
+            if let Some(d) = self.dictation.as_ref().filter(|d| !d.general_agent)
+                && let Some(why) = attach::send_refusal(&d.text, &self.session_attachments())
+            {
+                log::info!("attach: send refused, an image not uploaded");
+                self.attach_note = Some(why);
+            }
             self.send(Input::Submit);
             return;
         };
@@ -3377,6 +3502,12 @@ impl App {
             // A typed card's +: a tap opens its menu, on both cards (the
             // 23:39 EDT amendment; the add images plan, decision 3).
             AgentHit::PromptAttach(kind) => self.open_attach_menu(kind),
+            // An attached image's ✕: it goes, with its token (the add
+            // images plan, decision 12).
+            AgentHit::PromptDetach(_, n) => {
+                log::info!("attach: image {n} removed");
+                self.send(Input::DetachImage(n));
+            }
             // The keyboard toggle in a typed card's row (plan 20261028_06,
             // decision 8): up, it hides the soft keyboard as its own
             // dismissal does (the card and its text stay); down, it
@@ -4620,6 +4751,7 @@ impl App {
         });
         // Typing's tools and the volume glyph (plan 20261028_06).
         let tools = self.input_tools();
+        let tiles = self.tiles();
         let volume = self.volume();
         // The prompt cards' inputs (plan 20261027_03): a message to a
         // session, and a typed prompt to Gemini.
@@ -4694,6 +4826,7 @@ impl App {
             }
             agent.set_keys_row(down.is_none());
             agent.set_input_tools(tools);
+            agent.set_tiles(tiles);
             agent.set_volume(volume);
             agent.set_layout(layout);
             agent.set_general_agent_listening(ga_listening);
@@ -5177,6 +5310,10 @@ impl MorphApp for App {
             media_wanted: None,
             media_pending: None,
             attach_note: None,
+            pending_images: Vec::new(),
+            thumbs: HashMap::new(),
+            upload_progress: HashMap::new(),
+            token_draft: None,
             menu: Menu::new(),
             title_touch: None,
             popup: None,
@@ -5587,6 +5724,8 @@ impl MorphApp for App {
         }
         match event {
             libmorph::TextInputEvent::Changed(text) => {
+                // Typed over: the next token goes at the card's cursor.
+                self.token_draft = None;
                 self.send(Input::SetText(text.clone()));
             }
             libmorph::TextInputEvent::Action(_) => self.submit_prompt(),

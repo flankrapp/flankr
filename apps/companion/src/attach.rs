@@ -12,7 +12,10 @@ use libmorph::media::{
     CameraEntry, CameraPermission, Delivery, MediaData, MediaKind, MediaRequest, Picker,
 };
 
+use std::sync::Arc;
+
 use crate::menu::IMAGES_MAX;
+use crate::prompt::Thumb;
 use crate::settings::copy;
 
 /// Where the images picked go.
@@ -109,9 +112,136 @@ pub fn sort(items: impl IntoIterator<Item = MediaData>) -> Sorted {
     out
 }
 
+/// An image sent to the client and not yet numbered (decisions 11, 12
+/// and 14): matched to the next new number of its type and size.
+#[derive(Clone, Debug)]
+pub struct Pending {
+    pub mime: String,
+    pub size: u64,
+    /// A PNG's thumbnail; none for the other types, or a PNG that does
+    /// not decode.
+    pub thumb: Option<Arc<Thumb>>,
+    pub target: Target,
+}
+
+impl Pending {
+    /// `bytes` of type `mime` going to `target`; a PNG for the message
+    /// card is decoded for its tile.
+    pub fn of(bytes: &[u8], mime: &str, target: Target) -> Pending {
+        let thumb = (target == Target::Message && mime == "image/png")
+            .then(|| crate::preview::image::decode_png(bytes).ok())
+            .flatten()
+            .and_then(|img| Thumb::from_rgba(img.width, img.height, &img.pixels))
+            .map(Arc::new);
+        Pending {
+            mime: mime.to_string(),
+            size: bytes.len() as u64,
+            thumb,
+            target,
+        }
+    }
+}
+
+/// `text` with image `n`'s token `[image N]` put at byte `at` (moved back
+/// to a character boundary), with a space either side unless one is there
+/// or it starts the text (decision 12). Returns the text and where the
+/// cursor goes, after the token and its space.
+pub fn with_token(text: &str, at: usize, n: u8) -> (String, usize) {
+    let at = (0..=at.min(text.len()))
+        .rev()
+        .find(|&i| text.is_char_boundary(i))
+        .unwrap_or(0);
+    let (before, after) = text.split_at(at);
+    let mut token = String::new();
+    if !before.is_empty() && !before.ends_with(char::is_whitespace) {
+        token.push(' ');
+    }
+    token.push_str(&flankr_companion::blob::token(n));
+    token.push(' ');
+    let after = after.strip_prefix(' ').unwrap_or(after);
+    let cursor = before.len() + token.len();
+    (format!("{before}{token}{after}"), cursor)
+}
+
+/// Why a send of `text` will be refused while an image it names is not
+/// uploaded (decision 13), for the card's notes: the first such image
+/// named, in its number order, failed or still uploading. The client
+/// refuses the send itself; this only says why under the card.
+pub fn send_refusal(text: &str, attached: &[&flankr_companion::Attachment]) -> Option<String> {
+    let mut named: Vec<&&flankr_companion::Attachment> = attached
+        .iter()
+        .filter(|a| text.contains(&flankr_companion::blob::token(a.n)))
+        .collect();
+    named.sort_by_key(|a| a.n);
+    if let Some(a) = named.iter().find(|a| a.failed.is_some()) {
+        return Some(
+            copy::ATTACH_FAILED
+                .fill(None, &[("n", &a.n.to_string())])
+                .trim()
+                .to_string(),
+        );
+    }
+    named.iter().find(|a| !a.ready).map(|a| {
+        copy::ATTACH_UPLOADING
+            .fill(None, &[("n", &a.n.to_string())])
+            .trim()
+            .to_string()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn attachment(n: u8, ready: bool, failed: bool) -> flankr_companion::Attachment {
+        flankr_companion::Attachment {
+            n,
+            session: "w1-t1-p1".into(),
+            mime: "image/png".into(),
+            size: 100,
+            transfer: 0,
+            ready,
+            failed: failed.then(|| "Upload failed.".to_string()),
+        }
+    }
+
+    #[test]
+    fn a_token_goes_in_at_the_cursor_with_a_space_either_side() {
+        assert_eq!(with_token("", 0, 1), ("[image 1] ".to_string(), 10));
+        assert_eq!(
+            with_token("look at this", 12, 2),
+            ("look at this [image 2] ".to_string(), 23)
+        );
+        assert_eq!(
+            with_token("see  please", 4, 1),
+            ("see [image 1] please".to_string(), 14)
+        );
+        assert_eq!(with_token("abc", 1, 3), ("a [image 3] bc".to_string(), 12));
+        // Past the end, or inside a character: moved back.
+        assert_eq!(with_token("é", 1, 1).0, "[image 1] é");
+        assert_eq!(with_token("ab", 99, 1).0, "ab [image 1] ");
+    }
+
+    #[test]
+    fn a_send_names_an_image_still_uploading_or_failed() {
+        let (one, two, three) = (
+            attachment(1, true, false),
+            attachment(2, false, false),
+            attachment(3, false, true),
+        );
+        let all = [&one, &two, &three];
+        assert_eq!(send_refusal("hi [image 1]", &all), None);
+        assert_eq!(
+            send_refusal("[image 2] and [image 1]", &all).as_deref(),
+            Some("Image 2 is still uploading.")
+        );
+        assert_eq!(
+            send_refusal("[image 2] [image 3]", &all).as_deref(),
+            Some("Image 3 failed; remove it or attach it again.")
+        );
+        // Not named in the text: not the send's concern.
+        assert_eq!(send_refusal("no images", &all), None);
+    }
 
     /// A PNG's signature and IHDR's start: enough for the sniffer.
     fn png() -> Vec<u8> {
