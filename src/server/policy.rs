@@ -1,7 +1,8 @@
 //! The daemon's services for the plan policy plugin
 //! (docs/design/20261112_02_PLAN_POLICY_AGENT_PLAN.md): its state folder
-//! and its notifications to every phone. Made before the daemon, and
-//! pointed at it once it exists.
+//! and its notifications to every phone, the pane's questions, and the
+//! judgement on `[llm.uses.policy]`. Made before the daemon, and pointed
+//! at it once it exists.
 
 use std::path::PathBuf;
 use std::sync::{OnceLock, Weak};
@@ -9,7 +10,9 @@ use std::sync::{OnceLock, Weak};
 use serde_json::Value;
 
 use super::Daemon;
+use crate::llm::{Profile, Use};
 use crate::plugins::policy::{NS, Services};
+use crate::reasoning::Message;
 
 /// The plan policy plugin's way into the daemon.
 #[derive(Default)]
@@ -80,4 +83,30 @@ impl Services for DaemonPolicy {
         let first = open.set.questions.first()?;
         Some(first.text.clone())
     }
+
+    /// One call on `[llm.uses.policy]`: the system text, one user message,
+    /// no tools, at most [`JUDGE_TIMEOUT`].
+    async fn judge(&self, system: &str, user: &str) -> Result<String, String> {
+        let daemon = self.daemon().ok_or("the daemon is gone")?;
+        let engine = daemon
+            .llm
+            .client(Use::Policy, Profile::Summary, Some(system))?;
+        let turns = [Message {
+            role: "user".to_string(),
+            content: user.to_string(),
+            name: None,
+            thought_signature: None,
+        }];
+        tokio::time::timeout(
+            JUDGE_TIMEOUT,
+            engine.process_turns(&turns, &super::speech::NoTools),
+        )
+        .await
+        .map_err(|_| "the judgement timed out".to_string())??
+        .filter(|a| !a.trim().is_empty())
+        .ok_or_else(|| "the judgement was empty".to_string())
+    }
 }
+
+/// How long the judgement may take; past it the card is `ask`.
+pub const JUDGE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);

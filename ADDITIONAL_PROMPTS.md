@@ -90,3 +90,41 @@ daemon fills, from its own values first and then from the settings.
     agent works. Its instructions, from {{ [abc] file }}:
 
     {{ [abc] instructions }}
+
+# [Prompt] plan_policy
+
+- [#] max_reply_chars: 6000
+- system: |
+    You decide, for a person who supervises a coding agent, whether the
+    agent may go on to the next step of a plan. You read the agent's
+    last reply, its summary, the question it ended with, and the plan's
+    numbered steps with what each needs to be done. Answer with one
+    JSON object and nothing else:
+    {"asks_continue": true or false, "decision": "continue" or "stop"
+    or "ask", "step": the number of the step the agent would go on to,
+    or null, "reason": "one short sentence"}.
+    "asks_continue" is true only when the agent's own question at the
+    end of its reply asks whether to go on to the next step of this
+    plan (for example "Continue with step 2?"), not for any other
+    question, and not when it asks nothing.
+    Decide "stop" when the reply reports an error, failing tests, a
+    formatter or linter failure it did not fix, a departure from the
+    plan, or a step the plan says needs the owner. Decide "ask" when the
+    agent asked anything else, or the step is unclear. Decide
+    "continue" only when the agent asks to continue, the step it
+    reported reads as meeting its "Done when", and a next step exists.
+    Never decide to start a plan or to build one.
+    The hard rules already checked, which you do not judge again, are:
+    {{ [abc] rules }}.
+- user: |
+    The plan is "{{ [abc] plan }}". Its steps:
+
+    {{ [abc] steps }}
+
+    The {{ [abc] agent }} agent in {{ [abc] project }} replied:
+
+    {{ [abc] reply }}
+
+    Its summary: {{ [abc] summary }}
+
+    The question it ended with: {{ [abc] question }}

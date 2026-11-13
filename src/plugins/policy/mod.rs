@@ -10,6 +10,7 @@
 //! "continue with step N?" question, asks to send `continue_command`
 //! through `policy::check` and the confirmation broker, never directly.
 
+pub mod judge;
 pub mod plans;
 pub mod rules;
 pub mod store;
@@ -146,6 +147,11 @@ pub trait Services: Send + Sync {
     /// if one is.
     async fn open_choice(&self, _pane_id: &str) -> Option<String> {
         None
+    }
+    /// One answer of `[llm.uses.policy]` to `system` and `user`, or why
+    /// there is none (no model, a timeout, an error).
+    async fn judge(&self, _system: &str, _user: &str) -> Result<String, String> {
+        Err("no model".to_string())
     }
 }
 
@@ -405,11 +411,70 @@ impl PlanPolicy {
                 ),
             );
         }
-        decided(
-            Verdict::Ask,
-            "model",
-            "The card was not judged.".to_string(),
-        )
+        // 2.4 item 3, as the 22:03 EST amendment narrows it.
+        let services = self.services.as_ref()?;
+        let question = services.pending_question(&event.pane.pane_id);
+        let answer = match judge::prompt(event, &plan, question.as_deref()) {
+            Ok((system, user)) => services.judge(&system, &user).await,
+            Err(e) => Err(e),
+        };
+        let judged = match answer {
+            Ok(answer) => judge::parse(&answer),
+            Err(e) => {
+                log::info!("[policy] pane={}: no judgement: {e}", event.pane.pane_id);
+                None
+            }
+        };
+        let Some(judged) = judged else {
+            return decided(
+                Verdict::Ask,
+                "model",
+                "The policy's model gave no answer it could read.".to_string(),
+            );
+        };
+        let with_step = |d: Option<Decision>, step: Option<u32>| {
+            d.map(|mut d| {
+                d.step = step;
+                d
+            })
+        };
+        match judged.verdict {
+            Verdict::Stop => with_step(
+                decided(Verdict::Stop, "judgement", judged.reason),
+                judged.step,
+            ),
+            Verdict::Ask => with_step(
+                decided(Verdict::Ask, "judgement", judged.reason),
+                judged.step,
+            ),
+            Verdict::Continue if !judged.asks_continue => with_step(
+                decided(
+                    Verdict::Ask,
+                    "no_question",
+                    "The agent did not ask to go on to the next step.".to_string(),
+                ),
+                judged.step,
+            ),
+            Verdict::Continue => match judged.step {
+                None => decided(
+                    Verdict::Ask,
+                    "model",
+                    "The policy's model named no step.".to_string(),
+                ),
+                Some(n) if n as usize > plan.steps.len() => with_step(
+                    decided(
+                        Verdict::Stop,
+                        "complete",
+                        "Every step of the plan is done.".to_string(),
+                    ),
+                    Some(n),
+                ),
+                Some(n) => with_step(
+                    decided(Verdict::Continue, "judgement", judged.reason),
+                    Some(n),
+                ),
+            },
+        }
     }
 }
 

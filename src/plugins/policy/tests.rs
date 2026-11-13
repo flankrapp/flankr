@@ -102,6 +102,17 @@ pub(super) struct Fake {
     pub(super) choice: std::sync::Mutex<Option<String>>,
     /// The reply's pending question, if any.
     pub(super) question: std::sync::Mutex<Option<String>>,
+    /// The scripted model: each call takes the first answer; none left is
+    /// an error.
+    pub(super) answers: std::sync::Mutex<std::collections::VecDeque<String>>,
+    /// The user messages it was sent.
+    pub(super) asked: std::sync::Mutex<Vec<String>>,
+}
+
+impl Fake {
+    pub(super) fn answer(&self, text: &str) {
+        self.answers.lock().unwrap().push_back(text.to_string());
+    }
 }
 
 impl Fake {
@@ -132,6 +143,14 @@ impl Services for Fake {
     }
     async fn open_choice(&self, _pane_id: &str) -> Option<String> {
         self.choice.lock().unwrap().clone()
+    }
+    async fn judge(&self, _system: &str, user: &str) -> Result<String, String> {
+        self.asked.lock().unwrap().push(user.to_string());
+        self.answers
+            .lock()
+            .unwrap()
+            .pop_front()
+            .ok_or_else(|| "no answer scripted".to_string())
     }
 }
 
@@ -498,4 +517,84 @@ async fn nothing_while_paused_for_other_agents_or_for_an_older_card() {
     let sent = e.fake.notes("decision");
     assert_eq!(sent.len(), 1, "{sent:?}");
     assert_eq!(sent[0]["summary_serial"], 4);
+}
+
+/// A built plan with autocontinue on, in `w1:p1`.
+pub(super) async fn armed(e: &Env) -> PluginCtx {
+    let c = ctx_as(&e.root, owner(), on()).await;
+    e.policy
+        .call("build", json!({"path": PLAN_PATH, "pane_id": "w1:p1"}), &c)
+        .await
+        .unwrap();
+    e.policy
+        .call("task_enable", json!({"path": PLAN_PATH}), &c)
+        .await
+        .unwrap();
+    c
+}
+
+#[tokio::test]
+async fn the_judgement_with_a_scripted_model() {
+    let e = env();
+    let c = armed(&e).await;
+    *e.fake.question.lock().unwrap() = Some("Continue with step 4?".into());
+    e.fake.answer(
+        "{\"asks_continue\": true, \"decision\": \"continue\", \"step\": 4, \"reason\": \"Step 3 is done and its tests pass.\"}",
+    );
+    e.policy
+        .on_card_summary(
+            &card(
+                1,
+                "Step 3 done, tests pass. Continue with step 4?",
+                "Step three is done.",
+            ),
+            &c,
+        )
+        .await;
+    let d = e.fake.notes("decision").pop().unwrap();
+    assert_eq!(
+        (d["decision"].clone(), d["rule"].clone(), d["step"].clone()),
+        (json!("continue"), json!("judgement"), json!(4))
+    );
+    let asked = e.fake.asked.lock().unwrap()[0].clone();
+    assert!(asked.contains("Continue with step 4?"), "{asked}");
+    assert!(
+        asked.contains("4. Fourth (Done when: four works.)"),
+        "{asked}"
+    );
+
+    e.fake.answer(
+        "{\"asks_continue\": true, \"decision\": \"stop\", \"step\": 4, \"reason\": \"Tests are failing.\"}",
+    );
+    e.policy
+        .on_card_summary(&card(2, "Tests failing.", "Tests fail."), &c)
+        .await;
+    assert_eq!(e.decisions()[1], Env::pair("stop", "judgement"));
+
+    e.fake.answer("I think it should go on.");
+    e.policy
+        .on_card_summary(&card(3, "Done.", "Done."), &c)
+        .await;
+    assert_eq!(e.decisions()[2], Env::pair("ask", "model"));
+    // No answer at all, as with no model: ask.
+    e.policy
+        .on_card_summary(&card(4, "Done.", "Done."), &c)
+        .await;
+    assert_eq!(e.decisions()[3], Env::pair("ask", "model"));
+    // "continue" without the agent asking to: only ask.
+    e.fake.answer(
+        "{\"asks_continue\": false, \"decision\": \"continue\", \"step\": 4, \"reason\": \"Done.\"}",
+    );
+    e.policy
+        .on_card_summary(&card(5, "Done.", "Done."), &c)
+        .await;
+    assert_eq!(e.decisions()[4], Env::pair("ask", "no_question"));
+    // Past the last step: complete.
+    e.fake.answer(
+        "{\"asks_continue\": true, \"decision\": \"continue\", \"step\": 6, \"reason\": \"Done.\"}",
+    );
+    e.policy
+        .on_card_summary(&card(6, "Done.", "Done."), &c)
+        .await;
+    assert_eq!(e.decisions()[5], Env::pair("stop", "complete"));
 }

@@ -574,7 +574,7 @@ fn unavailable(e: impl std::fmt::Display) -> ErrorObject {
 }
 
 /// The summary runs with no tools: any call is refused.
-struct NoTools;
+pub(super) struct NoTools;
 
 #[async_trait]
 impl ToolExecutor for NoTools {
