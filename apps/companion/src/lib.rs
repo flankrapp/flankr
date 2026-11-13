@@ -63,6 +63,7 @@
 //! everything in the data directory but the voice models.
 
 pub mod agent;
+pub mod attach;
 #[cfg(all(test, not(target_os = "android")))]
 mod bottom_bar_tests;
 #[cfg(all(test, not(target_os = "android")))]
@@ -533,6 +534,14 @@ pub struct App {
     /// last `Event::Attachments` gave them (the add images plan,
     /// 20261113_01).
     attachments: Vec<flankr_companion::Attachment>,
+    /// Attach image… chosen: the chooser opens on the touch's context
+    /// (the add images plan, decision 6); then the request in flight, and
+    /// where its images go.
+    media_wanted: Option<attach::Target>,
+    media_pending: Option<(libmorph::media::MediaRequestId, attach::Target)>,
+    /// Why picked images were not attached, under the message card
+    /// (decision 8), until the next pick or the message goes.
+    attach_note: Option<String>,
     /// The title bars' ⋮ menu (step 7), and a touch that came down on a
     /// title icon or the ⋮ (the plan's 22:03 EDT amendment).
     menu: Menu,
@@ -1230,6 +1239,7 @@ impl App {
                 }
                 if !d.active {
                     self.keyboard.close();
+                    self.attach_note = None;
                     self.message_sent();
                     self.set_listening(false);
                 } else if d.general_agent {
@@ -2132,6 +2142,78 @@ impl App {
         menu::ImageItem::of(self.input_tools().images, self.session_attachments().len())
     }
 
+    /// Attach image… chosen for `target`: the chooser opens on the
+    /// touch's context, for the open agent view's session; with none open
+    /// the client's own line says why, and no chooser opens.
+    fn want_media(&mut self, target: attach::Target) {
+        if self.agent_pane.is_none() {
+            log::info!("attach image: no session open");
+            self.note = Some(("Open a session to attach an image.".into(), Role::Warn));
+            return;
+        }
+        self.attach_note = None;
+        self.media_wanted = Some(target);
+    }
+
+    /// The chooser asked for, now that the context is at hand.
+    fn serve_media(&mut self, ctx: &mut MorphContext) {
+        let Some(target) = self.media_wanted.take() else {
+            return;
+        };
+        let attached = self.session_attachments().len();
+        let id = ctx.media_request(&attach::request(attached));
+        log::info!(
+            "attach: chooser {} for {target:?}, {} free",
+            id.id(),
+            menu::IMAGES_MAX.saturating_sub(attached)
+        );
+        self.media_pending = Some((id, target));
+    }
+
+    /// The chooser answered (decision 8): each image taken goes to the
+    /// client in order; the first refusal's notice shows under the card.
+    fn media_answered(&mut self, response: &libmorph::media::MediaResponse) {
+        use libmorph::media::MediaError;
+        let target = match (response.request, self.media_pending) {
+            (Some(id), Some((pending, target))) if id == pending => target,
+            _ => {
+                log::info!("attach: an answer to no request of this run, dropped");
+                return;
+            }
+        };
+        self.media_pending = None;
+        let reply = match &response.result {
+            Ok(reply) => reply,
+            Err(MediaError::PermissionDenied { .. }) => {
+                log::info!("attach: camera refused");
+                self.attach_note = Some(crate::settings::copy::ATTACH_CAMERA_OFF.text.into());
+                return;
+            }
+            Err(e) => {
+                log::info!("attach: no images: {e}");
+                return;
+            }
+        };
+        let sorted = attach::sort(reply.items.iter().map(|i| i.data.clone()));
+        log::info!(
+            "attach: {} image(s), {} refused",
+            sorted.images.len(),
+            sorted.refused.len()
+        );
+        self.attach_note = sorted.notice().map(str::to_string);
+        match target {
+            attach::Target::Message => {
+                for (bytes, mime) in sorted.images {
+                    self.send(Input::AttachImage {
+                        bytes,
+                        mime: mime.to_string(),
+                    });
+                }
+            }
+            attach::Target::Terminal => {}
+        }
+    }
+
     /// Typing's tools for the screens, now (plan 20261028_06, decisions 8,
     /// 9 and 11): the toggles on a phone only; Gemini's + everywhere (the
     /// owner, 2026-10-29: "Show Gemini's + on desktop"); the message
@@ -2260,8 +2342,13 @@ impl App {
             // Read on the touch's context, right after this.
             Choice::PasteText if self.term_attach_menu => self.term_paste_wanted = true,
             Choice::PasteText => self.paste_wanted = self.attach_menu,
-            // The media chooser (the add images plan, step 2).
-            Choice::AttachImage => log::info!("attach image: not built yet"),
+            // The terminal's: the add images plan, step 5.
+            Choice::AttachImage if self.term_attach_menu => {
+                log::info!("attach image: the terminal's not built yet")
+            }
+            // The chooser, opened on the touch's context right after
+            // this (the add images plan, decision 6).
+            Choice::AttachImage => self.want_media(attach::Target::Message),
             Choice::ShowChanges => self.open_preview(preview::Target::Git("diff".into())),
             Choice::Settings => {
                 if self.settings_screen.is_none() {
@@ -2438,7 +2525,13 @@ impl App {
         });
         let session = pane.and_then(|p| self.sessions.get(p));
         MessagePrompt {
-            input: prompt_input(d),
+            input: {
+                let mut input = prompt_input(d);
+                if let Some(note) = &self.attach_note {
+                    input.notes.push((note.clone(), theme().get(Role::Warn)));
+                }
+                input
+            },
             target,
             label: self.choice_other.clone(),
             sent: session.map(|s| s.sent.clone()).unwrap_or_default(),
@@ -5081,6 +5174,9 @@ impl MorphApp for App {
             image_quad: None,
             blob: None,
             attachments: Vec::new(),
+            media_wanted: None,
+            media_pending: None,
+            attach_note: None,
             menu: Menu::new(),
             title_touch: None,
             popup: None,
@@ -5265,6 +5361,7 @@ impl MorphApp for App {
             self.hold_fired(hit);
         }
         self.serve_clipboard(ctx);
+        self.serve_media(ctx);
         // The volume menu follows the options and speaking while open; it
         // is no longer the volume menu once closed.
         if !self.menu.is_open() {
@@ -5401,6 +5498,7 @@ impl MorphApp for App {
     fn on_touch(&mut self, ctx: &mut MorphContext, touch: Touch) {
         self.touch(touch);
         self.serve_clipboard(ctx);
+        self.serve_media(ctx);
         // Links tapped in the settings' copy and the agent view.
         let mut links = std::mem::take(&mut self.links);
         if let Some(screen) = &mut self.settings_screen {
@@ -5438,6 +5536,13 @@ impl MorphApp for App {
             viewfinder.clear();
         }
         self.run_camera(ctx);
+    }
+
+    /// The chooser's answer (libmorph's media request; the add images
+    /// plan, decision 8).
+    fn on_media(&mut self, _ctx: &mut MorphContext, response: &libmorph::media::MediaResponse) {
+        self.media_answered(response);
+        self.screen.invalidate();
     }
 
     fn on_text_input(&mut self, _ctx: &mut MorphContext, event: &libmorph::TextInputEvent) {

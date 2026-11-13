@@ -745,6 +745,29 @@ images are attached.
 
 - text: Only 4 images can go in one message.
 
+Why images picked in the chooser were not attached, under the message
+card (the add images plan, 20261113_01, decision 8): over 20 MiB, not
+one of the four types (a HEIC photo, which is not converted), or not
+readable; and CAMERA refused for the chooser's camera entry.
+
+# [Copy] attach_too_large
+
+- text: Too large (over 20 MB).
+
+# [Copy] attach_not_image
+
+- text: flankr takes PNG, JPEG, WebP and GIF images.
+
+# [Copy] attach_unreadable
+
+- text: This image can't be read.
+
+# [Copy] attach_camera_off
+
+- text: |
+    Camera is off for flankr. Turn it on under Settings → Apps → flankr →
+    Permissions → Camera to take a photo here.
+
 The agent menu's last item and its modal, the full list of the pane's
 agents (docs/design/20261023_07_SUBAGENTS_PLAN.md, the 2026-10-29 03:11
 EDT amendment).
