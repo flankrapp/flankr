@@ -16,6 +16,7 @@ pub mod speech;
 mod subscriptions;
 pub mod terminal;
 mod watcher;
+pub mod worktrees;
 
 use std::io::IsTerminal;
 use std::os::unix::fs::PermissionsExt;
@@ -114,6 +115,8 @@ pub struct Daemon {
     /// Panes with a `choice.answer` being driven (plan 20261029_01): a
     /// second answer to the same pane is refused meanwhile.
     pub choice_answering: std::sync::Mutex<std::collections::HashSet<String>>,
+    /// herdr's worktrees, for `agents.list` (plan 20261112_03).
+    pub worktrees: worktrees::Worktrees,
 }
 
 impl Daemon {
@@ -226,6 +229,7 @@ impl Daemon {
             plugins,
             blob,
             choice_answering: Default::default(),
+            worktrees: Default::default(),
         });
         policy.set(Arc::downgrade(&daemon));
         // Each kept card summary goes on to the enabled plugins (plan

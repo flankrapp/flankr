@@ -996,12 +996,26 @@ async fn call(
                 *conn.focus.lock().unwrap() = focus.clone();
             }
             let now = SystemTime::now();
+            // Each agent's herdr worktree (plan 20261112_03, the 21:58 EST
+            // amendment, item 4).
+            let workspaces: std::collections::BTreeSet<String> = names
+                .agents
+                .iter()
+                .filter_map(|n| n.agent.workspace_id.clone())
+                .collect();
+            let trees = daemon.worktrees.of(&daemon.client, workspaces).await;
             let agents = names
                 .agents
                 .into_iter()
                 .map(|named| {
                     let a = named.agent;
                     let listed = agent_session(daemon, &a, now);
+                    let worktree = a
+                        .workspace_id
+                        .as_ref()
+                        .and_then(|ws| trees.get(ws))
+                        .zip(a.cwd.as_deref())
+                        .and_then(|(list, cwd)| super::worktrees::worktree_of(list, cwd));
                     common::AgentInfo {
                         session: listed.session,
                         turn: listed.turn,
@@ -1029,6 +1043,7 @@ async fn call(
                         focused: a.focused,
                         workspace_label: a.workspace_label,
                         workspace_number: a.workspace_number,
+                        worktree,
                     }
                 })
                 .collect();
@@ -1973,6 +1988,9 @@ async fn forward_events(conn: Arc<Conn>) {
                                 handle: view.handle,
                                 token: token.reveal_to(&principal).map(str::to_string),
                                 reminder,
+                                // When it is announced (plan 20261112_03,
+                                // the 21:58 EST amendment, item 7).
+                                at: Some(super::link::auth::now_rfc3339()),
                             },
                         ));
                     }
