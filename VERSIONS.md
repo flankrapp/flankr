@@ -1468,3 +1468,11 @@ behaves as before.
   has a task gets that task's row back unchanged, with nothing stored or
   notified. `build`'s row carries `existing` (`true` for that case,
   `false` for a new or re-armed task).
+
+## flankr-companion 0.8.12 — 2026-11-13 (the commit tagged `flankr-companion-v0.8.12`)
+
+Strictly additive (a variant on the `#[non_exhaustive]` `Input`; plan
+20261112_03, the 2026-11-13 01:05 EST amendment):
+
+- **Added:** `Input::ListAgents`: `agents.list` now, unless one is on its
+  way or the client is offline (the Active tasks view's pull to refresh).
