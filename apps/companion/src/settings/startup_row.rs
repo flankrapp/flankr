@@ -21,7 +21,7 @@ use libmsdf::drawlist::DrawList;
 use super::info::{self, INFO_PART};
 use super::option_row::OptionRow;
 use super::screen::{LABEL_PT, label_y};
-use super::{Choice, DrawerSessions, Startup};
+use super::{Choice, DrawerSessions, HomeView, Startup};
 use crate::agent::PAD;
 use crate::theme::theme;
 
@@ -30,6 +30,8 @@ pub type StartupRow = SelectRow<Startup>;
 
 /// *Drawer sessions*' row.
 pub type DrawerSessionsRow = SelectRow<DrawerSessions>;
+/// *Home view* (plan 20261112_03, the 21:58 EST amendment, item 1).
+pub type HomeViewRow = SelectRow<HomeView>;
 
 /// A label and ⓘ, and a `SelectableLabel` over `T`'s values.
 #[derive(Clone, Debug)]

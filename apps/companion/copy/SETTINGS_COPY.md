@@ -153,6 +153,22 @@ The two speak options, shared by the Sound rows and the volume menu
 
 - text: Not grouped
 
+# [Copy] home_view
+
+- title: Home view
+- text: |
+    What the home screen shows: every agent's card, or the active
+    tasks, the plans you chose Build on, with their agents, questions
+    and the plan policy's decisions under each.
+
+# [Copy] home_view_agents
+
+- text: All agents
+
+# [Copy] home_view_plans
+
+- text: Active tasks
+
 # [Copy] scrollbar
 
 - text: Scrollbar
