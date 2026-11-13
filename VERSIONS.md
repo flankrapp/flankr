@@ -1341,3 +1341,17 @@ disabled by default (before it, its version was the git hash `4703cb8`):
   screens); the read patterns `docs/design/*.md`, `AGENTS.md` and
   `CLAUDE.md`; the command `worktree_list` (`git worktree list
   --porcelain`); no general agent tools.
+
+## flankr-companion 0.8.6 — 2026-11-12 (the commit tagged `flankr-companion-v0.8.6`)
+
+Plan 20261112_02 (plan policy agent), step 8. Strictly additive (a new
+module):
+
+- **Added:** the module `policy`: `NS`, `PRINCIPAL_ID`, the call names in
+  `policy::methods` and the notice names in `policy::notices`;
+  `PolicyStep`, `PolicyPlan`, `PolicyDecision` (with `line()`, the
+  Finished card's policy line), `PolicySession`, `PolicyState`,
+  `PolicyPlans` and `PolicyWorktree`, serialised to and from the plugin's
+  JSON with every field defaulted; the `#[non_exhaustive]`
+  `PolicyNotice { Decision, Approval, State }` with
+  `PolicyNotice::of(&PluginNotify)`; `plan_params(path, pane_id)`.
