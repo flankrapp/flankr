@@ -1399,3 +1399,13 @@ libflankr_proto 0.5.14, additive.
   each plan's listed panes and last **Not on a plan** (`plan: None`):
   the unlinked and any agent pane the daemon did not mention, no shells;
   `PolicyNotice::Overview`; `methods::OVERVIEW` and `notices::OVERVIEW`.
+
+## libflankr_proto 0.5.15 — 2026-11-12 (the commit tagged `libflankr_proto-v0.5.15`)
+
+Strictly additive (a field appended, by the owner's ruling that appending
+is additive; plan 20261112_03, the 21:58 EST amendment, item 7). A
+literal that names every field has to name the new one.
+
+- **Added:** `companion::ConfirmRequested::at: Option<String>`, when the
+  daemon announced the confirmation, RFC 3339 on its clock; absent from
+  an older daemon and left off the wire when unset.
