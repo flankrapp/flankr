@@ -18,6 +18,7 @@ pub mod command;
 pub mod ctx;
 pub mod host;
 pub mod planning;
+pub mod policy;
 pub mod registry;
 
 pub use command::{ArgShape, CommandOutput, CommandSpec};

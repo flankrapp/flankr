@@ -218,7 +218,11 @@ async fn hello_lists_the_plugins_and_only_an_approver_switches_one_on() {
         .as_array()
         .unwrap()
         .clone();
-    assert_eq!(plugins.len(), 1, "{plugins:?}");
+    assert_eq!(plugins.len(), 2, "{plugins:?}");
+    // The plan policy plugin is listed too, off (plan 20261112_02, step 1).
+    assert_eq!(plugins[1]["ns"], "dev.flankr.plugins.policy");
+    assert_eq!(plugins[1]["name"], "Plan policy");
+    assert_eq!(plugins[1]["enabled"], false);
     assert_eq!(plugins[0]["ns"], PLANNING);
     assert_eq!(plugins[0]["version"], "0.1.2");
     assert_eq!(plugins[0]["enabled"], false);

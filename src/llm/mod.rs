@@ -43,12 +43,20 @@ pub enum Use {
     /// (plan 20261027_04, decision 2): off unless `enabled = true`, on the
     /// general agent's backend and model, never a client of its own.
     Planning,
+    /// The plan policy plugin's judgement of a Finished card
+    /// (docs/design/20261112_02_PLAN_POLICY_AGENT_PLAN.md, 2.1 item 3).
+    Policy,
 }
 
 impl Use {
     /// The uses with a backend and model of their own. [`Use::Planning`]
     /// extends the general agent's and is resolved after it.
-    pub const ALL: [Use; 3] = [Use::GeneralAgent, Use::CardSummaries, Use::SpokenSummaries];
+    pub const ALL: [Use; 4] = [
+        Use::GeneralAgent,
+        Use::CardSummaries,
+        Use::SpokenSummaries,
+        Use::Policy,
+    ];
 
     /// The use's name in `[llm.uses.<name>]`, also the name its prompt is
     /// to have in `ADDITIONAL_PROMPTS.md` later (00:59 EDT amendment, 3).
@@ -58,6 +66,7 @@ impl Use {
             Use::CardSummaries => "card_summaries",
             Use::SpokenSummaries => "spoken_summaries",
             Use::Planning => "planning",
+            Use::Policy => "policy",
         }
     }
 
@@ -628,7 +637,7 @@ pub fn resolve_sources(
         if Use::from_name(name).is_none() {
             notes.push(format!(
                 "[llm.uses.{name}] is not a use flankr has (general_agent, card_summaries, \
-                 spoken_summaries, planning); ignored"
+                 spoken_summaries, planning, policy); ignored"
             ));
         }
     }
@@ -1084,6 +1093,7 @@ mod tests {
                  (named, not in the key's model list)",
                 "[llm] spoken_summaries: flash-lite:oldest is gemini-3.5-flash-lite (matched)",
                 "[llm] planning: unavailable: [llm.uses.planning] is off unless enabled = true",
+                "[llm] policy: flash-lite:oldest is gemini-3.5-flash-lite (matched)",
             ]
         );
         let s = resolve_on(

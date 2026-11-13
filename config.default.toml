@@ -97,13 +97,19 @@ interrupt_key = ""
 # api_key_file = "gemini_key"     # looked in first: absolute, or next to this file
 # model = "flash:newest"
 #
-# Uses, each optional: general_agent, card_summaries, spoken_summaries.
-# Each is on unless `enabled = false`; `backend` and `model` override.
+# Uses, each optional: general_agent, card_summaries, spoken_summaries,
+# policy. Each is on unless `enabled = false`; `backend` and `model`
+# override.
 # [llm.uses.general_agent]
 # backend = "gemini"
 # model = "gemini-2.5-flash"
 #
 # [llm.uses.spoken_summaries]
+# enabled = false
+#
+# The plan policy plugin's judgement of a Finished card (below); like the
+# summaries, "flash-lite:oldest" unless `model` says otherwise.
+# [llm.uses.policy]
 # enabled = false
 #
 # Planning: the general agent's own turns, on its backend and model, may
@@ -223,3 +229,19 @@ interrupt_key = ""
 # enabled = true
 # commands = false
 # agent_tools = true
+#
+# The plan policy plugin reads each Finished card's summary for a plan you
+# chose Build on and, while that task's autocontinue is on, answers the
+# coding agent's own "continue with step N?" question with
+# `continue_command`, through the agent's allowed_commands and a
+# confirmation on the phone every time. Its judgement uses
+# [llm.uses.policy]. It offers the general agent no tools.
+# [plugins."dev.flankr.plugins.policy"]
+# enabled = false            # off: nothing is read, decided or sent
+# agents = []                # [[agents]] names it may drive; empty = none
+# continue_command = "continue"   # must be on each agent's allowed_commands
+# max_continues = 3          # per task, then it asks instead
+# confirm = "always"         # every continue is a confirmation on the phone
+# quiet_secs = 15            # a card is judged only after this long with
+#                            # no newer card from the same pane
+# agent_tools = false

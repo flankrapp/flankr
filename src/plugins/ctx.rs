@@ -81,6 +81,8 @@ pub struct Commands {
 /// What one plugin call may do.
 pub struct PluginCtx {
     ns: &'static str,
+    /// Who called: a device's principal, or the plugin's own for a hook.
+    principal: Principal,
     project: Result<Project, PluginError>,
     /// The configured `[llm.uses.planning] read`.
     read: Vec<ReadPattern>,
@@ -111,6 +113,7 @@ impl PluginCtx {
         let project = resolve(&parts.principal, parts.pane.as_deref(), &*parts.lookup).await;
         PluginCtx {
             ns: parts.ns,
+            principal: parts.principal,
             project,
             read: parts.read,
             plugin_read: parts.plugin_read,
@@ -118,6 +121,11 @@ impl PluginCtx {
             config: parts.config,
             notifier: parts.notifier,
         }
+    }
+
+    /// Who called.
+    pub fn principal(&self) -> &Principal {
+        &self.principal
     }
 
     /// The focused project: the call's `session`, else the conversation's

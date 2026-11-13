@@ -809,7 +809,10 @@ fn to_error(e: PluginError) -> ErrorObject {
     let own = (super::codes::FIRST..=super::codes::LAST).contains(&e.code)
         || matches!(
             e.code,
-            codes::INVALID_PARAMS | codes::METHOD_NOT_FOUND | codes::CANCELLED
+            codes::INVALID_PARAMS
+                | codes::METHOD_NOT_FOUND
+                | codes::CANCELLED
+                | codes::NOT_PERMITTED
         );
     ErrorObject::new(if own { e.code } else { codes::INTERNAL_ERROR }, e.message)
 }

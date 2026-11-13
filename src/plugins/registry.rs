@@ -29,7 +29,10 @@ pub fn builtin() -> Vec<Arc<dyn Plugin>> {
 
 /// The list as written, unchecked.
 fn declared() -> Vec<Arc<dyn Plugin>> {
-    vec![Arc::new(super::planning::Planning)]
+    vec![
+        Arc::new(super::planning::Planning),
+        Arc::new(super::policy::PlanPolicy::new()),
+    ]
 }
 
 /// `plugins` with the bad entries left out, and why each was.
@@ -164,6 +167,8 @@ mod tests {
         assert!(problems.is_empty(), "{problems:?}");
         assert_eq!(kept.len(), declared().len());
         assert_eq!(builtin()[0].ns(), "dev.flankr.plugins.planning");
+        assert_eq!(builtin()[1].ns(), "dev.flankr.plugins.policy");
+        assert_eq!(builtin()[1].name(), "Plan policy");
     }
 
     #[test]
