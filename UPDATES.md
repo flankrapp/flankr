@@ -297,3 +297,8 @@ These changes came before the program had version numbers.
 
 **Added**
 - The planning plugin reads each plan's open questions: the items of its "Open questions" section, the recommendation each gives, and which amendment answered it. The general agent's `planning_plan_show` tool and the phone's plan list now see them, with a count of those still open for each plan.
+
+## 0.7.15 — 2026-11-13
+
+**Fixed**
+- An agent's reply that asks you to go ahead without a question mark ("Say go and I'll draft it", "Say the word and I'll carry on", "Shall I push it."), or that adds a one-line note after asking ("Still holding the test, unstarted."), is now its pending question: the phone shows it as a question card with Yes and No, the "<name> is asking" notice and the general agent see it, and the Plan policy judges it as a question. Before, such a reply was sent as a finished turn with no Yes or No. A plain "Let me know if anything breaks." is still not a question.
