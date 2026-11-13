@@ -9,10 +9,23 @@ use super::super::PluginCtx;
 /// The checkouts `git worktree list --porcelain` names, the main one
 /// first.
 pub fn porcelain_paths(text: &str) -> Vec<PathBuf> {
-    text.lines()
-        .filter_map(|l| l.strip_prefix("worktree "))
-        .map(|p| PathBuf::from(p.trim()))
-        .collect()
+    porcelain(text).into_iter().map(|(p, _)| p).collect()
+}
+
+/// The checkouts with their branches (`refs/heads/` taken off).
+pub fn porcelain(text: &str) -> Vec<(PathBuf, Option<String>)> {
+    let mut out: Vec<(PathBuf, Option<String>)> = Vec::new();
+    for line in text.lines() {
+        if let Some(p) = line.strip_prefix("worktree ") {
+            out.push((PathBuf::from(p.trim()), None));
+        } else if let Some(b) = line.strip_prefix("branch ")
+            && let Some(last) = out.last_mut()
+        {
+            let b = b.trim();
+            last.1 = Some(b.strip_prefix("refs/heads/").unwrap_or(b).to_string());
+        }
+    }
+    out
 }
 
 /// Where a context's project is checked out.
@@ -23,6 +36,8 @@ pub struct Checkout {
     pub main: Option<PluginCtx>,
     /// The worktree's folder, when it is one.
     pub worktree: Option<String>,
+    /// Its branch, when it has one.
+    pub branch: Option<String>,
 }
 
 /// The project's checkout: its declared `git worktree list` run in its
@@ -31,6 +46,7 @@ pub async fn checkout(ctx: &PluginCtx) -> Checkout {
     let none = Checkout {
         main: None,
         worktree: None,
+        branch: None,
     };
     let Ok(project) = ctx.project() else {
         return none;
@@ -42,7 +58,8 @@ pub async fn checkout(ctx: &PluginCtx) -> Checkout {
             return none;
         }
     };
-    let paths = porcelain_paths(&out.stdout);
+    let entries = porcelain(&out.stdout);
+    let paths: Vec<PathBuf> = entries.iter().map(|(p, _)| p.clone()).collect();
     let Some(main) = paths.first() else {
         return none;
     };
@@ -52,17 +69,18 @@ pub async fn checkout(ctx: &PluginCtx) -> Checkout {
         return none;
     }
     // Only a folder git names as one of the project's worktrees.
-    if !paths
+    let Some((_, branch)) = entries
         .iter()
         .skip(1)
-        .any(|p| canonical(p).as_deref() == Some(project.root.as_path()))
-    {
+        .find(|(p, _)| canonical(p).as_deref() == Some(project.root.as_path()))
+    else {
         return none;
-    }
+    };
     match ctx.rooted_at(main) {
         Ok(main_ctx) => Checkout {
             main: Some(main_ctx),
             worktree: Some(project.root.display().to_string()),
+            branch: branch.clone(),
         },
         Err(e) => {
             log::info!(
@@ -97,5 +115,6 @@ mod tests {
             Some("plan/20261112_02")
         );
         assert_eq!(branch_for("README"), None);
+        assert_eq!(porcelain(text)[1].1.as_deref(), Some("plan/20261112_02"));
     }
 }

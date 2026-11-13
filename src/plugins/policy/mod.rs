@@ -1,4 +1,4 @@
-//! The plan policy plugin's daemon half, `dev.flankr.plugins.policy@0.1.0`
+//! The plan policy plugin's daemon half, `dev.flankr.plugins.policy@0.1.1`
 //! (docs/design/20261112_02_PLAN_POLICY_AGENT_PLAN.md, with its
 //! amendments).
 //!
@@ -11,6 +11,7 @@
 //! through `policy::check` and the confirmation broker, never directly.
 
 pub mod judge;
+pub mod overview;
 pub mod plans;
 pub mod rules;
 pub mod store;
@@ -179,6 +180,11 @@ pub trait Services: Send + Sync {
     async fn worktree_create(&self, _pane_id: &str, _branch: &str) -> Result<String, String> {
         Err("herdr worktrees are not available here".to_string())
     }
+    /// The agent panes herdr shows now, with their worktrees (plan
+    /// 20261112_03, 2.2).
+    async fn agent_panes(&self) -> Vec<overview::AgentPane> {
+        Vec::new()
+    }
     /// One answer of `[llm.uses.policy]` to `system` and `user`, or why
     /// there is none (no model, a timeout, an error).
     async fn judge(&self, _system: &str, _user: &str) -> Result<String, String> {
@@ -201,6 +207,8 @@ struct Session {
     latest: u64,
     /// The continue waiting for the owner's tap: its confirmation id.
     pending: Option<u64>,
+    /// The plan the Active tasks view shows it under (plan 20261112_03).
+    link: Option<overview::Link>,
 }
 
 /// What the plugin keeps while the daemon runs.
@@ -209,6 +217,12 @@ struct State {
     paused: bool,
     /// By pane id.
     sessions: BTreeMap<String, Session>,
+    /// The plans it has read, by path, for `overview`.
+    plans_seen: BTreeMap<String, overview::PlanSeen>,
+    /// The highest step a decision named, by plan path.
+    steps: BTreeMap<String, u32>,
+    /// An `overview` notification is on its way.
+    overview_pending: bool,
 }
 
 /// The plan policy plugin.
@@ -245,6 +259,40 @@ impl PlanPolicy {
         if let Some(s) = &self.services {
             s.notify_all(method, params);
         }
+        if matches!(method, "state" | "approval" | "decision") {
+            self.touched();
+        }
+    }
+
+    /// Something `overview` shows changed: its notification follows within
+    /// [`overview::COALESCE`], once however many changes come meanwhile.
+    fn touched(&self) {
+        let Some(services) = self.services.clone() else {
+            return;
+        };
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        {
+            let mut state = self.state.lock().unwrap();
+            if state.overview_pending {
+                return;
+            }
+            state.overview_pending = true;
+        }
+        let state = Arc::clone(&self.state);
+        let store = self.store().ok();
+        handle.spawn(async move {
+            tokio::time::sleep(overview::COALESCE).await;
+            let panes = services.agent_panes().await;
+            let tasks = store.map(|s| s.load()).unwrap_or_default();
+            let value = {
+                let mut state = state.lock().unwrap();
+                state.overview_pending = false;
+                overview_of(&state, &panes, &tasks)
+            };
+            services.notify_all("overview", value);
+        });
     }
 
     /// Whether it is paused.
@@ -309,6 +357,10 @@ impl PlanPolicy {
             let session = state.sessions.entry(decision.pane_id.clone()).or_default();
             session.plan = decision.plan.clone();
             session.last_decision = Some(value.clone());
+            if let (Some(plan), Some(step)) = (&decision.plan, decision.step) {
+                let best = state.steps.entry(plan.clone()).or_insert(step);
+                *best = (*best).max(step);
+            }
         }
         self.notify("decision", value);
     }
@@ -576,7 +628,7 @@ impl Plugin for PlanPolicy {
     }
 
     fn version(&self) -> PluginVersion {
-        PluginVersion::Semver("0.1.0")
+        PluginVersion::Semver("0.1.1")
     }
 
     fn menu(&self) -> &'static [MenuItem] {
@@ -599,6 +651,7 @@ impl Plugin for PlanPolicy {
     ) -> Result<Value, PluginError> {
         match method {
             "state" => Ok(self.state_json()),
+            "overview" => self.overview_call(ctx).await,
             "pause" => {
                 need_approver(ctx, method)?;
                 let Some(paused) = params.get("paused").and_then(Value::as_bool) else {
@@ -655,6 +708,12 @@ impl Plugin for PlanPolicy {
     /// 2.4, after the quiet time of the 22:17 EST amendment, item 7.
     async fn on_card_summary(&self, event: &CardSummaryEvent, ctx: &PluginCtx) {
         let settings = Settings::of(ctx.config());
+        // 2.8 item 2: a worktree's pane works on the main checkout's plans.
+        let checkout = worktree::checkout(ctx).await;
+        // The Active tasks view's link, for every agent, paused or not; it
+        // never makes the policy act (plan 20261112_03, 2.2 item 2).
+        self.link_card(event, checkout.main.as_ref().unwrap_or(ctx), &checkout)
+            .await;
         if self.paused() {
             return;
         }
@@ -681,8 +740,6 @@ impl Plugin for PlanPolicy {
         if !newest || self.paused() {
             return;
         }
-        // 2.8 item 2: a worktree's pane works on the main checkout's plans.
-        let checkout = worktree::checkout(ctx).await;
         let ctx = checkout.main.as_ref().unwrap_or(ctx);
         if let Some(mut decision) = self.decide(event, ctx, &settings).await {
             decision.worktree = checkout.worktree.clone();
@@ -696,7 +753,149 @@ impl Plugin for PlanPolicy {
     }
 }
 
+/// The `overview` body from what the plugin holds.
+fn overview_of(state: &State, panes: &[overview::AgentPane], tasks: &[Task]) -> Value {
+    let links: BTreeMap<String, overview::Link> = state
+        .sessions
+        .iter()
+        .filter_map(|(p, s)| Some((p.clone(), s.link.clone()?)))
+        .collect();
+    let decisions: BTreeMap<String, Value> = state
+        .sessions
+        .iter()
+        .filter_map(|(p, s)| Some((p.clone(), s.last_decision.clone()?)))
+        .collect();
+    overview::build(&overview::Inputs {
+        paused: state.paused,
+        panes,
+        links: &links,
+        decisions: &decisions,
+        plans: &state.plans_seen,
+        steps: &state.steps,
+        tasks,
+    })
+}
+
 impl PlanPolicy {
+    /// `overview {}` (plan 20261112_03, 2.2 item 1): the project's plans
+    /// read again, then the view's body.
+    async fn overview_call(&self, ctx: &PluginCtx) -> Result<Value, PluginError> {
+        let checkout = worktree::checkout(ctx).await;
+        let ctx = checkout.main.as_ref().unwrap_or(ctx);
+        if let Ok(root) = root_of(ctx) {
+            let plans = plans::list(ctx).await.unwrap_or_default();
+            let mut state = self.state.lock().unwrap();
+            for p in &plans {
+                state
+                    .plans_seen
+                    .insert(p.path.clone(), overview::PlanSeen::of(&root, p));
+            }
+        }
+        let panes = match &self.services {
+            Some(s) => s.agent_panes().await,
+            None => Vec::new(),
+        };
+        let tasks = self.store().map(|s| s.load()).unwrap_or_default();
+        let state = self.state.lock().unwrap();
+        Ok(overview_of(&state, &panes, &tasks))
+    }
+
+    /// Which plan a card's pane is on, for the Active tasks view (plan
+    /// 20261112_03, 2.2 item 2, as its 22:03 EST amendment matches): the
+    /// policy's own match (`pinned`, `reply_path`, `summary_title`), else
+    /// the worktree's `plan/<id>` branch, else one `plan_match` call. A
+    /// failure keeps the pane's last link.
+    async fn link_card(
+        &self,
+        event: &CardSummaryEvent,
+        ctx: &PluginCtx,
+        checkout: &worktree::Checkout,
+    ) {
+        let Ok(root) = root_of(ctx) else {
+            return;
+        };
+        let tasks: Vec<Task> = self
+            .store()
+            .map(|s| s.load())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|t| t.project_root == root)
+            .collect();
+        let plans = plans::list(ctx).await.unwrap_or_default();
+        let mut found: Option<(plans::PlanDoc, &'static str)> =
+            rules::match_plan(event, &tasks, &plans).map(|(p, by)| {
+                (
+                    p.clone(),
+                    match by {
+                        rules::LinkedBy::Task => "pinned",
+                        rules::LinkedBy::Path => "reply_path",
+                        rules::LinkedBy::Title => "summary_title",
+                    },
+                )
+            });
+        if found.is_none()
+            && let Some(branch) = &checkout.branch
+        {
+            found =
+                overview::plan_of_branch(branch, &plans).map(|p| (p.clone(), "worktree_branch"));
+        }
+        if found.is_none()
+            && let Some(services) = &self.services
+        {
+            let active: Vec<&plans::PlanDoc> = plans.iter().filter(|p| p.status_allows()).collect();
+            if !active.is_empty() {
+                let summary = event.summary.spoken.clone().unwrap_or_default();
+                if let Ok((system, user)) =
+                    overview::match_prompt(&event.shown, &event.reply, &summary, &active)
+                {
+                    match services.judge(&system, &user).await {
+                        Ok(answer) => {
+                            found = overview::read_match(&answer, &active).and_then(|path| {
+                                plans
+                                    .iter()
+                                    .find(|p| p.path == path)
+                                    .map(|p| (p.clone(), "gemini"))
+                            })
+                        }
+                        Err(e) => log::debug!("[policy] plan_match: {e}"),
+                    }
+                }
+            }
+        }
+        let Some((plan, linked_by)) = found else {
+            return;
+        };
+        let link = overview::Link {
+            path: plan.path.clone(),
+            linked_by,
+            worktree: checkout.worktree.clone(),
+        };
+        let changed = {
+            let mut state = self.state.lock().unwrap();
+            state
+                .plans_seen
+                .insert(plan.path.clone(), overview::PlanSeen::of(&root, &plan));
+            let session = state
+                .sessions
+                .entry(event.pane.pane_id.clone())
+                .or_default();
+            session.agent = event.pane.agent.clone();
+            session.project = event.project.clone();
+            let changed = session.link.as_ref() != Some(&link);
+            session.link = Some(link.clone());
+            changed
+        };
+        if changed {
+            log::info!(
+                "[policy] pane={} plan={} linked_by={linked_by} worktree={}",
+                event.pane.pane_id,
+                plan.path,
+                link.worktree.as_deref().unwrap_or("-")
+            );
+            self.touched();
+        }
+    }
+
     /// `worktree_create { path, pane_id? }` (2.8 item 3): only on this
     /// explicit call, a worktree on `plan/<YYYYMMDD_NN>` through the
     /// pane's workspace; nothing is started in it.

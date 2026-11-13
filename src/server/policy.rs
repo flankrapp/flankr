@@ -84,6 +84,45 @@ impl Services for DaemonPolicy {
         Some(first.text.clone())
     }
 
+    /// herdr's panes, with each agent's worktree as `agents.list` gives it.
+    async fn agent_panes(&self) -> Vec<crate::plugins::policy::overview::AgentPane> {
+        let Some(daemon) = self.daemon() else {
+            return Vec::new();
+        };
+        let Ok(Ok(snapshot)) = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            daemon.client.list_panes(),
+        )
+        .await
+        else {
+            return Vec::new();
+        };
+        let agents = crate::core::agents::agents(&snapshot);
+        let workspaces: std::collections::BTreeSet<String> = agents
+            .iter()
+            .filter_map(|a| a.workspace_id.clone())
+            .collect();
+        let trees = daemon.worktrees.of(&daemon.client, workspaces).await;
+        agents
+            .into_iter()
+            .map(|a| {
+                let worktree = a
+                    .workspace_id
+                    .as_ref()
+                    .and_then(|ws| trees.get(ws))
+                    .zip(a.cwd.as_deref())
+                    .and_then(|(list, cwd)| super::worktrees::worktree_of(list, cwd))
+                    .map(|w| (w.path, w.branch, w.label));
+                crate::plugins::policy::overview::AgentPane {
+                    pane_id: a.pane_id,
+                    agent: a.agent,
+                    cwd: a.cwd,
+                    worktree,
+                }
+            })
+            .collect()
+    }
+
     fn agents(&self) -> Vec<crate::config::AgentConfig> {
         self.daemon().map(|d| d.agents.clone()).unwrap_or_default()
     }

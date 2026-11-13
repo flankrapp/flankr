@@ -112,6 +112,8 @@ pub(super) struct Fake {
     pub(super) agents: Vec<crate::config::AgentConfig>,
     /// The worktrees asked for: (pane, branch).
     pub(super) worktrees: std::sync::Mutex<Vec<(String, String)>>,
+    /// The panes herdr shows.
+    pub(super) panes: Vec<overview::AgentPane>,
 }
 
 /// What an approved confirmation sent: (pane, command).
@@ -198,6 +200,9 @@ impl Services for Fake {
         if let Some(broker) = &self.broker {
             let _ = broker.cancel(principal, confirm_id);
         }
+    }
+    async fn agent_panes(&self) -> Vec<overview::AgentPane> {
+        self.panes.clone()
     }
     async fn worktree_create(&self, pane_id: &str, branch: &str) -> Result<String, String> {
         self.worktrees
@@ -883,6 +888,20 @@ async fn a_pane_in_a_worktree_works_on_the_main_checkouts_plans() {
     // is what is armed and read.
     std::fs::write(wt.join(PLAN_PATH), plan_text("Hold")).unwrap();
     let c = ctx_in(&wt, owner()).await;
+    // Before Build, the worktree's plan/<id> branch links the pane in the
+    // Active tasks view (plan 20261112_03, 2.2 item 2).
+    e.policy
+        .on_card_summary(&card(9, "Done.", "Done."), &c)
+        .await;
+    let o = e.policy.call("overview", json!({}), &c).await.unwrap();
+    assert_eq!(
+        o["plans"][0]["agents"][0]["linked_by"], "worktree_branch",
+        "{o}"
+    );
+    assert_eq!(
+        o["plans"][0]["agents"][0]["worktree"]["path"],
+        wt.display().to_string()
+    );
     let row = e
         .policy
         .call("build", json!({"path": PLAN_PATH, "pane_id": "w1:p1"}), &c)
@@ -940,4 +959,106 @@ async fn worktree_create_only_for_an_approver() {
         .on_card_summary(&card(1, "Done.", "Done."), &c)
         .await;
     assert_eq!(e.fake.worktrees.lock().unwrap().len(), 1);
+}
+
+fn pane(id: &str, agent: &str) -> overview::AgentPane {
+    overview::AgentPane {
+        pane_id: id.into(),
+        agent: agent.into(),
+        cwd: None,
+        worktree: None,
+    }
+}
+
+fn card_in(pane_id: &str, serial: u64, reply: &str) -> CardSummaryEvent {
+    let mut c = card(serial, reply, "Done.");
+    c.pane.pane_id = pane_id.into();
+    c
+}
+
+#[tokio::test]
+async fn the_overview_links_panes_to_plans() {
+    let mut e = env_with(|state| Fake {
+        state: Some(state),
+        panes: vec![
+            pane("w1:p1", "claude"),
+            pane("w1:p2", "claude"),
+            pane("w1:p3", "codex"),
+            pane("w1:p4", "shell"),
+        ],
+        ..Fake::default()
+    });
+    let _ = &mut e;
+    let c = ctx_as(&e.root, owner(), on()).await;
+    // p1 names the plan's path: reply_path, even for an agent the policy
+    // does not drive.
+    let off = ctx_as(&e.root, owner(), toml::Table::new()).await;
+    e.policy
+        .on_card_summary(
+            &card_in("w1:p1", 1, &format!("{PLAN_PATH} step 2 done.")),
+            &off,
+        )
+        .await;
+    // p2: Gemini's best match by title.
+    e.fake.answer(&format!(
+        "{{\"plan\": \"{PLAN_PATH}\", \"matched\": \"the sample\"}}"
+    ));
+    e.policy
+        .on_card_summary(&card_in("w1:p2", 2, "Working on the sample thing."), &off)
+        .await;
+    let o = e.policy.call("overview", json!({}), &c).await.unwrap();
+    let plans = o["plans"].as_array().unwrap();
+    assert_eq!(plans.len(), 1, "{o}");
+    assert_eq!(plans[0]["path"], PLAN_PATH);
+    assert_eq!(plans[0]["title"], "A sample plan");
+    assert_eq!(plans[0]["steps_total"], 5);
+    let agents = plans[0]["agents"].as_array().unwrap();
+    let by: Vec<(&str, &str)> = agents
+        .iter()
+        .map(|a| {
+            (
+                a["pane_id"].as_str().unwrap(),
+                a["linked_by"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(by, [("w1:p1", "reply_path"), ("w1:p2", "gemini")]);
+    // The codex pane is unlinked; the shell is in neither list.
+    assert_eq!(o["unlinked"], json!(["w1:p3"]));
+    // A step a decision names is the plan's current step.
+    let c = armed(&e).await;
+    e.fake.answers.lock().unwrap().clear();
+    e.fake.answer(
+        "{\"asks_continue\": false, \"decision\": \"ask\", \"step\": 3, \"reason\": \"Unclear.\"}",
+    );
+    e.policy
+        .on_card_summary(&card_in("w1:p1", 3, "Done."), &c)
+        .await;
+    let o = e.policy.call("overview", json!({}), &c).await.unwrap();
+    assert_eq!(o["plans"][0]["current_step"], 3, "{o}");
+    assert_eq!(o["plans"][0]["task"], true);
+    assert_eq!(o["plans"][0]["agents"][0]["linked_by"], "pinned");
+    assert_eq!(
+        o["plans"][0]["agents"][0]["last_decision"]["decision"],
+        "ask"
+    );
+}
+
+#[tokio::test]
+async fn overview_notices_are_coalesced() {
+    let e = env();
+    let c = ctx_as(&e.root, owner(), on()).await;
+    e.policy
+        .call("pause", json!({"paused": true}), &c)
+        .await
+        .unwrap();
+    e.policy
+        .call("pause", json!({"paused": false}), &c)
+        .await
+        .unwrap();
+    assert_eq!(e.fake.notes("state").len(), 2);
+    tokio::time::sleep(overview::COALESCE + std::time::Duration::from_millis(200)).await;
+    let sent = e.fake.notes("overview");
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert_eq!(sent[0]["paused"], false, "the latest wins");
 }

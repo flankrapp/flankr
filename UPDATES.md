@@ -286,3 +286,9 @@ These changes came before the program had version numbers.
 - `[llm.uses.policy]`: the model the plugin's judgement uses, `flash-lite:oldest` by default like the summaries. `enabled = false` turns the judgement off; every card is then left to you.
 - The active tasks are kept in `~/.local/state/flankr/plugins/policy/approvals.toml`. A task's autocontinue pauses when its plan file changes, and stops when the plan's status no longer allows work.
 - The log says `[policy] pane=<pane> agent=<agent> plan=<plan> step=<n> decision=<continue|stop|ask> rule=<rule> serial=<card> reason=<why>` for each decision, and which confirmation it opened and how it ended.
+
+## 0.7.13 — 2026-11-12
+
+**Added**
+- With the Plan policy plugin on, the daemon works out which plan each agent pane is on, for the phone's Active tasks view: the plan you chose Build on for that pane, else a plan path in its newest reply, else a plan's title, else the `plan/<date>_<nn>` branch of the worktree it is in, else one question to the `[llm.uses.policy]` model with the titles of the project's active plans. This only places the pane in the phone's list; it never makes the plugin send anything. The log says `[policy] pane=<pane> plan=<plan> linked_by=<how> worktree=<path or ->` when a pane's plan changes.
+- The phone's agent list now says which herdr worktree each agent is in, from herdr's own list of worktrees, on a herdr on this computer.

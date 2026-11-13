@@ -191,7 +191,17 @@ mod tests {
     fn the_shipped_file_parses() {
         let (prompts, errors) = Prompts::shipped();
         assert!(errors.is_empty(), "{errors:?}");
-        assert_eq!(prompts.len(), 4);
+        assert_eq!(prompts.len(), 5);
+        // The Active tasks view's match (plan 20261112_03, the 22:03 EST
+        // amendment, item 1).
+        let matching = prompts.get("plan_match").expect("plan_match");
+        assert!(
+            matching
+                .user
+                .as_deref()
+                .unwrap()
+                .contains("{{ [abc] plans }}")
+        );
         // The plan policy's judgement (plan 20261112_02, step 4).
         let policy = prompts.get("plan_policy").expect("plan_policy");
         assert_eq!(policy.number("max_reply_chars"), Some(6000.0));

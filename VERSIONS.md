@@ -1369,3 +1369,18 @@ that appending is additive, and a new struct; plan 20261112_03, the
   the herdr worktree the pane's cwd lies in, absent for a main checkout
   or from an older daemon; `ConfirmRequested::at: Option<String>`, when
   the confirmation was asked for, RFC 3339 on the daemon's clock.
+
+## dev.flankr.plugins.policy 0.1.1 — 2026-11-12 (the commit tagged `dev.flankr.plugins.policy-v0.1.1`)
+
+Plan 20261112_03 (active plans home view), step 1. Strictly additive:
+
+- **Added:** the method `overview {}` → `{plans: [{path, title, status,
+  armed, approved, task, autocontinue, steps_total, current_step,
+  agents: [{pane_id, linked_by, worktree {path, branch, label},
+  last_decision}]}], unlinked: [pane_id], paused}`: plans with a task
+  first, then the rest, each newest path first; `linked_by` is an open
+  set (`pinned`, `reply_path`, `summary_title`, `worktree_branch`,
+  `gemini`); open to any paired principal.
+- **Added:** the notification `overview`, the same body, at most one per
+  500 ms after any `state`, `approval` or `decision`, and after a pane's
+  link changes.

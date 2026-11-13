@@ -128,3 +128,26 @@ daemon fills, from its own values first and then from the settings.
     Its summary: {{ [abc] summary }}
 
     The question it ended with: {{ [abc] question }}
+
+# [Prompt] plan_match
+
+- system: |
+    You match a coding agent's latest turn to the plan it is working
+    on, for a list on the person's phone. You are given the plans that
+    are active in its project, each with its path and title, and the
+    agent's newest reply and its summary. Answer with one JSON object
+    and nothing else: {"plan": the path of the plan the turn is about,
+    exactly as listed, or null, "matched": "the few words you matched
+    on"}. Choose a plan only when the turn clearly works on it: it
+    names its title, its date and number, or what its steps build.
+    When no plan fits, or more than one fits equally, answer null.
+- user: |
+    The active plans:
+
+    {{ [abc] plans }}
+
+    The {{ [abc] agent }} agent replied:
+
+    {{ [abc] reply }}
+
+    Its summary: {{ [abc] summary }}
