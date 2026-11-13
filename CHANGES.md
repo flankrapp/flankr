@@ -4623,3 +4623,49 @@ Steps, in the plan's order, one crate per commit, patch bumps only:
 9. App: the policy line on Finished cards and the plugin's state;
    arming and the task list land with the Active tasks view of plan
    20261112_03; app 0.7.21.
+
+## 2026-11-12 22:47 EST — Plan policy agent: the owner's rulings, and departures
+
+Plan: the plan policy agent plan (20261112_02), frozen. Two owner rulings
+of 2026-11-12, relayed by the lead, and the small departures needed to
+build it, which the owner accepted as proposed.
+
+Owner rulings:
+
+1. **"use lightweight hash on full file."** The task store keeps `hash`,
+   FNV-1a 64 of the whole plan file in hex, in place of 2.3 item 1's
+   `sha256` of the file: no hash crate is in `Cargo.lock`, so none is
+   added, and the file is read whole, not cut at 64 KiB (steps 2 and 3).
+2. **"right a multiplechoice question blocks the task."** A choice
+   question from the agent gives `ask`, rule `question`, and blocks the
+   pane's task: autocontinue sends nothing for it until the question is
+   answered by the owner through the existing paths, or is gone from the
+   pane; the task's state shows it blocked, with the question, in the
+   `state` and `approval` notifications. This replaces the 22:03
+   amendment's item 2, "the option that accepts continuing", for choice
+   questions (step 3).
+
+Departures (Rule 1.7):
+
+3. **`NOT_PERMITTED` from a plugin** (step 1): the host passed only
+   `INVALID_PARAMS`, `METHOD_NOT_FOUND`, `CANCELLED` and the plugins'
+   own codes; 2.2 says callers that may not approve get `NOT_PERMITTED`,
+   so the host now passes that code too.
+4. **No decision for an agent not in `agents`** (step 3): 2.1 item 2 says
+   that with `agents = []` the plugin "produces decisions for nothing";
+   the rule table's `agent → stop` would send a decision for every
+   Finished card of every other agent. 2.1 is followed: such a card is
+   not judged and nothing is emitted.
+5. **Autocontinue off gives `ask`** (step 3): a card on an armed plan
+   whose task has autocontinue off is decided `ask`, rule
+   `autocontinue_off`, and nothing is sent, as the 21:58 amendment's
+   "arming alone never sends anything" asks.
+6. **The newest card after `quiet_secs`** (step 3): as the 22:17
+   amendment's item 7 settles it, a card is kept for `quiet_secs`, and
+   only if no newer card came from its pane meanwhile do the rules run;
+   the `quiet` row of the table is that wait, not a decision.
+7. **`worktree_create` without `base`** (step 7): the plugin's one
+   declared command is `git worktree list --porcelain` (2.2), so it does
+   not read HEAD; herdr's `worktree.create` is sent without `base`, and
+   herdr starts the branch from the checkout's HEAD, which is what 2.8
+   item 3 asks for.
