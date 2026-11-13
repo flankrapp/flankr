@@ -1,7 +1,10 @@
 //! The active tasks, kept by the daemon (plan 20261112_02, 2.3 item 1 as
 //! the 22:31 EST amendment, item 2, has it):
 //! `~/.local/state/flankr/plugins/policy/approvals.toml`, mode 0600, one
-//! `[[approval]]` per task. A plan is armed while it has a task.
+//! `[[approval]]` per task. A plan is armed while it has a task. Each
+//! task keeps its plan's `hash`: FNV-1a 64 of the whole file, in hex (the
+//! owner's ruling of 2026-11-12, "use lightweight hash on full file", in
+//! place of 2.3's `sha256`).
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -19,8 +22,8 @@ pub struct Task {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pane_id: Option<String>,
     /// The plan as it was when armed, or when autocontinue was last
-    /// switched on.
-    pub sha256: String,
+    /// switched on: [`plan_hash`] (FNV-1a 64) of the whole file.
+    pub hash: String,
     #[serde(default = "yes")]
     pub armed: bool,
     #[serde(default)]
@@ -149,14 +152,16 @@ impl Store {
     }
 }
 
-/// The SHA-256 of a plan's text, and its full length, in hex: any edit,
-/// an amendment included, changes it.
-pub fn plan_hash(text: &str, len: u64) -> String {
-    use sha2::{Digest, Sha256};
-    let mut h = Sha256::new();
-    h.update(len.to_le_bytes());
-    h.update(text.as_bytes());
-    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+/// FNV-1a 64 of a plan file's bytes, all of them, as 16 hex digits: a
+/// lightweight, non-cryptographic hash; any edit, an amendment included,
+/// changes it.
+pub fn plan_hash(bytes: &[u8]) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in bytes {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{h:016x}")
 }
 
 #[cfg(test)]
@@ -168,7 +173,7 @@ mod tests {
             project_root: "/p".into(),
             path: path.into(),
             pane_id: Some("w1:p1".into()),
-            sha256: plan_hash("x", 1),
+            hash: plan_hash(b"x"),
             armed: true,
             autocontinue: false,
             by: "paired:phone".into(),
@@ -207,9 +212,14 @@ mod tests {
 
     #[test]
     fn the_hash_changes_with_any_edit() {
-        assert_eq!(plan_hash("a", 1), plan_hash("a", 1));
-        assert_ne!(plan_hash("a", 1), plan_hash("a\n", 2));
-        assert_ne!(plan_hash("a", 1), plan_hash("a", 70_000), "a cut read");
-        assert_eq!(plan_hash("", 0).len(), 64);
+        // FNV-1a 64's published values.
+        assert_eq!(plan_hash(b""), "cbf29ce484222325");
+        assert_eq!(plan_hash(b"a"), "af63dc4c8601ec8c");
+        assert_ne!(plan_hash(b"a"), plan_hash(b"a\n"));
+        // Past 64 KiB too.
+        let mut long = vec![b'x'; 70_000];
+        let before = plan_hash(&long);
+        *long.last_mut().unwrap() = b'y';
+        assert_ne!(plan_hash(&long), before);
     }
 }

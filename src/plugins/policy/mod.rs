@@ -341,7 +341,7 @@ impl PlanPolicy {
                             project_root: root.clone(),
                             path: path.clone(),
                             pane_id,
-                            sha256: plan.sha256.clone(),
+                            hash: plan.hash.clone(),
                             armed: true,
                             autocontinue: old.as_ref().is_some_and(|t| t.autocontinue),
                             by: by.clone(),
@@ -366,7 +366,7 @@ impl PlanPolicy {
                     .update(&root, &path, |old| {
                         old.map(|t| Task {
                             autocontinue: true,
-                            sha256: plan.sha256.clone(),
+                            hash: plan.hash.clone(),
                             started_at: Some(now.clone()),
                             ..t
                         })

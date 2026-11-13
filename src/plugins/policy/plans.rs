@@ -30,8 +30,8 @@ pub struct PlanDoc {
     /// The front matter's `status`, as written; empty when missing.
     pub status: String,
     pub steps: Vec<Step>,
-    /// [`plan_hash`] of what was read.
-    pub sha256: String,
+    /// [`plan_hash`] (FNV-1a 64) of the whole file.
+    pub hash: String,
     /// The amendments' subjects, in order.
     pub amendments: Vec<String>,
     /// The text read (at most 64 KiB).
@@ -53,7 +53,7 @@ impl PlanDoc {
             .iter()
             .map(|s| json!({ "n": s.n, "title": s.title }))
             .collect();
-        let changed = task.is_some_and(|t| t.sha256 != self.sha256);
+        let changed = task.is_some_and(|t| t.hash != self.hash);
         json!({
             "path": self.path,
             "base": self.base,
@@ -82,14 +82,22 @@ pub fn plan_path(path: &str) -> Option<String> {
     (name.kind == reader::Kind::Plan).then(|| path.to_string())
 }
 
-/// Reads the plan at `path` (already a [`plan_path`]).
+/// Reads the plan at `path` (already a [`plan_path`]): its text through
+/// `read_file`, at most 64 KiB, and, once that read is allowed, the whole
+/// file's bytes for its hash.
 pub async fn read(ctx: &PluginCtx, path: &str) -> Result<PlanDoc, PluginError> {
     let read = ctx.read_file(path).await?;
-    Ok(parse(path, &read.text, read.len))
+    let full = ctx.project()?.root.join(path);
+    let bytes = tokio::task::spawn_blocking(move || std::fs::read(full))
+        .await
+        .ok()
+        .and_then(Result::ok);
+    let bytes = bytes.unwrap_or_else(|| read.text.clone().into_bytes());
+    Ok(parse(path, &read.text, &bytes))
 }
 
-/// The plan at `path` from its `text`, `len` bytes in full.
-pub fn parse(path: &str, text: &str, len: u64) -> PlanDoc {
+/// The plan at `path` from its `text`, the whole file being `bytes`.
+pub fn parse(path: &str, text: &str, bytes: &[u8]) -> PlanDoc {
     let file = path.rsplit('/').next().unwrap_or(path);
     let base = file.trim_end_matches(".md").to_string();
     let lines: Vec<&str> = text.lines().collect();
@@ -108,7 +116,7 @@ pub fn parse(path: &str, text: &str, len: u64) -> PlanDoc {
         base,
         status: status.unwrap_or_default(),
         steps: steps(text),
-        sha256: plan_hash(text, len),
+        hash: plan_hash(bytes),
         amendments,
         text: text.to_string(),
     }
@@ -227,7 +235,7 @@ mod tests {
 
     #[test]
     fn steps_and_front_matter() {
-        let p = parse("docs/design/20261112_02_A_PLAN.md", PLAN, PLAN.len() as u64);
+        let p = parse("docs/design/20261112_02_A_PLAN.md", PLAN, PLAN.as_bytes());
         assert_eq!(p.title, "A plan");
         assert_eq!(p.base, "20261112_02_A_PLAN");
         assert_eq!(p.status, "In implementation");
@@ -265,7 +273,7 @@ mod tests {
             ("", false),
         ] {
             let text = format!("---\ntitle: t\nstatus: {status}\n---\n");
-            let p = parse("docs/design/20261112_02_A_PLAN.md", &text, 1);
+            let p = parse("docs/design/20261112_02_A_PLAN.md", &text, text.as_bytes());
             assert_eq!(p.status_allows(), ok, "{status}");
         }
         assert_eq!(
