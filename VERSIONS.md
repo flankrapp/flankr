@@ -1435,3 +1435,14 @@ function; plan 20261112_03, 2.4 and the 22:21 EST amendment):
 - **Added:** `policy::build_message(date, title)`: Build's "approve and
   build the <date> plan, <title>", the title cleaned to what the daemon's
   filter takes.
+
+## flankr-companion 0.8.10 — 2026-11-13 (the commit tagged `flankr-companion-v0.8.10`)
+
+Strictly additive (a new function and constants; plan 20261112_03, the
+2026-11-13 00:09 EST amendment, item 1). `build_message` is unchanged.
+
+- **Added:** `policy::build_request(date, title)`: "approve and build the
+  <date> plan, <title>, setting its status to In implementation first",
+  at most `BUILD_MESSAGE_MAX` (256) characters, a long title cut at a
+  word boundary and the status clause (`BUILD_STATUS_CLAUSE`) always
+  kept.

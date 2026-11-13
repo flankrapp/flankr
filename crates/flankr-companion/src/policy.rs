@@ -321,7 +321,63 @@ impl PolicyNotice {
     }
 }
 
-/// Build's message (plan 20261112_03, the 22:21 EST amendment): "approve
+/// The longest message Build sends: the daemon's arbitrary-command limit.
+pub const BUILD_MESSAGE_MAX: usize = 256;
+
+/// What Build's message ends with (plan 20261112_03, the 2026-11-13
+/// 00:09 EST amendment, item 1): the agent sets the plan's status first.
+pub const BUILD_STATUS_CLAUSE: &str = ", setting its status to In implementation first";
+
+/// Build's message since the 2026-11-13 00:09 EST amendment of plan
+/// 20261112_03 (in place of [`build_message`], kept as it was): "approve and build the
+/// <date> plan, <title>, setting its status to In implementation first",
+/// the date the front matter's without its dashes, the title with every
+/// character the daemon's arbitrary-command filter refuses made a space,
+/// a `,` or `:` kept only where a space follows, and runs of spaces
+/// folded; a title that would make it longer than [`BUILD_MESSAGE_MAX`]
+/// is cut at a word boundary, and the status clause always stays. `None`
+/// when the date is not `YYYY-MM-DD` or the title has no words left.
+pub fn build_request(date: &str, title: &str) -> Option<String> {
+    let digits: String = date.chars().filter(|c| *c != '-').collect();
+    if digits.len() != 8 || !digits.bytes().all(|b| b.is_ascii_digit()) || date.len() != 10 {
+        return None;
+    }
+    let chars: Vec<char> = title.chars().collect();
+    let mut cleaned = String::with_capacity(title.len());
+    for (i, &c) in chars.iter().enumerate() {
+        let next_space = chars.get(i + 1).is_none_or(|n| *n == ' ');
+        let keep = c.is_ascii_alphanumeric()
+            || c == ' '
+            || matches!(c, '\'' | '?')
+            || (matches!(c, ',' | ':' | '.') && next_space);
+        cleaned.push(if keep { c } else { ' ' });
+    }
+    let head = format!("approve and build the {digits} plan, ");
+    let room = BUILD_MESSAGE_MAX - head.len() - BUILD_STATUS_CLAUSE.len();
+    let mut title = String::new();
+    for word in cleaned.split_whitespace() {
+        let next = if title.is_empty() {
+            word.len()
+        } else {
+            title.len() + 1 + word.len()
+        };
+        if next > room {
+            break;
+        }
+        if !title.is_empty() {
+            title.push(' ');
+        }
+        title.push_str(word);
+    }
+    let title = title.trim_end_matches([',', ':', '.', ' ']);
+    if !title.chars().any(|c| c.is_ascii_alphanumeric()) {
+        return None;
+    }
+    Some(format!("{head}{title}{BUILD_STATUS_CLAUSE}"))
+}
+
+/// Build's message as the 22:21 EST amendment of plan 20261112_03 had
+/// it; the app now sends [`build_request`]'s: "approve
 /// and build the <date> plan, <title>", the date the front matter's
 /// without its dashes, the title with every character the daemon's
 /// arbitrary-command filter refuses made a space, a `,` or `:` kept only
@@ -478,6 +534,16 @@ mod tests {
         assert!(matches!(PolicyNotice::of(&note), Some(PolicyNotice::Overview(o)) if o.paused));
     }
 
+    /// The characters the daemon's arbitrary-command filter takes as
+    /// they are (`commands::validate_arbitrary_command`; the daemon's own
+    /// test checks these messages against it).
+    fn plain(text: &str) -> bool {
+        text.is_ascii()
+            && text.chars().all(|c| {
+                c.is_ascii_alphanumeric() || matches!(c, ' ' | ',' | ':' | '\'' | '?' | '.')
+            })
+    }
+
     #[test]
     fn build_messages_pass_the_filter() {
         assert_eq!(
@@ -494,6 +560,35 @@ mod tests {
         );
         assert_eq!(build_message("20261112", "x"), None);
         assert_eq!(build_message("2026-11-12", "-- / --"), None);
+    }
+
+    #[test]
+    fn build_requests_ask_for_the_status_and_pass_the_filter() {
+        let m = build_request("2026-11-12", "Active plans, a plan-grouped home view").unwrap();
+        assert_eq!(
+            m,
+            "approve and build the 20261112 plan, Active plans, a plan grouped home view, \
+             setting its status to In implementation first"
+        );
+        assert!(plain(&m));
+        let m = build_request("2026-11-12", "`libherdr`: worktree/API [v2]").unwrap();
+        assert_eq!(
+            m,
+            "approve and build the 20261112 plan, libherdr : worktree API v2, setting its status \
+             to In implementation first"
+        );
+        assert!(plain(&m));
+        assert_eq!(build_request("20261112", "x"), None);
+        assert_eq!(build_request("2026-11-12", "-- / --"), None);
+        // A long title is cut at a word, never the status clause.
+        let long = "Garden irrigation schedule ".repeat(20);
+        let m = build_request("2026-11-13", &long).unwrap();
+        assert!(m.len() <= BUILD_MESSAGE_MAX, "{}", m.len());
+        assert!(m.ends_with(BUILD_STATUS_CLAUSE));
+        assert!(m.contains("Garden irrigation"));
+        assert!(!m.contains("  "));
+        let word = "x".repeat(300);
+        assert_eq!(build_request("2026-11-13", &word), None, "no word fits");
     }
 
     #[test]
