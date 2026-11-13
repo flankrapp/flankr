@@ -782,6 +782,14 @@ pub enum Event {
         command: String,
         agent: String,
         project: Option<String>,
+        /// A handle only, never shown: the pane it is for. Added in 0.8.8.
+        pane_id: String,
+        /// Who asked: a device's principal, or `plugin:policy` (shown as
+        /// **Plan policy**). Added in 0.8.8.
+        requested_by: String,
+        /// When the daemon announced it, RFC 3339; `None` from an older
+        /// daemon. Added in 0.8.8.
+        at: Option<String>,
     },
     /// The user answered a confirmation; the reply is on its way.
     Answered {
@@ -1510,6 +1518,8 @@ struct Confirmation {
     /// or the owner's next voice reply to Gemini (plan 20261027_04, the
     /// 2026-10-30 22:50 EDT amendment, item 20).
     turn_id: Option<u64>,
+    requested_by: String,
+    at: Option<String>,
 }
 
 /// What [`Input::Speaking`] means for a "read it back".
@@ -6584,6 +6594,8 @@ impl State {
             agent: c.name.unwrap_or(c.agent),
             project: c.project,
             turn_id: c.turn_id,
+            requested_by: c.requested_by,
+            at: c.at,
         });
         if self.confirms.len() == 1 {
             self.ask_next(out);
@@ -6675,6 +6687,9 @@ impl State {
                 command: c.command.clone(),
                 agent: c.agent.clone(),
                 project: c.project.clone(),
+                pane_id: c.pane_id.clone(),
+                requested_by: c.requested_by.clone(),
+                at: c.at.clone(),
             }));
             out.push(event(Event::Say(c.text.clone())));
         }
@@ -7350,7 +7365,8 @@ mod tests {
                 "name": "Claude", "project": "flankr",
                 "command": "continue", "requested_by": "companion:test",
                 "label": "keep-going", "phrase": "copper-lantern-ninety",
-                "text": "Approve sending \"continue\" to Claude? For keep going."
+                "text": "Approve sending \"continue\" to Claude? For keep going.",
+                "at": "2026-11-12T23:40:00-05:00"
             }),
         )
     }
@@ -7654,6 +7670,9 @@ mod tests {
                     command: "continue".into(),
                     agent: "Claude".into(),
                     project: Some("flankr".into()),
+                    pane_id: "w2:pZ".into(),
+                    requested_by: "companion:test".into(),
+                    at: Some("2026-11-12T23:40:00-05:00".into()),
                 },
                 say(text),
                 Event::PendingPanes(vec!["w2:pZ".into()]),

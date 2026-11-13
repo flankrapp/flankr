@@ -1409,3 +1409,15 @@ literal that names every field has to name the new one.
 - **Added:** `companion::ConfirmRequested::at: Option<String>`, when the
   daemon announced the confirmation, RFC 3339 on its clock; absent from
   an older daemon and left off the wire when unset.
+
+## flankr-companion 0.8.8 — 2026-11-12 (the commit tagged `flankr-companion-v0.8.8`)
+
+Additive (fields appended to a variant of the `#[non_exhaustive]`
+`Event`, by the owner's ruling that appending is additive; plan
+20261112_03, the 21:58 EST amendment, item 7, and 2.4's confirmation
+rows). A pattern that names every field of `Event::Confirm` without `..`
+has to name the new ones. It takes libflankr_proto 0.5.15, additive.
+
+- **Added:** `Event::Confirm::pane_id` (a handle), `requested_by` (a
+  device's principal, or `plugin:policy`) and `at` (`Option<String>`,
+  when the daemon announced it).
