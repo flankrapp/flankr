@@ -4806,3 +4806,31 @@ Plan: the active plans home view plan (20261112_03), its 2026-11-13
    task shows as a new question row, which brings the task back.
 4. **flankr-companion 0.8.12** adds `Input::ListAgents` for the refresh;
    the daemon does not change.
+
+## 2026-11-13 01:26 EST — Images through the message card's +: approved, starting
+
+Plan: the add images plan (20261113_01). The owner approved it on
+2026-11-13 with the words "approve the image plan and build it", giving
+no answers to its open questions; it is built on its own stated
+assumptions and recommendations (the start amendment records how each
+question is settled). Steps, in order, one crate per commit:
+
+1. companion: the + at the left of the message card's row on a phone,
+   `images` read from the daemon's offer, a tap opening the add menu on
+   both cards, Attach image… dim with its reason (app 0.7.25).
+2. companion: the chooser through libmorph's media request (the
+   `mobile-media-request` feature on Android), the reply sniffed and
+   sent as `Input::AttachImage` (the next app patch).
+3. companion: the attachment grid, the `[image N]` tokens, ✕, and the
+   send refusals shown (the next app patch).
+4. The end-to-end check on the S23 against the owner's daemon: left for
+   the owner's device run; no code unless it finds a fix.
+5. companion: Attach image… in the terminal's + menu, through
+   `terminal.paste` (the next app patch).
+6. README: the decision table's row (in the first implementing commit)
+   and the features paragraph, for the lead.
+
+Each step that changes what the user sees takes its own app patch in the
+0.7.x series (the plan's decision 19, FLANKR RULE 1.3), starting at
+0.7.25, each tagged `flankr-app-v<version>`. No other crate is expected to
+change.
