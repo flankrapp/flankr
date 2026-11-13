@@ -1446,3 +1446,14 @@ Strictly additive (a new function and constants; plan 20261112_03, the
   at most `BUILD_MESSAGE_MAX` (256) characters, a long title cut at a
   word boundary and the status clause (`BUILD_STATUS_CLAUSE`) always
   kept.
+
+## flankr-companion 0.8.11 — 2026-11-13 (the commit tagged `flankr-companion-v0.8.11`)
+
+A fix, no API change (plan 20261112_03, the 2026-11-13 00:09 EST
+amendment, item 1):
+
+- **Fixed:** `policy::build_request` keeps a title's `. , ? :` only after
+  a letter or digit and before a space, and an apostrophe only between
+  letters, as the daemon's arbitrary-command filter takes them, so its
+  message always passes unchanged ("v2.0" is "v2 0"; a `:` after a
+  removed character goes).

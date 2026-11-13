@@ -342,16 +342,7 @@ pub fn build_request(date: &str, title: &str) -> Option<String> {
     if digits.len() != 8 || !digits.bytes().all(|b| b.is_ascii_digit()) || date.len() != 10 {
         return None;
     }
-    let chars: Vec<char> = title.chars().collect();
-    let mut cleaned = String::with_capacity(title.len());
-    for (i, &c) in chars.iter().enumerate() {
-        let next_space = chars.get(i + 1).is_none_or(|n| *n == ' ');
-        let keep = c.is_ascii_alphanumeric()
-            || c == ' '
-            || matches!(c, '\'' | '?')
-            || (matches!(c, ',' | ':' | '.') && next_space);
-        cleaned.push(if keep { c } else { ' ' });
-    }
+    let cleaned = filter_clean(title);
     let head = format!("approve and build the {digits} plan, ");
     let room = BUILD_MESSAGE_MAX - head.len() - BUILD_STATUS_CLAUSE.len();
     let mut title = String::new();
@@ -369,11 +360,52 @@ pub fn build_request(date: &str, title: &str) -> Option<String> {
         }
         title.push_str(word);
     }
-    let title = title.trim_end_matches([',', ':', '.', ' ']);
+    let title = title.trim_end_matches(|c: char| !c.is_ascii_alphanumeric());
     if !title.chars().any(|c| c.is_ascii_alphanumeric()) {
         return None;
     }
     Some(format!("{head}{title}{BUILD_STATUS_CLAUSE}"))
+}
+
+/// `text` as the daemon's filter takes it unchanged: ASCII letters,
+/// digits and spaces; an apostrophe between letters; `. , ? :` only after
+/// a letter or digit and before a space. Anything else is a space.
+fn filter_clean(text: &str) -> String {
+    let mut chars: Vec<char> = text
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '\'' | '.' | ',' | '?' | ':') {
+                c
+            } else {
+                ' '
+            }
+        })
+        .collect();
+    loop {
+        let mut changed = false;
+        for i in 0..chars.len() {
+            let c = chars[i];
+            if c.is_ascii_alphanumeric() || c == ' ' {
+                continue;
+            }
+            let prev = i.checked_sub(1).map(|p| chars[p]);
+            let next = chars.get(i + 1).copied();
+            let ok = if c == '\'' {
+                prev.is_some_and(|p| p.is_ascii_alphabetic())
+                    && next.is_some_and(|n| n.is_ascii_alphabetic())
+            } else {
+                prev.is_some_and(|p| p.is_ascii_alphanumeric()) && next.is_none_or(|n| n == ' ')
+            };
+            if !ok {
+                chars[i] = ' ';
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    chars.into_iter().collect()
 }
 
 /// Build's message as the 22:21 EST amendment of plan 20261112_03 had
@@ -574,7 +606,7 @@ mod tests {
         let m = build_request("2026-11-12", "`libherdr`: worktree/API [v2]").unwrap();
         assert_eq!(
             m,
-            "approve and build the 20261112 plan, libherdr : worktree API v2, setting its status \
+            "approve and build the 20261112 plan, libherdr worktree API v2, setting its status \
              to In implementation first"
         );
         assert!(plain(&m));
@@ -589,6 +621,12 @@ mod tests {
         assert!(!m.contains("  "));
         let word = "x".repeat(300);
         assert_eq!(build_request("2026-11-13", &word), None, "no word fits");
+        // Symbols only where the filter takes them.
+        assert_eq!(
+            build_request("2026-11-13", "What's next? v2.0 notes, 'quoted'?").unwrap(),
+            "approve and build the 20261113 plan, What's next? v2 0 notes, quoted, setting its \
+             status to In implementation first"
+        );
     }
 
     #[test]
