@@ -142,6 +142,71 @@ impl Pending {
     }
 }
 
+/// How long a refusal's line stays over the terminal.
+pub const NOTICE_FOR: std::time::Duration = std::time::Duration::from_secs(4);
+
+/// The images picked for the terminal (decision 14): how many were sent
+/// to the client, and the numbers they took as they came.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TermBatch {
+    /// The session (pane) they go to.
+    pub pane: String,
+    pub expected: usize,
+    pub numbers: Vec<u8>,
+}
+
+/// Where a terminal batch is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BatchState {
+    Uploading,
+    /// Every one is uploaded: paste these numbers.
+    Ready(Vec<u8>),
+    /// One failed: its line.
+    Failed(String),
+}
+
+impl TermBatch {
+    pub fn new(pane: String, expected: usize) -> TermBatch {
+        TermBatch {
+            pane,
+            expected,
+            numbers: Vec::new(),
+        }
+    }
+
+    fn mine<'a>(
+        &'a self,
+        attached: &'a [flankr_companion::Attachment],
+    ) -> impl Iterator<Item = &'a flankr_companion::Attachment> {
+        attached
+            .iter()
+            .filter(|a| a.session == self.pane && self.numbers.contains(&a.n))
+    }
+
+    /// Its state against the client's attachments.
+    pub fn state(&self, attached: &[flankr_companion::Attachment]) -> BatchState {
+        if let Some(line) = self.mine(attached).find_map(|a| a.failed.clone()) {
+            return BatchState::Failed(line);
+        }
+        let ready = self.mine(attached).filter(|a| a.ready).count();
+        if self.numbers.len() == self.expected && ready == self.expected {
+            BatchState::Ready(self.numbers.clone())
+        } else {
+            BatchState::Uploading
+        }
+    }
+
+    /// The notice while it uploads: "Uploading image 1 of 2…".
+    pub fn line(&self, attached: &[flankr_companion::Attachment]) -> String {
+        let ready = self.mine(attached).filter(|a| a.ready).count();
+        let k = (ready + 1).min(self.expected).to_string();
+        copy::ATTACH_TERMINAL_UPLOADING
+            .fill(None, &[("k", &k), ("m", &self.expected.to_string())])
+            .trim()
+            .to_string()
+    }
+}
+
 /// `text` with image `n`'s token `[image N]` put at byte `at` (moved back
 /// to a character boundary), with a space either side unless one is there
 /// or it starts the text (decision 12). Returns the text and where the
@@ -220,6 +285,27 @@ mod tests {
         // Past the end, or inside a character: moved back.
         assert_eq!(with_token("é", 1, 1).0, "[image 1] é");
         assert_eq!(with_token("ab", 99, 1).0, "ab [image 1] ");
+    }
+
+    #[test]
+    fn a_terminal_batch_pastes_once_every_image_is_uploaded() {
+        let pane = "w1-t1-p1".to_string();
+        let mut b = TermBatch::new(pane, 2);
+        let mut list = vec![attachment(1, false, false)];
+        b.numbers.push(1);
+        assert_eq!(b.state(&list), BatchState::Uploading);
+        assert_eq!(b.line(&list), "Uploading image 1 of 2\u{2026}");
+        list[0].ready = true;
+        assert_eq!(b.state(&list), BatchState::Uploading, "one still to come");
+        assert_eq!(b.line(&list), "Uploading image 2 of 2\u{2026}");
+        list.push(attachment(2, true, false));
+        b.numbers.push(2);
+        assert_eq!(b.state(&list), BatchState::Ready(vec![1, 2]));
+        // The message's own image is not the batch's.
+        list.push(attachment(3, false, false));
+        assert_eq!(b.state(&list), BatchState::Ready(vec![1, 2]));
+        list[1].failed = Some("Upload failed.".into());
+        assert_eq!(b.state(&list), BatchState::Failed("Upload failed.".into()));
     }
 
     #[test]

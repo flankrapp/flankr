@@ -2818,6 +2818,9 @@ pub struct AgentScreen {
     /// The terminal shows in place of the transcript (plan 20261027_07,
     /// step 5); the transcript keeps its place under it.
     term_shown: bool,
+    /// The line over the terminal while images go to it (the add images
+    /// plan, 20261113_01, decision 14).
+    upload_notice: Option<String>,
     /// ⛶ hid flankr's UI over the terminal (plan 20261103_01, the
     /// 2026-11-03 15:38 EST amendment, item 2): as the app holds it.
     ui_hidden: bool,
@@ -3853,6 +3856,15 @@ impl AgentScreen {
         }
     }
 
+    /// The line over the terminal while images go to it, or for a
+    /// moment after one was refused (the add images plan, decision 14).
+    pub fn set_upload_notice(&mut self, line: Option<String>) {
+        if line != self.upload_notice {
+            self.upload_notice = line;
+            self.settle();
+        }
+    }
+
     /// The message card's attached images (the add images plan,
     /// 20261113_01, decision 10).
     pub fn set_tiles(&mut self, tiles: Vec<crate::prompt::Tile>) {
@@ -4339,7 +4351,12 @@ impl AgentScreen {
     /// its accent (plan 20261103_01, the 2026-11-03 17:37 EST amendment,
     /// item 3). Approvals are flankr's confirmations, which only flankr
     /// takes: their card works over the terminal (item 4).
+    /// Over the terminal also, first, the line of images going to it
+    /// (the add images plan, 20261113_01, decision 14).
     pub fn terminal_notice(&self) -> Option<(String, [f32; 4])> {
+        if let Some(line) = self.upload_notice.as_ref().filter(|_| self.term_shown) {
+            return Some((line.clone(), theme().muted));
+        }
         let card = self
             .pinned_card()
             .filter(|c| self.term_shown && c.live && c.kind == CardKind::Question)?;

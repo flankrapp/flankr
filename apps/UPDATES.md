@@ -409,3 +409,17 @@ These changes came before the app had version numbers.
 - Swipe a question, approval or plan policy decision sideways to hide it from Active tasks. Hiding only tidies the list: nothing is answered, approved or denied, and an open question or approval still shows on the cards and in the agent view.
 - Swipe a plan's header sideways to hide the whole task until something new happens under it, or its state changes (switched on or off, its status or its step). Hiding does not stop the task or its autocontinue.
 - While anything is hidden, the last line says how many, with Show to bring them all back.
+
+## 0.7.25 — 2026-11-13
+
+**Added**
+- The message card's typing row has a + at its far left, with the microphone and keyboard still at its right. Tap it for Paste text and Attach image….
+- Attach image… opens Android's chooser: the gallery and your files, and the camera once you have let flankr use it (the pairing scan asks). Pick up to four PNG, JPEG, WebP or GIF images, 20 MB each; they upload to the computer at once.
+- Attached images show in a row of tiles above the message's text, each with its number (two rows of two on a narrow screen). A PNG shows a small picture of itself; a JPEG, WebP or GIF shows its type. A ring fills while each uploads, then a tick, or ! if it failed.
+- Attaching puts [image 1], [image 2] and so on into the text where your cursor is, so you can write around it. Tap ✕ on a tile to remove the image and its tag.
+- In the terminal, the + menu's Attach image… uploads the images you pick and pastes their paths at the prompt. "Uploading image 1 of 2…" shows over the terminal while they go.
+
+**Changed**
+- In the + menus, Attach image… is greyed out, with the reason under it, when the computer's flankr can't take images or four images are already attached.
+- A picked file that isn't one of the four types (an iPhone HEIC photo, for one) or is over 20 MB is left out, with the reason shown.
+- Tapping send while an image is still uploading, or after one failed, says so under the card ("Image 2 is still uploading.") and doesn't send yet.

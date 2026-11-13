@@ -776,6 +776,15 @@ uploading, or its upload failed.
 - [#] n: the image's number
 - text: Image {{ [#] n }} failed; remove it or attach it again.
 
+The line over the terminal while the images picked for it upload (the
+add images plan, decision 14; the bottom bar plan, decision 10.1).
+
+# [Copy] attach_terminal_uploading
+
+- [#] k: the image uploading now
+- [#] m: how many were picked
+- text: Uploading image {{ [#] k }} of {{ [#] m }}…
+
 # [Copy] attach_camera_off
 
 - text: |

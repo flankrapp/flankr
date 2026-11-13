@@ -554,6 +554,12 @@ pub struct App {
     /// after it, until the client's dictation shows it: tokens of images
     /// numbered together go in one after another.
     token_draft: Option<(String, usize)>,
+    /// The terminal's Attach image… (decision 14): the images picked for
+    /// it, numbered as they come, pasted once all are uploaded; and the
+    /// notice over the terminal while they go, or for a moment after a
+    /// refusal.
+    term_batch: Option<attach::TermBatch>,
+    term_notice: Option<(String, Instant)>,
     /// The title bars' ⋮ menu (step 7), and a touch that came down on a
     /// title icon or the ⋮ (the plan's 22:03 EDT amendment).
     menu: Menu,
@@ -2230,20 +2236,79 @@ impl App {
             sorted.images.len(),
             sorted.refused.len()
         );
-        self.attach_note = sorted.notice().map(str::to_string);
         match target {
-            attach::Target::Message => {
-                for (bytes, mime) in sorted.images {
-                    self.pending_images
-                        .push(attach::Pending::of(&bytes, mime, target));
-                    self.send(Input::AttachImage {
-                        bytes,
-                        mime: mime.to_string(),
-                    });
+            attach::Target::Message => self.attach_note = sorted.notice().map(str::to_string),
+            attach::Target::Terminal => {
+                self.term_notice = sorted
+                    .notice()
+                    .map(|line| (line.to_string(), Instant::now() + attach::NOTICE_FOR));
+                if !sorted.images.is_empty()
+                    && let Some(pane) = self.agent_pane.clone()
+                {
+                    self.term_batch = Some(attach::TermBatch::new(pane, sorted.images.len()));
                 }
             }
-            attach::Target::Terminal => {}
         }
+        for (bytes, mime) in sorted.images {
+            self.pending_images
+                .push(attach::Pending::of(&bytes, mime, target));
+            self.send(Input::AttachImage {
+                bytes,
+                mime: mime.to_string(),
+            });
+        }
+        self.serve_term_batch();
+    }
+
+    /// The terminal's images (decision 14): once every one is uploaded,
+    /// their paths are pasted (`terminal.paste`); one failed, they all
+    /// go, with its line over the terminal for a moment.
+    fn serve_term_batch(&mut self) {
+        let Some(batch) = &self.term_batch else {
+            return;
+        };
+        if self.agent_pane.as_ref() != Some(&batch.pane) {
+            log::info!("terminal attach: the view closed; its images dropped");
+            let numbers = batch.numbers.clone();
+            self.term_batch = None;
+            for n in numbers {
+                self.send(Input::DetachImage(n));
+            }
+            return;
+        }
+        match batch.state(&self.attachments) {
+            attach::BatchState::Uploading => {}
+            attach::BatchState::Ready(numbers) => {
+                log::info!("terminal attach: pasting {} image(s)", numbers.len());
+                self.term_batch = None;
+                self.send(Input::TerminalPasteImages(numbers));
+            }
+            attach::BatchState::Failed(line) => {
+                log::info!("terminal attach: an upload failed");
+                let numbers = batch.numbers.clone();
+                self.term_batch = None;
+                self.term_notice = Some((line, Instant::now() + attach::NOTICE_FOR));
+                for n in numbers {
+                    self.send(Input::DetachImage(n));
+                }
+            }
+        }
+    }
+
+    /// The line over the terminal: its images uploading, or a refusal for
+    /// a moment.
+    fn terminal_upload_notice(&mut self) -> Option<String> {
+        if let Some(batch) = &self.term_batch {
+            return Some(batch.line(&self.attachments));
+        }
+        if self
+            .term_notice
+            .as_ref()
+            .is_some_and(|(_, until)| Instant::now() >= *until)
+        {
+            self.term_notice = None;
+        }
+        self.term_notice.as_ref().map(|(line, _)| line.clone())
     }
 
     /// The client's attachments changed (decisions 10-12): new numbers
@@ -2280,10 +2345,16 @@ impl App {
             if let Some(thumb) = pending.thumb {
                 self.thumbs.insert((a.session.clone(), a.n), thumb);
             }
-            if pending.target == attach::Target::Message {
-                self.insert_token(a.n);
+            match pending.target {
+                attach::Target::Message => self.insert_token(a.n),
+                attach::Target::Terminal => {
+                    if let Some(batch) = &mut self.term_batch {
+                        batch.numbers.push(a.n);
+                    }
+                }
             }
         }
+        self.serve_term_batch();
     }
 
     /// Image `n`'s token at the typed message card's cursor, through the
@@ -2313,8 +2384,10 @@ impl App {
 
     /// The open session's attached images as the message card's tiles.
     fn tiles(&self) -> Vec<prompt::Tile> {
+        let terminal = self.term_batch.as_ref().map(|b| b.numbers.as_slice());
         self.session_attachments()
             .into_iter()
+            .filter(|a| !terminal.is_some_and(|t| t.contains(&a.n)))
             .map(|a| prompt::Tile {
                 n: a.n,
                 label: prompt::Tile::label_of(&a.mime),
@@ -2458,9 +2531,10 @@ impl App {
             // Read on the touch's context, right after this.
             Choice::PasteText if self.term_attach_menu => self.term_paste_wanted = true,
             Choice::PasteText => self.paste_wanted = self.attach_menu,
-            // The terminal's: the add images plan, step 5.
+            // The terminal's: its paths pasted once uploaded (decision
+            // 14).
             Choice::AttachImage if self.term_attach_menu => {
-                log::info!("attach image: the terminal's not built yet")
+                self.want_media(attach::Target::Terminal)
             }
             // The chooser, opened on the touch's context right after
             // this (the add images plan, decision 6).
@@ -4752,6 +4826,7 @@ impl App {
         // Typing's tools and the volume glyph (plan 20261028_06).
         let tools = self.input_tools();
         let tiles = self.tiles();
+        let upload_notice = self.terminal_upload_notice();
         let volume = self.volume();
         // The prompt cards' inputs (plan 20261027_03): a message to a
         // session, and a typed prompt to Gemini.
@@ -4827,6 +4902,7 @@ impl App {
             agent.set_keys_row(down.is_none());
             agent.set_input_tools(tools);
             agent.set_tiles(tiles);
+            agent.set_upload_notice(upload_notice);
             agent.set_volume(volume);
             agent.set_layout(layout);
             agent.set_general_agent_listening(ga_listening);
@@ -5314,6 +5390,8 @@ impl MorphApp for App {
             thumbs: HashMap::new(),
             upload_progress: HashMap::new(),
             token_draft: None,
+            term_batch: None,
+            term_notice: None,
             menu: Menu::new(),
             title_touch: None,
             popup: None,
