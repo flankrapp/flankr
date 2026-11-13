@@ -1060,12 +1060,13 @@ mod tests {
                 Some(AgentHit::PromptIme(kind))
             );
             assert_eq!(c.rect_of(AgentHit::PromptIme(kind)), Some(ime));
-            // The +: Gemini's for Paste text; the message's only with
-            // the daemon's images.
+            // The +, at the row's left edge on both cards on a phone:
+            // Gemini's for Paste text, the message's whether or not the
+            // daemon offers images (the add images plan, decision 2).
+            assert_eq!(row.attach.map(|r| r.x), Some(ta.x), "{kind:?}");
             assert_eq!(
-                row.attach.is_some(),
-                kind == PromptKind::GeneralAgent,
-                "{kind:?}"
+                c.hit(ta.x + 5.0, row.attach.unwrap().y + 5.0),
+                Some(AgentHit::PromptAttach(kind))
             );
             // A dictated message has no row.
             if kind == PromptKind::Message {

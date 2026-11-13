@@ -529,6 +529,10 @@ pub struct App {
     preview: preview::Preview,
     image_quad: Option<preview::gpu::ImageQuad>,
     blob: Option<libflankr_proto::companion::BlobInfo>,
+    /// The images attached to messages, every session's, as the client's
+    /// last `Event::Attachments` gave them (the add images plan,
+    /// 20261113_01).
+    attachments: Vec<flankr_companion::Attachment>,
     /// The title bars' ⋮ menu (step 7), and a touch that came down on a
     /// title icon or the ⋮ (the plan's 22:03 EDT amendment).
     menu: Menu,
@@ -905,6 +909,11 @@ impl App {
                         .map_or("none".to_string(), |b| b.namespaces.join(", "))
                 );
                 self.blob = blob;
+            }
+            // The attached images (the add images plan, decisions 10-12).
+            Event::Attachments(list) => {
+                log::info!("attachments: {}", list.len());
+                self.attachments = list;
             }
             Event::Connected { server } => {
                 self.blob = None;
@@ -2010,10 +2019,11 @@ impl App {
     }
 
     /// A typed card's +, tapped or held (plan 20261028_06, decision 8 and
-    /// the 23:39 EDT amendment): its menu opens anchored to it. Gemini's
-    /// holds Paste text only, until the general agent takes images; the
-    /// message card's adds Attach image… (that + shows only while the
-    /// daemon offers `images`, which it does not yet).
+    /// the 23:39 EDT amendment; the add images plan, decision 3): its menu
+    /// opens anchored to it. Gemini's holds Paste text only, as the
+    /// general agent takes no images; the message card's adds Attach
+    /// image…, dim with its reason without the daemon's `images` or with
+    /// four attached.
     fn open_attach_menu(&mut self, kind: PromptKind) {
         self.attach_wanted = Some(kind);
     }
@@ -2045,8 +2055,9 @@ impl App {
     }
 
     /// The terminal's + menu, anchored to the +: Paste text, enabled while
-    /// the clipboard holds text (`has_text`); Attach image… with the
-    /// daemon's `images` once the app can pick one.
+    /// the clipboard holds text (`has_text`); Attach image…, enabled or
+    /// dim as on the message card (the add images plan, decisions 4 and
+    /// 14).
     fn show_terminal_attach_menu(&mut self, has_text: bool) {
         let Some(anchor) = self
             .agent
@@ -2060,8 +2071,8 @@ impl App {
         self.agent_menu = false;
         self.attach_menu = None;
         self.term_attach_menu = true;
-        let images = self.input_tools().images;
-        self.menu.open(anchor, menu::attach_items(images, has_text));
+        let image = self.image_item();
+        self.menu.open(anchor, menu::attach_items(has_text, image));
     }
 
     /// flankr's UI is hidden by ⛶ over the agent view's terminal.
@@ -2091,24 +2102,49 @@ impl App {
         let Some(anchor) = anchor else {
             return;
         };
-        let images = kind == PromptKind::Message && self.input_tools().images;
+        let image = match kind {
+            PromptKind::Message => self.image_item(),
+            PromptKind::GeneralAgent => menu::ImageItem::Absent,
+        };
         self.popup = None;
         self.volume_menu = false;
         self.agent_menu = false;
         self.attach_menu = Some(kind);
-        self.menu.open(anchor, menu::attach_items(images, has_text));
+        self.menu.open(anchor, menu::attach_items(has_text, image));
+    }
+
+    /// The images attached for the open agent view's session, in number
+    /// order.
+    fn session_attachments(&self) -> Vec<&flankr_companion::Attachment> {
+        let Some(pane) = &self.agent_pane else {
+            return Vec::new();
+        };
+        self.attachments
+            .iter()
+            .filter(|a| &a.session == pane)
+            .collect()
+    }
+
+    /// The + menu's Attach image… on the message card and the terminal
+    /// (the add images plan, decision 4): enabled while the daemon offers
+    /// `images` and fewer than four are attached for the session.
+    fn image_item(&self) -> menu::ImageItem {
+        menu::ImageItem::of(self.input_tools().images, self.session_attachments().len())
     }
 
     /// Typing's tools for the screens, now (plan 20261028_06, decisions 8,
     /// 9 and 11): the toggles on a phone only; Gemini's + everywhere (the
     /// owner, 2026-10-29: "Show Gemini's + on desktop"); the message
-    /// card's + only on a phone with the daemon's `images` (the binary
-    /// files plan, not yet offered).
+    /// card's + on a phone, and `images` as the daemon offers them on this
+    /// connection (the add images plan, decisions 2 and 5).
     fn input_tools(&self) -> prompt::InputTools {
         let k = &self.keyboard;
         prompt::InputTools {
             mobile: cfg!(target_os = "android"),
-            images: false,
+            images: self
+                .blob
+                .as_ref()
+                .is_some_and(|b| b.serves(libflankr_blob::NS_IMAGES)),
             keyboard_up: matches!(k.focused(), Some(FocusedPrompt::Card { .. }))
                 && !k.dismissed()
                 && !k.physical(),
@@ -2224,9 +2260,7 @@ impl App {
             // Read on the touch's context, right after this.
             Choice::PasteText if self.term_attach_menu => self.term_paste_wanted = true,
             Choice::PasteText => self.paste_wanted = self.attach_menu,
-            // The media chooser (the binary files plan; libmorph's media
-            // request): not built yet, and the item shows only with the
-            // daemon's `images`.
+            // The media chooser (the add images plan, step 2).
             Choice::AttachImage => log::info!("attach image: not built yet"),
             Choice::ShowChanges => self.open_preview(preview::Target::Git("diff".into())),
             Choice::Settings => {
@@ -3247,14 +3281,9 @@ impl App {
                     ));
                 }
             }
-            // A typed card's +: a tap opens Gemini's menu directly (the
-            // 23:39 EDT amendment: nothing to attach yet); the message
-            // card's, shown only with the daemon's `images`, would open the
-            // media chooser (the binary files plan), not built yet.
-            AgentHit::PromptAttach(kind) => match kind {
-                PromptKind::GeneralAgent => self.open_attach_menu(kind),
-                PromptKind::Message => log::info!("attach: the media chooser is not built yet"),
-            },
+            // A typed card's +: a tap opens its menu, on both cards (the
+            // 23:39 EDT amendment; the add images plan, decision 3).
+            AgentHit::PromptAttach(kind) => self.open_attach_menu(kind),
             // The keyboard toggle in a typed card's row (plan 20261028_06,
             // decision 8): up, it hides the soft keyboard as its own
             // dismissal does (the card and its text stay); down, it
@@ -5051,6 +5080,7 @@ impl MorphApp for App {
             preview: preview::Preview::new(Some(std::sync::Arc::clone(&faces))),
             image_quad: None,
             blob: None,
+            attachments: Vec::new(),
             menu: Menu::new(),
             title_touch: None,
             popup: None,

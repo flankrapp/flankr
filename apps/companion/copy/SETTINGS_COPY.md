@@ -733,6 +733,18 @@ items (docs/design/20261028_06_BOTTOM_BAR_UPDATE_PLAN.md, decisions 3 and
 
 - text: Attach image…
 
+The reason under the + menu's dim Attach image… (the add images plan,
+20261113_01, decision 4): the daemon does not offer `images`, or four
+images are attached.
+
+# [Copy] menu_attach_not_offered
+
+- text: This flankr can't take images.
+
+# [Copy] menu_attach_full
+
+- text: Only 4 images can go in one message.
+
 The agent menu's last item and its modal, the full list of the pane's
 agents (docs/design/20261023_07_SUBAGENTS_PLAN.md, the 2026-10-29 03:11
 EDT amendment).
