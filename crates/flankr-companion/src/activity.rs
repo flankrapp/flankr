@@ -134,6 +134,7 @@ mod tests {
 
     fn agent(status: &str, turn: Option<Turn>) -> AgentInfo {
         AgentInfo {
+            worktree: None,
             pane_id: "w1:p1".into(),
             name: None,
             spoken: None,

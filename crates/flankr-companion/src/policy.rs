@@ -5,6 +5,7 @@
 //! write that JSON. Every field is defaulted when absent, so a daemon that
 //! sends fewer still reads.
 
+use libflankr_proto::common::AgentInfo;
 use libflankr_proto::companion::PluginNotify;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -23,6 +24,7 @@ pub mod methods {
     pub const TASK_DISABLE: &str = "task_disable";
     pub const TASK_REMOVE: &str = "task_remove";
     pub const WORKTREE_CREATE: &str = "worktree_create";
+    pub const OVERVIEW: &str = "overview";
 }
 
 /// Its `plugin.notify` methods.
@@ -30,6 +32,7 @@ pub mod notices {
     pub const DECISION: &str = "decision";
     pub const APPROVAL: &str = "approval";
     pub const STATE: &str = "state";
+    pub const OVERVIEW: &str = "overview";
 }
 
 /// The principal id its confirmations are requested by: a card whose
@@ -177,6 +180,113 @@ pub struct PolicyWorktree {
     pub branch: String,
 }
 
+/// A pane's worktree, as `overview` gives it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PolicyWorktreeRef {
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub branch: Option<String>,
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
+/// One pane linked to a plan in `overview`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PolicyAgentLink {
+    #[serde(default)]
+    pub pane_id: String,
+    /// How it was linked: `pinned`, `reply_path`, `summary_title`,
+    /// `worktree_branch`, `gemini`, or a word a newer daemon adds.
+    #[serde(default)]
+    pub linked_by: String,
+    #[serde(default)]
+    pub worktree: Option<PolicyWorktreeRef>,
+    #[serde(default)]
+    pub last_decision: Option<PolicyDecision>,
+}
+
+/// One plan's group in `overview`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PolicyPlanGroup {
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub armed: bool,
+    #[serde(default)]
+    pub approved: bool,
+    /// Build was chosen on it: an active task.
+    #[serde(default)]
+    pub task: bool,
+    #[serde(default)]
+    pub autocontinue: bool,
+    #[serde(default)]
+    pub steps_total: Option<u32>,
+    #[serde(default)]
+    pub current_step: Option<u32>,
+    #[serde(default)]
+    pub agents: Vec<PolicyAgentLink>,
+}
+
+/// `overview`'s result and notice (plan 20261112_03, 2.2 item 1).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PolicyOverview {
+    #[serde(default)]
+    pub plans: Vec<PolicyPlanGroup>,
+    #[serde(default)]
+    pub unlinked: Vec<String>,
+    #[serde(default)]
+    pub paused: bool,
+}
+
+/// A plan group joined to the agents the phone lists; `plan` is `None`
+/// for **Not on a plan**.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanGroup {
+    pub plan: Option<PolicyPlanGroup>,
+    /// Each linked pane's agent and its link (none under **Not on a
+    /// plan**).
+    pub agents: Vec<(AgentInfo, Option<PolicyAgentLink>)>,
+}
+
+impl PolicyOverview {
+    /// The groups for `agents` (`agents.list`): each plan's linked panes
+    /// that the phone lists, in the daemon's order, and last **Not on a
+    /// plan**: `unlinked` and every agent pane the daemon did not
+    /// mention, shells left out.
+    pub fn join(&self, agents: &[AgentInfo]) -> Vec<PlanGroup> {
+        let mut named = std::collections::HashSet::new();
+        let mut out: Vec<PlanGroup> = Vec::new();
+        for plan in &self.plans {
+            let mut linked = Vec::new();
+            for link in &plan.agents {
+                if let Some(a) = agents.iter().find(|a| a.pane_id == link.pane_id) {
+                    named.insert(a.pane_id.clone());
+                    linked.push((a.clone(), Some(link.clone())));
+                }
+            }
+            out.push(PlanGroup {
+                plan: Some(plan.clone()),
+                agents: linked,
+            });
+        }
+        let rest: Vec<(AgentInfo, Option<PolicyAgentLink>)> = agents
+            .iter()
+            .filter(|a| a.agent != "shell" && !named.contains(&a.pane_id))
+            .map(|a| (a.clone(), None))
+            .collect();
+        out.push(PlanGroup {
+            plan: None,
+            agents: rest,
+        });
+        out
+    }
+}
+
 /// A `plugin.notify` of the plan policy plugin, read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -184,6 +294,8 @@ pub enum PolicyNotice {
     Decision(PolicyDecision),
     Approval(PolicyPlan),
     State(PolicyState),
+    /// Plan 20261112_03's `overview`.
+    Overview(PolicyOverview),
 }
 
 impl PolicyNotice {
@@ -201,6 +313,9 @@ impl PolicyNotice {
                 .ok()
                 .map(PolicyNotice::Approval),
             notices::STATE => serde_json::from_value(params).ok().map(PolicyNotice::State),
+            notices::OVERVIEW => serde_json::from_value(params)
+                .ok()
+                .map(PolicyNotice::Overview),
             _ => None,
         }
     }
@@ -270,6 +385,68 @@ mod tests {
         assert_eq!(short.line(), "stop: Tests fail.");
         let plans: PolicyPlans = serde_json::from_value(json!({"plans": [plan_json()]})).unwrap();
         assert_eq!(plans.plans.len(), 1);
+    }
+
+    fn agent(pane: &str, kind: &str) -> AgentInfo {
+        serde_json::from_value(json!({
+            "pane_id": pane, "agent": kind, "status": "idle", "focused": false
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn the_overview_and_its_join() {
+        let body = json!({
+            "plans": [{
+                "path": "docs/design/20261112_02_PLAN_POLICY_AGENT_PLAN.md",
+                "title": "Plan policy agent", "status": "In implementation",
+                "armed": true, "approved": true, "task": true, "autocontinue": false,
+                "steps_total": 9, "current_step": 3,
+                "agents": [
+                    {"pane_id": "p12", "linked_by": "reply_path",
+                     "worktree": {"path": "/r/.claude/worktrees/policy", "branch": "plan/20261112_02", "label": "policy"},
+                     "last_decision": decision_json()},
+                    {"pane_id": "p13", "linked_by": "a_new_way"}
+                ]
+            }],
+            "unlinked": ["p7"],
+            "paused": false,
+            "something_new": 1
+        });
+        let o: PolicyOverview = serde_json::from_value(body).unwrap();
+        assert_eq!(o.plans[0].current_step, Some(3));
+        assert_eq!(o.plans[0].agents[1].worktree, None);
+        assert_eq!(o.plans[0].agents[1].last_decision, None);
+        assert_eq!(o.plans[0].agents[1].linked_by, "a_new_way");
+        let back: PolicyOverview =
+            serde_json::from_value(serde_json::to_value(&o).unwrap()).unwrap();
+        assert_eq!(back, o);
+        let groups = o.join(&[
+            agent("p12", "claude"),
+            agent("p7", "codex"),
+            agent("p8", "claude"),
+            agent("p9", "shell"),
+        ]);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].agents.len(), 1, "p13 is not listed by the phone");
+        assert_eq!(groups[0].agents[0].0.pane_id, "p12");
+        assert!(groups[1].plan.is_none());
+        let rest: Vec<&str> = groups[1]
+            .agents
+            .iter()
+            .map(|(a, _)| a.pane_id.as_str())
+            .collect();
+        assert_eq!(
+            rest,
+            ["p7", "p8"],
+            "unknown to the daemon, under Not on a plan; no shell"
+        );
+        let note = PluginNotify {
+            ns: NS.into(),
+            method: "overview".into(),
+            params: json!({"paused": true}),
+        };
+        assert!(matches!(PolicyNotice::of(&note), Some(PolicyNotice::Overview(o)) if o.paused));
     }
 
     #[test]

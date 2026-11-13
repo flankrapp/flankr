@@ -1384,3 +1384,18 @@ Plan 20261112_03 (active plans home view), step 1. Strictly additive:
 - **Added:** the notification `overview`, the same body, at most one per
   500 ms after any `state`, `approval` or `decision`, and after a pane's
   link changes.
+
+## flankr-companion 0.8.7 — 2026-11-12 (the commit tagged `flankr-companion-v0.8.7`)
+
+Plan 20261112_03 (active plans home view), step 2. Strictly additive (new
+types, a variant on the `#[non_exhaustive]` `PolicyNotice`). It takes
+libflankr_proto 0.5.14, additive.
+
+- **Added:** `policy::PolicyOverview { plans, unlinked, paused }`,
+  `PolicyPlanGroup` (a plan's row with `task`, `autocontinue`,
+  `steps_total`, `current_step` and `agents`), `PolicyAgentLink`
+  (`linked_by` an open string), `PolicyWorktreeRef`, read with unknown
+  fields ignored; `PolicyOverview::join(&[AgentInfo]) -> Vec<PlanGroup>`,
+  each plan's listed panes and last **Not on a plan** (`plan: None`):
+  the unlinked and any agent pane the daemon did not mention, no shells;
+  `PolicyNotice::Overview`; `methods::OVERVIEW` and `notices::OVERVIEW`.
