@@ -1149,6 +1149,9 @@ impl App {
                 }
             }
             Event::PluginResult(r) => {
+                if r.ns == plugins::policy::NS {
+                    self.overview.tasks.refreshed();
+                }
                 self.build_answered(&r);
                 self.plugin_calls(|p| p.result(r));
                 self.tasks_shown();
@@ -1177,6 +1180,7 @@ impl App {
                 self.tasks_shown();
             }
             Event::Agents(agents) => {
+                self.overview.tasks.refreshed();
                 self.agents = agents;
                 self.follow_sessions();
                 self.overview.set_agents(self.agents.clone(), &self.pending);
@@ -1560,6 +1564,16 @@ impl App {
                 });
             }
             ListHit::Settings => self.open_settings(),
+            // A pull to refresh (the 2026-11-13 01:07 EST amendment).
+            ListHit::Refresh => {
+                self.send(Input::ListAgents);
+                if self.plugins.active(plugins::policy::NS) {
+                    self.ask_tasks();
+                } else {
+                    self.overview.tasks.refreshed();
+                }
+            }
+            ListHit::ShowHidden => {}
         }
         self.overview.invalidate();
     }
