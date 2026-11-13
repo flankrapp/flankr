@@ -1,7 +1,7 @@
 ---
 title: flankr under Apache-2.0, with libherdr_term's own licence and the companion app's notices
 date: 2026-11-12
-status: In implementation
+status: Implemented
 covers:
   - "The whole flankr project licensed Apache-2.0: a root LICENSE, a
     `license` field in every flankr manifest, and a Licence section in the
@@ -422,3 +422,41 @@ licence branch". This replaces, where they disagree, decision 6 and the
 
 Steps 2 to 5 are merged (above). From here the plan changes only on the
 owner's explicit instruction.
+
+## Amendment — 2026-11-13 01:41 EST: implemented
+
+Every step is done and its **Done when:** holds, so the status is
+`Implemented`. Step 1 was done on the owner's instruction of 2026-11-13:
+"move the herdr submodule to external and complete the other steps before
+fully merging". Its departures, among them where `vendor/herdr` is still
+named as a record of the past, are in `CHANGES.md`'s entry of this day
+for step 1. The commits for each step:
+
+1. **Step 1**, the submodule moves to `external/herdr`:
+   - 3a9a482: libherdr_term looks in `external/herdr` first, falling
+     back to `vendor/herdr`;
+   - c805432: the move (`.gitmodules`, the gitlink at `2713feb`, the
+     root `Cargo.toml` `exclude`, `scripts/install.sh`, and
+     `docs/HERDR_WIRE.md`'s section);
+   - 3069d13: libherdr_term's fallback removed and every reference moved;
+   - 229bfd1: libherdr's doc comment moved.
+   A fresh `git clone --recurse-submodules` checks out `external/herdr`
+   at `2713feb` and passes `cargo test -p libherdr_term`.
+2. **Step 2**, libherdr_term's licence and README: 862e6ca.
+3. **Step 3**, the companion app's README and licence texts: e23b6c6,
+   and 3b90c72, which makes the font licence copies byte-for-byte copies
+   from the libmsdf revision the app pins.
+4. **Step 4**, the root licence: c4a5f65.
+5. **Step 5**, `license` in the remaining manifests: 1309488 to 9601b0d.
+
+Steps 2 to 5 were merged in 6f145ad.
+
+These items, from the 01:33 EST amendment, remain open for the owner.
+They are documented, not settled, and none of them is a step of this plan:
+
+- the STT repository states a licence only for its weights, not for
+  `tokenizer.model` and `config.json`;
+- the quantized model file the app loads, `model.q4k.gguf`, is not
+  published, and how users get it is undecided;
+- two origin comments remain, in `apps/companion/Cargo.toml` and the
+  push scripts.

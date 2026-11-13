@@ -1,4 +1,4 @@
-//! herdr's `worktree.*` API (vendor/herdr/src/api/schema/worktrees.rs):
+//! herdr's `worktree.*` API (external/herdr/src/api/schema/worktrees.rs):
 //! requests built as JSON-RPC over [`HerdrRequest::Custom`], and the
 //! `worktree.list` reply read into types. Every field herdr may leave out
 //! is left out of the request.

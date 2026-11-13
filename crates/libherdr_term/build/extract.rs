@@ -116,12 +116,12 @@ pub struct Extracted {
     pub items: BTreeSet<String>,
 }
 
-/// The submodule's root: `HERDR_SRC` when set, else `vendor/herdr` two
+/// The submodule's root: `HERDR_SRC` when set, else `external/herdr` two
 /// levels above the crate.
 pub fn herdr_root(manifest_dir: &Path, herdr_src: Option<&str>) -> PathBuf {
     match herdr_src {
         Some(dir) if !dir.is_empty() => PathBuf::from(dir),
-        _ => manifest_dir.join("../../vendor/herdr"),
+        _ => manifest_dir.join("../../external/herdr"),
     }
 }
 
@@ -309,7 +309,7 @@ fn parse(root: &Path, rel: &str) -> Result<syn::File, ExtractError> {
     let text = std::fs::read_to_string(&path).map_err(|e| {
         ExtractError(format!(
             "libherdr_term: cannot read herdr's {rel} at {} ({e}). \
-             Run `git submodule update --init vendor/herdr`, or point HERDR_SRC at a herdr checkout.",
+             Run `git submodule update --init external/herdr`, or point HERDR_SRC at a herdr checkout.",
             path.display()
         ))
     })?;

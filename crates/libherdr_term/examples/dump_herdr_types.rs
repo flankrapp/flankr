@@ -1,5 +1,5 @@
 //! Print the herdr types `build.rs` extracted, for review when the
-//! `vendor/herdr` pin moves (plan 20261027_08, decision 2):
+//! `external/herdr` pin moves (plan 20261027_08, decision 2):
 //!
 //! ```text
 //! cargo run -p libherdr_term --example dump_herdr_types

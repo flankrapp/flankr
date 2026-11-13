@@ -2,7 +2,7 @@
 //! (docs/design/20261027_08_HERDR_TERMINAL_CRATE_PLAN.md).
 //!
 //! * [`herdr`] is herdr's own protocol types, extracted by `build.rs` from
-//!   the `vendor/herdr` submodule (decision 2): `ClientMessage`,
+//!   the `external/herdr` submodule (decision 2): `ClientMessage`,
 //!   `ServerMessage` and every type under them, field for field.
 //! * [`Attachment`] speaks herdr's stable endpoint contract, generation 1,
 //!   on herdr's client socket (decisions 3, 5, 6 and 7, and the 23:32 EDT

@@ -182,3 +182,35 @@ Outside the range: herdr before `cc88b3b8`, including `99c23cd1` (also
 `PROTOCOL_VERSION = 22`), has no `EndpointControl` and cannot decode the
 hello, so the attachment fails at connect and the daemon uses the poll.
 Newer herdr is covered only by a later section of this file.
+
+## 2026-11-13 01:37 EST — The submodule moves to external/herdr, pin unchanged (2713feb)
+
+The herdr submodule moves from `vendor/herdr` to `external/herdr`
+(plan `docs/design/20261112_01_APACHE_LICENSE_PLAN.md`, decision 5 and
+step 1). None of herdr is committed or built here, so it is not vendored
+code; `external/` says so. The submodule's name moves with its path:
+`.gitmodules` now has `[submodule "external/herdr"]` with
+`path = external/herdr`, the same url, `https://github.com/herdrdev/herdr`,
+and `shallow = true`.
+
+### The pin
+
+Unchanged: commit `2713feb56e9c9db33992db0a262c68f7426d46dd`,
+`PROTOCOL_VERSION = 22`, `ENDPOINT_PROTOCOL_GENERATION = 1`, as in the
+2026-10-27 23:50 EDT section. Nothing in herdr's protocol changes, so there
+is nothing to audit.
+
+### Updating an older checkout
+
+A checkout made before the move updates with:
+
+```sh
+git submodule sync
+git submodule update --init external/herdr
+```
+
+It then deletes the leftover `vendor/herdr` directory and
+`.git/modules/vendor/herdr` by hand (in a worktree, the module directory
+is under that worktree's `.git/worktrees/<name>/modules/`). After the
+move, libherdr_term's build looks only in `external/herdr` unless
+`HERDR_SRC` names another herdr checkout.

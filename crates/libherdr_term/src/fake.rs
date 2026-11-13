@@ -17,7 +17,7 @@ use super::herdr::{self, ClientMessage, ServerMessage};
 pub fn herdr_root() -> PathBuf {
     match std::env::var("HERDR_SRC") {
         Ok(dir) if !dir.is_empty() => PathBuf::from(dir),
-        _ => PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../vendor/herdr"),
+        _ => PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../external/herdr"),
     }
 }
 
