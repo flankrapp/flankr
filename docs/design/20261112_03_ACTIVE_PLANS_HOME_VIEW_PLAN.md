@@ -596,3 +596,26 @@ filter unchanged, whatever punctuation the plan's title has. The agent
 finds the plan in `docs/design/` by those words. If the words match more
 than one active plan in the pane's project, Build is disabled for that
 plan with a note, and the owner sends their own message.
+
+## Amendment — 2026-11-12 22:21 EST: Build names the plan by its date and title
+
+The owner, on 2026-11-12, of the 22:12 amendment's file-name words: "no,
+date and title, no /". The plan stays `Draft`. This replaces the 22:12
+amendment's text in full.
+
+Build sends `approve and build the <date> plan, <title>`:
+
+- `<date>` is the plan's front-matter `date` without its dashes, eight
+  digits (`20261112`);
+- `<title>` is its front-matter `title`, with every character the
+  arbitrary-command filter (`commands::validate_arbitrary_command`) would
+  refuse replaced by a space and runs of spaces folded to one: a `-`, `/`,
+  backtick or bracket becomes a space, and a `,` or `:` stays only where a
+  space follows it.
+
+For example, `approve and build the 20261112 plan, Active plans, a plan
+grouped home view`. The message never contains a `/` or a path, and is
+checked by the same filter before it is sent, as any owner message. If
+the date and title match more than one active plan in the pane's
+project, Build is disabled for that plan with a note, and the owner sends
+their own message.
