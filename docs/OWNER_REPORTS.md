@@ -753,3 +753,9 @@ question card being raised or dismissed.
 ends with a yes/no question is not raised, or is raised and then removed,
 as a question card with Yes/No; record the fix as an amendment to the
 plan that covers question cards.
+
+## 2026-11-13 09:47 EST — Note: the time of the report above
+
+The report headed "2026-11-13 09:50 EST — Owner: an agent's yes/no
+questions don't stay as question cards" was typed with the wrong time;
+the clock said 09:47 EST when it was written.
