@@ -579,3 +579,20 @@ stays `Draft`.
    confirmation, never through the policy plugin. Autocontinue then only
    answers that agent's own "continue with step N?" questions (the plan
    policy agent plan's 22:03 amendment).
+
+## Amendment — 2026-11-12 22:12 EST: Build names the plan by its title
+
+The owner, on 2026-11-12, told that the arbitrary-command filter
+(`commands::validate_arbitrary_command`) refuses the `/` of a plan path:
+"by title is fine". The plan stays `Draft`. This replaces the text Build
+sends in the 22:03 amendment's item 2.
+
+Build sends `approve and build the <name> plan`, where `<name>` is the
+words of the plan's file name, lower-cased, without its date, sequence
+number or `_PLAN` (as the voice agents say a plan:
+`20261112_02_PLAN_POLICY_AGENT_PLAN.md` is "the plan policy agent plan").
+Those are letters, digits and spaces only, so the message passes the
+filter unchanged, whatever punctuation the plan's title has. The agent
+finds the plan in `docs/design/` by those words. If the words match more
+than one active plan in the pane's project, Build is disabled for that
+plan with a note, and the owner sends their own message.
