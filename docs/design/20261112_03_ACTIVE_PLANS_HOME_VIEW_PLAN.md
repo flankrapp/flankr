@@ -718,3 +718,52 @@ amendment to the frozen plan. It adds to 2.3 and 2.4.
    never disarms, stops autocontinue or removes the task.
 4. **Getting them back.** While anything is hidden, a dim last line,
    *N hidden · Show*, shows everything again.
+
+## Amendment — 2026-11-13 01:52 EST: Active tasks grouped by project, a plan's subagents under it, and its open questions
+
+The owner, on 2026-11-13: "the order on the active tasks screen sh9uld be
+grouped by project, cl8ck8ng one of tge axtive tasks showing agent
+underneath it is the wrong nesting. either subagents represent the task in
+progress or multiple plans are in various stages of completion but not
+actively being built,open qurstions onyhe plan should also be indicated".
+The lead's reading below was put to the owner, who approved it on
+2026-11-13 with the words "approve the amendments". The owner's
+instruction is what allows this amendment to the frozen plan. It replaces
+2.3 items 1 to 4 (the plan-first grouping and the agent lines under a
+plan), the 21:58 EST amendment's item 2 (agents grouped under their
+project inside a plan's group), and the 23:23 EST amendment's item 5 as
+far as it places agents under a plan; the rest stands.
+
+1. **Projects at the top level.** The view is one group per project (the
+   repository a plan lives in, named by its folder), sorted by most
+   recent activity among its plans' agents and events, newest first,
+   with the 21:58 amendment's item 3 rule that a re-sort waits for 2 s
+   without a touch. **Not on a plan** stays last.
+2. **Under a project, its plans,** one row each, in their stages:
+   - *Draft*;
+   - armed and being built: *step N of M*;
+   - *In implementation* but idle (no agent on it now);
+   - *Implemented*, shown only while it still has a task.
+
+   Each row shows its status or stage, the policy's last decision, and
+   the Auto glyph (the 23:23 EST amendment's item 3) when it has a task.
+3. **No agent row under a plan.** A plan being built shows its progress
+   as its subagents, one line each, as the children of the plan's row.
+   The agent itself shows only as a short label on the plan's row, such
+   as "claude · w7" (its name and its worktree's label or branch).
+   Tapping the plan's row opens the agent view, as tapping the agent
+   line did; a plan with no agent folds and unfolds as before.
+4. **Plans not being built** show only their row: no children, and
+   folded by default.
+5. **Events attach to the plan's row,** below its subagent lines:
+   questions, confirmations and the policy's decisions, with the buttons
+   in place (2.4) and swipe-to-hide (the 01:07 EST amendment) as before.
+6. **Open questions.** A plan's row shows "N open questions" when the
+   plan has any unanswered, from the count the plan questions plan
+   (20261113_02) adds to the planning reader, carried on `overview`'s
+   plan rows as `open_questions`.
+7. **Versions.** Patches only: the planning plugin 0.1.3 and the daemon
+   0.7.14 (the plan questions plan's step 1), the policy plugin 0.1.3
+   (`overview`'s plan rows gain `project` and `open_questions`, and
+   list the project's plans in their stages), flankr-companion 0.8.13,
+   and the app 0.7.27.
