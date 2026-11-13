@@ -412,3 +412,33 @@ see open question 4.
 7. **`quiet_secs` default** of 15 s: long enough that a card followed by
    another is judged once, or should the plugin judge only the newest
    card at the end of a `session.delivery` burst?
+
+## Amendment — 2026-11-12 21:58 EST: arming a plan and autocontinue are two approvals
+
+The owner, answering the Active plans home view plan's questions on
+2026-11-12: "as far as yes/no/approve appriving the plan arms it, the
+autocontinue is a different approval and is like an active task producing
+resulys, rev8ewing status changes, and applying policy". The plan stays
+`Draft`. This adds to 2.3 and 2.7, and replaces 2.3 item 2 where they
+disagree.
+
+1. **Arming.** The checkbox of 2.3 approves a plan, which arms it: the
+   plugin may consider it. Arming alone never sends anything.
+2. **Autocontinue** is a second, separate approval, given per armed plan
+   (on the Plan policy screen, or from the Active plans view's header):
+   switching it on starts an active task for that plan. While it runs it
+   - produces results: each decision with its rule or reason, as
+     `plugin.notify decision` and in the log;
+   - reviews the plan's status changes: when the plan file's `sha256`
+     changes, it reads what changed (the front-matter `status`, a new
+     amendment) and reports it as a result. A status that 2.3 item 3
+     does not allow stops the task; any other change pauses it with
+     `ask` until the owner resumes it, instead of silently disarming the
+     plan (this replaces 2.3 item 2's "treats the plan as unapproved");
+   - applies the policy of 2.4 to each Finished card of the plan's panes.
+   Stopping autocontinue leaves the plan armed; disarming a plan stops
+   its autocontinue. The store of 2.3 item 1 gains `autocontinue` (bool)
+   and `started_at` per approval.
+3. **Yes and No are unchanged:** a confirmation card's Yes approves one
+   command, as the broker does today; neither arming nor autocontinue
+   approves a command for the owner.

@@ -447,3 +447,101 @@ but internal to the app (no public API), so it is not touched either way.
    place; and whether `plugin.call` to a disabled plugin fails with a
    distinct error the app can tell from an unknown method (2.5 item 1
    wants to word the two cases differently).
+
+## Amendment — 2026-11-12 21:58 EST: the owner's answers: a Settings row, grouping by agent and project, recency, worktrees on every agent, prompt matching, two approvals, timestamps
+
+The owner answered the open questions on 2026-11-12: "only settings row
+for now, on home will require rethinking some ux. group events by
+agent/project, try to keep events of related projects together such as an
+agent working on plans in another repo. sort by mst active/recent. yrs,
+add worktree field elsewhere, based on what herdr exposes. try to match
+plans with best match using prompt. as far as yes/no/approve appriving the
+plan arms it, the autocontinue is a different approval and is like an
+active task producing resulys, rev8ewing status changes, and applying
+policy. cards should aleays have a timestamp, presumably from daemon or
+agent". The plan stays `Draft`. Where this amendment and the text above
+disagree, this amendment wins.
+
+1. **The choice is a Settings row only (replaces 2.1 item 1, step 3's
+   home-screen row, and answers open question 1).** `HomeView { Agents,
+   Plans }` is a row on the Settings screen, **Home view: ‹ All agents ›
+   / ‹ Active plans ›**, built with the `SelectRow<T: Choice>` pattern
+   and saved as `home_view` in `settings.toml`, default `agents`. The
+   overview has no row of its own. A control on the home screen needs a
+   rethink of its layout and is left to a later plan.
+
+2. **Grouping by agent and project, related projects together (replaces
+   2.3 items 1 and 3, and answers open question 2).** Within a plan's
+   group, events are grouped under their agent, and agents under their
+   project (the pane's workspace label, or its cwd's repository). An
+   agent working in one repository on a plan that lives in another
+   appears in that plan's group, under its own project, so work on one
+   plan stays together across repositories. A project whose agents serve
+   the same plan is placed next to that plan's own project. Events within
+   an agent stay oldest first (2.4 item 2).
+
+3. **Most active and most recent first (replaces 2.3 item 1's stable
+   order, and answers open question 3).** Plan groups, the projects in
+   them and the agents in those are sorted by their newest activity: the
+   latest event, delivery or status change among their panes, newest
+   first. **Not on a plan** stays last. To keep the list from jumping
+   under the owner's finger, a re-sort waits until no touch has been down
+   for 2 s.
+
+4. **A worktree on every agent (replaces 2.2 item 3's plugin-only
+   worktree, and answers open question 4).** `AgentInfo` in
+   libflankr_proto gains an optional `worktree: Option<WorktreeInfo>`,
+   with the fields herdr's `worktree.list` exposes (`path`, `branch`,
+   `label`, and any others herdr's `WorktreeInfo` has, each optional),
+   filled by the daemon for every agent whose cwd lies in a herdr
+   worktree, and absent for a main checkout. An optional field appended
+   to a struct is additive, a libflankr_proto patch. The drawer and the
+   agent cards show it too, as the branch or label in the card's dim
+   second line. `overview` takes the worktree from `AgentInfo` instead
+   of finding it itself; the `git worktree list` fallback stays for a
+   herdr that has no `worktree.list`. A new step, before step 1:
+   libflankr_proto's field, then the daemon filling it, each its own
+   commit. **Done when:** a pane in a herdr worktree shows its branch in
+   the drawer, on its card and in the Active plans view.
+
+5. **Plans matched by the best match against the prompt (replaces 2.2
+   item 2's first-that-holds order for this view, and answers open
+   question 6).** For each pane, `overview` scores every plan in the
+   projects it knows against the session's prompts: the owner's messages
+   to the agent in its transcript, newest weighted most, plus the reply
+   and summary the policy plan already reads. A plan path, a plan's
+   `YYYYMMDD_NN` or a bare "plan NN" for one day, and the plan's title
+   score in that order; the best score above a threshold links the pane,
+   with `linked_by: "prompt"` and the matched text. A pin (`pinned`)
+   still wins over any score. The `question` rule is folded into this
+   score as one signal. As before, this match only places a pane in the
+   view: the policy agent acts only on its own match and an armed plan
+   (item 6).
+
+6. **Two approvals (adds to 2.4 item 4, and answers open questions 5
+   and 8).** Approving a plan **arms** it: the plan policy agent plan's
+   approval (its 2.3), given from this view by an **Approve** button in
+   the plan's header, or on the Plan policy screen. **Autocontinue** is a
+   separate approval: switching it on for an armed plan starts an active
+   task that produces results (its decisions and their reasons, as event
+   rows), reviews the plan's status changes as they happen, and applies
+   the policy. The header shows both: *not armed* / *armed*, and
+   *autocontinue off* / *autocontinue running* with its last result.
+   Stopping autocontinue leaves the plan armed; disarming a plan stops
+   its autocontinue. The Yes and No of confirmation and question events
+   stay live in this view (2.4 item 4). The plan policy agent plan gets a
+   matching amendment.
+
+7. **Every card and event row has a timestamp (replaces 2.4 item 2's
+   receipt times, and answers open question 7 and the first part of 9).**
+   The time comes from the daemon, or from the agent's transcript where
+   the event is the agent's own (a question, a reply). A message that
+   carries none today, such as `confirm.requested` if it has no time,
+   gains an optional `at` (RFC 3339) set by the daemon: an additive
+   field, a patch. Phone receipt time is used only for a daemon too old
+   to send one, and the row then shows it dimmed. The agent cards on All
+   agents show the time of their newest event as well.
+
+8. **Versions (adds to 2.6).** Item 4 and item 7 add a libflankr_proto
+   patch (0.5.14) before the daemon's; the daemon, flankr-companion and
+   app bumps stay patches in the current series.
