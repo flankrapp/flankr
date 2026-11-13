@@ -218,7 +218,11 @@ async fn hello_lists_the_plugins_and_only_an_approver_switches_one_on() {
         .as_array()
         .unwrap()
         .clone();
-    assert_eq!(plugins.len(), 1, "{plugins:?}");
+    assert_eq!(plugins.len(), 2, "{plugins:?}");
+    // The plan policy plugin is listed too, off (plan 20261112_02, step 1).
+    assert_eq!(plugins[1]["ns"], "dev.flankr.plugins.policy");
+    assert_eq!(plugins[1]["name"], "Plan policy");
+    assert_eq!(plugins[1]["enabled"], false);
     assert_eq!(plugins[0]["ns"], PLANNING);
     assert_eq!(plugins[0]["version"], "0.1.2");
     assert_eq!(plugins[0]["enabled"], false);
@@ -390,4 +394,41 @@ async fn the_general_agent_is_offered_the_planning_tools_while_on() {
         .await;
     assert_eq!(r["result"], json!({"enabled": false}), "{r}");
     assert!(names(&env).is_empty());
+}
+
+/// Plan 20261112_02, step 2: Build on a plan is kept in the daemon's
+/// state folder under the temporary home, its `approval` goes to every
+/// phone, and a device that may not approve is refused.
+#[tokio::test]
+async fn the_plan_policy_keeps_a_task_and_tells_every_phone() {
+    const POLICY: &str = "dev.flankr.plugins.policy";
+    const PLAN: &str = "docs/design/20261112_02_PLAN_POLICY_AGENT_PLAN.md";
+    let env = start(&format!("{READ}[plugins.\"{POLICY}\"]\nenabled = true\n")).await;
+    let mut owner = env.device("owner", true).await;
+    let mut viewer = env.device("viewer", false).await;
+    let call = |id: u64, method: &str, params: Value| json!({"ns": POLICY, "id": id, "method": method, "params": params, "session": "p1"});
+    let r = owner
+        .call("plugin.call", call(1, "build", json!({"path": PLAN})))
+        .await;
+    assert_eq!(r["result"], json!({}), "{r}");
+    let result = owner.note("plugin.result").await;
+    assert_eq!(result["params"]["result"]["armed"], true, "{result}");
+    assert_eq!(result["params"]["result"]["title"], "Plan policy agent");
+    for device in [&mut owner, &mut viewer] {
+        let note = device.note("plugin.notify").await;
+        assert_eq!(note["params"]["ns"], POLICY);
+        assert_eq!(note["params"]["method"], "approval");
+        assert_eq!(note["params"]["params"]["path"], PLAN);
+    }
+    let store = env
+        .dir
+        .path()
+        .join("home/.local/state/flankr/plugins/policy/approvals.toml");
+    assert!(std::fs::read_to_string(&store).unwrap().contains(PLAN));
+    let r = viewer
+        .call("plugin.call", call(2, "task_remove", json!({"path": PLAN})))
+        .await;
+    assert_eq!(r["result"], json!({}), "{r}");
+    let result = viewer.note("plugin.result").await;
+    assert_eq!(result["params"]["error"]["code"], codes::NOT_PERMITTED);
 }

@@ -375,3 +375,29 @@ These changes came before the app had version numbers.
 
 **Added**
 - While Claude is thinking, the session shows a spinner and Thinking… at its end.
+
+## 0.7.21 — 2026-11-12
+
+**Added**
+- Plan policy, a new plugin you can turn on in Settings → Plugins. Its ⋮ item shows whether it is running or paused, with Pause and Resume, and the last thing it decided for each agent, with Stop for one whose continue is waiting on you.
+- When Plan policy has decided about a session's newest Finished card, the card shows it as its last point: "Policy: continue, step 4 — waiting for you", then "sent" or "declined", or "Policy: stop" or "Policy: ask" with the reason.
+- An approval Plan policy asks for says Plan policy before the agent's name, so you know it is not from you or the assistant.
+
+## 0.7.22 — 2026-11-12
+
+**Added**
+- Settings has a Home view row: All agents (as before) or Active tasks. The row came in an earlier build without its own version; this version carries it.
+- Active tasks, as the home screen: your plans with their agents under each, so you can see at a glance which plan is moving. A plan's header shows its title, its status, the step it is on, how many agents and subagents work on it, and the plan policy's last word and when, or "not armed" in amber; an amber dot counts approvals waiting, a blue dot questions. Tap a header to fold it.
+- Under each agent: its name and worktree branch, what it is doing, and its approvals, questions and the plan policy's decisions, with their times, oldest first. Approve, Deny, Yes, No and Continue work right there; Open goes to the agent. Agents on no plan are listed last, under Not on a plan.
+- A plan you chose Build on is an active task, with an Auto on / Auto off switch at the right of its header that turns autocontinue on and off.
+- Build on a plan, in the plans list's plan page: it makes the plan an active task and sends the agent whose view you came from "approve and build the <date> plan, <title>".
+- With Plan policy off, Active tasks says to turn it on in Settings → Plugins and lists every agent under Not on a plan.
+
+## 0.7.23 — 2026-11-13
+
+**Changed**
+- Build now asks the agent to set the plan's status to In implementation first: it sends "approve and build the <date> plan, <title>, setting its status to In implementation first". A very long title is shortened at a word so the message still fits.
+
+**Fixed**
+- Build is sent once per plan. While the plan is an active task, its plan page shows Building in place of Build, and tapping it again sends nothing. Removing the task in Active tasks makes Build available again.
+- A plan title with a version number, quotes or other punctuation no longer makes Build's message fail to send.

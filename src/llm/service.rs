@@ -175,7 +175,7 @@ impl Overrides {
     fn for_use(&self, use_: Use) -> Option<&Arc<dyn ReasoningEngine>> {
         match use_ {
             Use::GeneralAgent | Use::Planning => self.agent.as_ref(),
-            Use::CardSummaries | Use::SpokenSummaries => self.summary.as_ref(),
+            Use::CardSummaries | Use::SpokenSummaries | Use::Policy => self.summary.as_ref(),
         }
     }
 }

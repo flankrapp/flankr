@@ -109,6 +109,9 @@ fn a_confirmation_or_another_sessions_card_while_typing_keeps_the_message_card()
             (
                 "SetText(\"hi\")",
                 Event::Confirm {
+                    at: None,
+                    pane_id: String::new(),
+                    requested_by: String::new(),
                     confirm_id: 9,
                     text: "Approve?".into(),
                     label: Some("x".into()),

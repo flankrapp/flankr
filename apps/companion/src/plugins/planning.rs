@@ -391,6 +391,8 @@ enum Tap {
     Back,
     Pin,
     Card,
+    /// Build (plan 20261112_03, the 23:23 EST amendment, item 2).
+    Build,
 }
 
 /// Which colour a line is drawn in.
@@ -446,6 +448,10 @@ pub struct Planning {
     /// The popup menu's plans: `None` while reading, else the list or
     /// why it could not be read.
     menu: Option<Result<Vec<PlanRow>, String>>,
+    /// The plans whose Build was sent and whose task stands: Build shows
+    /// *Building* there and does nothing (plan 20261112_03, the
+    /// 2026-11-13 00:09 EST amendment, item 2).
+    building: std::collections::HashSet<String>,
 }
 
 impl Default for Planning {
@@ -463,6 +469,7 @@ impl Planning {
             cards: Vec::new(),
             laid: Cell::new((0.0, 1.0)),
             menu: None,
+            building: std::collections::HashSet::new(),
         }
     }
 
@@ -586,6 +593,22 @@ impl Planning {
                 y = tap_h + GAP * s * 0.5;
                 wrapped(&mut laid, &p.row.title, &mut y, HEAD_PT * s, Ink::Text);
                 wrapped(&mut laid, &p.row.subtitle(), &mut y, SMALL_PT * s, Ink::Dim);
+                // Build, for a plan (the owner's request that its agent
+                // build it; the Active tasks view manages it after).
+                if p.row.base.ends_with("_PLAN") {
+                    let top = y;
+                    y += GAP * s * 0.5;
+                    let path = format!("docs/design/{}.md", p.row.base);
+                    if self.building.contains(&path) {
+                        let text = copy::TASKS_BUILDING.text.to_string();
+                        push(&mut laid, text, 0.0, &mut y, TITLE_PT * s, Ink::Dim);
+                    } else {
+                        let build = copy::TASKS_BUILD.text.to_string();
+                        push(&mut laid, build, 0.0, &mut y, TITLE_PT * s, Ink::Accent);
+                        laid.taps
+                            .push((Tap::Build, Rect::new(0.0, top, w, y - top)));
+                    }
+                }
                 if !p.covers.is_empty() {
                     y += GAP * s * 0.5;
                     for c in p.covers.iter().take(COVERS_MAX) {
@@ -853,6 +876,15 @@ impl DevicePlugin for Planning {
                     out.open(ViewKind::Card(key));
                 }
             }
+            Tap::Build => {
+                if let Page::Plan(p) = &self.page {
+                    out.build(super::Build {
+                        path: format!("docs/design/{}.md", p.row.base),
+                        date: p.row.date.clone(),
+                        title: p.row.title.clone(),
+                    });
+                }
+            }
             Tap::Card => {
                 if let ViewKind::Card(key) = view {
                     out.open(ViewKind::Modal);
@@ -863,6 +895,10 @@ impl DevicePlugin for Planning {
                 }
             }
         }
+    }
+
+    fn set_building(&mut self, paths: &std::collections::HashSet<String>) {
+        self.building = paths.clone();
     }
 
     fn close(&mut self, view: &ViewKind) {
@@ -1001,6 +1037,48 @@ mod tests {
         p.tap(&ViewKind::Modal, 10.0, 10.0, &mut out);
         assert!(out.calls.is_empty());
         assert!(matches!(p.page(), Page::List(_)));
+    }
+
+    /// Plan 20261112_03, the 23:23 EST amendment, item 2.
+    #[test]
+    fn build_on_a_plan_asks_the_app_to_build_it() {
+        let mut p = Planning::new();
+        let mut out = PluginOut::new(1);
+        p.action("plans", &mut out);
+        let mut out = PluginOut::new(2);
+        p.show("20261028_04_PLUGINS_PLAN", &mut out);
+        answer(&mut p, 2, show_fixture());
+        p.laid.set((1000.0, 2.0));
+        assert!(texts(&p, &ViewKind::Modal).contains(&copy::TASKS_BUILD.text.to_string()));
+        let laid = p.lay_out(&ViewKind::Modal, 1000.0, 2.0);
+        let (_, r) = laid
+            .taps
+            .iter()
+            .find(|(t, _)| *t == Tap::Build)
+            .expect("a Build tap")
+            .clone();
+        let mut out = PluginOut::new(3);
+        p.tap(&ViewKind::Modal, r.x + 5.0, r.y + r.h * 0.5, &mut out);
+        assert_eq!(out.builds.len(), 1);
+        assert_eq!(
+            out.builds[0].path,
+            "docs/design/20261028_04_PLUGINS_PLAN.md"
+        );
+        assert_eq!(out.builds[0].title, "Built-in plugins");
+        assert!(out.calls.is_empty(), "the app arms it, not this half");
+        // While its task stands, Build reads Building and does nothing.
+        let mut building = std::collections::HashSet::new();
+        building.insert("docs/design/20261028_04_PLUGINS_PLAN.md".to_string());
+        p.set_building(&building);
+        let t = texts(&p, &ViewKind::Modal);
+        assert!(t.contains(&copy::TASKS_BUILDING.text.to_string()), "{t:?}");
+        assert!(!t.contains(&copy::TASKS_BUILD.text.to_string()));
+        let mut out = PluginOut::new(4);
+        p.tap(&ViewKind::Modal, r.x + 5.0, r.y + r.h * 0.5, &mut out);
+        assert!(out.builds.is_empty(), "a second tap sends nothing");
+        // The task removed: Build again.
+        p.set_building(&std::collections::HashSet::new());
+        assert!(texts(&p, &ViewKind::Modal).contains(&copy::TASKS_BUILD.text.to_string()));
     }
 
     #[test]

@@ -11,10 +11,12 @@ pub mod conn;
 pub mod herdr_attach;
 pub mod input_bar;
 pub mod link;
+pub mod policy;
 pub mod speech;
 mod subscriptions;
 pub mod terminal;
 mod watcher;
+pub mod worktrees;
 
 use std::io::IsTerminal;
 use std::os::unix::fs::PermissionsExt;
@@ -113,6 +115,8 @@ pub struct Daemon {
     /// Panes with a `choice.answer` being driven (plan 20261029_01): a
     /// second answer to the same pane is refused meanwhile.
     pub choice_answering: std::sync::Mutex<std::collections::HashSet<String>>,
+    /// herdr's worktrees, for `agents.list` (plan 20261112_03).
+    pub worktrees: worktrees::Worktrees,
 }
 
 impl Daemon {
@@ -179,12 +183,15 @@ impl Daemon {
         broker.continue_after(journalled);
         let herdr_attach =
             attach_settings(&client, config, &turns).map(herdr_attach::HerdrAttach::new);
-        // `[plugins]` comes from the file `[llm]` is read from.
+        // `[plugins]` comes from the file `[llm]` is read from. The plan
+        // policy plugin reaches the daemon once it exists (plan 20261112_02).
+        let policy = Arc::new(policy::DaemonPolicy::default());
         let plugins = crate::plugins::PluginHost::new(
             config,
             crate::plugins::HostOptions {
                 config_path: turns.llm.config_path.clone(),
                 plugins: turns.plugins.clone(),
+                policy: Some(Arc::clone(&policy) as Arc<dyn crate::plugins::policy::Services>),
                 ..Default::default()
             },
         );
@@ -222,7 +229,14 @@ impl Daemon {
             plugins,
             blob,
             choice_answering: Default::default(),
+            worktrees: Default::default(),
         });
+        policy.set(Arc::downgrade(&daemon));
+        // Each kept card summary goes on to the enabled plugins (plan
+        // 20261112_02, 2.2).
+        daemon
+            .plugins
+            .spawn_card_summaries(daemon.hub.card_summaries());
         // `[llm.uses.card_summaries]`: each new Finished card summarised
         // once, while card summaries are available.
         daemon

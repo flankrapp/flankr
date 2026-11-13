@@ -1,7 +1,7 @@
 ---
 title: Plan policy agent
 date: 2026-11-12
-status: Draft
+status: In implementation
 covers:
   - "A built-in daemon plugin, `dev.flankr.plugins.policy`, off until its
     config table says `enabled = true`, that reads each Finished card's
@@ -497,3 +497,49 @@ recommendations, as follows:
    `worktree.*` is called on the local herdr socket only, never over SSH.
 7. `quiet_secs` stays 15 s, and the plugin judges only the newest
    Finished card of a pane once that quiet time has passed.
+
+## Amendment — 2026-11-12 22:31 EST: Build arms a plan and creates an active task, managed in the Active tasks view
+
+The owner, on 2026-11-12 at 22:25 EST: "if this is first focus on it, I
+had the order backwards. the checkbox is more like an enaled setting in
+the plan list,this coyld be a right side enable/dusable glyph for the
+build task, or we just use the upcoming Active tasks screen to manage
+them. if ut makes sense to build both in the same worktree do that"; and
+at 22:28 EST: "it oribably makes more sense to mak Active tasks the
+management UI once Build us chosen on a plan instwad if the plans
+screen". This replaces 2.3's checkbox and its items 1 and 5 where they
+disagree, the plan list with checkboxes of 2.7 item 1, and the 21:58
+amendment's item 2 where it says where autocontinue is switched.
+
+1. **Build is the approval.** Choosing **Build** on a plan (from the
+   plan list or the plan's preview, the Active plans home view plan) is
+   the owner's approval and request: the app calls `build { path,
+   pane_id }`, which arms the plan and records an active task for it,
+   then sends the agent the build message itself through `agents.send`,
+   with that call's usual checks and confirmation. The plugin never
+   sends the build message.
+2. **The store** of 2.3 item 1 records the task: `project_root`,
+   `path`, `pane_id`, `sha256`, `armed`, `autocontinue` (off when
+   created), `by`, `at`, `started_at` and `continues_used`.
+3. **The Active tasks view manages tasks** (the Active plans home view
+   plan's view, titled *Active tasks* in the app). Each task's row has a
+   right-side enable/disable glyph that turns its autocontinue on and
+   off (`task_enable { path }`, `task_disable { path }`), and shows its
+   events and the policy's decisions. Removing or finishing a task
+   (`task_remove { path }`) disarms the plan. These calls, and `build`,
+   need a principal that may approve.
+4. **The plans screen does no management**: no checkbox and no arm
+   glyph; it offers Build, and Open for reading the plan. Any Plan
+   policy screen keeps only the plugin's state and decisions.
+5. **Which plan a session is on** (2.3 item 5): the task whose
+   `pane_id` is the card's pane comes first; then a plan path named in
+   the reply, then a plan named by its title, as before.
+6. Autocontinue's limits are unchanged: it answers only the agent's
+   own "continue with step N?" question (the 22:03 amendment), through
+   `policy::check` and a confirmation tap every time.
+
+## Amendment — 2026-11-12 22:31 EST: implementation started; this document is now immutable
+
+Implementation started with step 1 (the plugin skeleton) in the commit
+that sets `status: In implementation`. From now on this document changes
+only on the owner's explicit instruction; departures go to `CHANGES.md`.

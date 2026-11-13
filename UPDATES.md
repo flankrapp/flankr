@@ -277,3 +277,18 @@ These changes came before the program had version numbers.
 
 **Fixed**
 - A tap on a Claude Code session's input line in the phone's terminal view raises the phone's keyboard again in a session that has a name. Claude Code writes the name into the line above its prompt, and the daemon no longer took that line for something else, so it found no input line to send the phone. The input line the phone gets is now the prompt's whole box, its two lines included, so it is easier to hit.
+
+## 0.7.12 — 2026-11-12
+
+**Added**
+- A new plugin, Plan policy (`[plugins."dev.flankr.plugins.policy"]`), off until its table says `enabled = true`. When you choose Build on a plan from the phone, the plan becomes an active task. While that task's autocontinue is on, the daemon reads each Finished card's summary from the task's pane and decides continue, stop or ask. It answers only the agent's own "continue with step N?" question, and only by asking you to confirm `continue` on the phone; nothing is sent until you tap Yes. A choice question from the agent holds the task until it is answered.
+- Its settings: `agents` (the `[[agents]]` names it may drive; none by default), `continue_command` (default `continue`, which must be on that agent's `allowed_commands`), `max_continues` (3 per task, then it asks you instead), `confirm = "always"` and `quiet_secs` (15: only the newest card from a pane is judged, after this long).
+- `[llm.uses.policy]`: the model the plugin's judgement uses, `flash-lite:oldest` by default like the summaries. `enabled = false` turns the judgement off; every card is then left to you.
+- The active tasks are kept in `~/.local/state/flankr/plugins/policy/approvals.toml`. A task's autocontinue pauses when its plan file changes, and stops when the plan's status no longer allows work.
+- The log says `[policy] pane=<pane> agent=<agent> plan=<plan> step=<n> decision=<continue|stop|ask> rule=<rule> serial=<card> reason=<why>` for each decision, and which confirmation it opened and how it ended.
+
+## 0.7.13 — 2026-11-12
+
+**Added**
+- With the Plan policy plugin on, the daemon works out which plan each agent pane is on, for the phone's Active tasks view: the plan you chose Build on for that pane, else a plan path in its newest reply, else a plan's title, else the `plan/<date>_<nn>` branch of the worktree it is in, else one question to the `[llm.uses.policy]` model with the titles of the project's active plans. This only places the pane in the phone's list; it never makes the plugin send anything. The log says `[policy] pane=<pane> plan=<plan> linked_by=<how> worktree=<path or ->` when a pane's plan changes.
+- The phone's agent list now says which herdr worktree each agent is in, from herdr's own list of worktrees, on a herdr on this computer.

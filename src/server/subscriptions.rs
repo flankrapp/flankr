@@ -459,7 +459,16 @@ impl Task {
         }
         let subscribed = daemon
             .hub
-            .subscribe(&self.pane.agent, self.pane.cwd.as_deref(), &located)
+            .subscribe_in(
+                &self.pane.agent,
+                self.pane.cwd.as_deref(),
+                &located,
+                Some(crate::sessions::hub::PaneOf {
+                    pane_id: self.pane.pane_id.clone(),
+                    agent: self.pane.agent.clone(),
+                    cwd: self.pane.cwd.clone(),
+                }),
+            )
             .await;
         let (tailer, rx, _) = match subscribed {
             Ok(s) => s,

@@ -9,6 +9,7 @@ pub mod error;
 pub mod events;
 pub mod protocol;
 pub mod transport;
+pub mod worktrees;
 
 pub use client::HerdrClient;
 pub use error::{HerdrError, HerdrResult};
@@ -21,6 +22,7 @@ pub use transport::{
     HerdrEventStream, HerdrTransport, MockState, RemoteSshConfig, SshInvocationMethod,
     default_local_socket_path,
 };
+pub use worktrees::{WorktreeCreate, WorktreeInfo, WorktreeList, WorktreeOpen, WorktreeSource};
 
 #[cfg(test)]
 mod tests {

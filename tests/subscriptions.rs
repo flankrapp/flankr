@@ -1758,3 +1758,23 @@ async fn a_thinking_session_says_so_until_its_text_comes() {
         c.seen.clear();
     }
 }
+
+/// Plan 20261112_02, step 3: a kept card summary is sent on with the pane
+/// its subscriber named, for the plugins' `on_card_summary`.
+#[tokio::test]
+async fn a_kept_card_summary_is_sent_on_with_its_pane() {
+    let mock = Arc::new(MockReasoningEngine::with_response(CARD_ANSWER));
+    let env = start_summarising(Arc::clone(&mock), true).await;
+    let mut events = env.daemon.hub.card_summaries();
+    let mut c = Client::unix(&env.socket, "flankr.companion").await;
+    let _ = c.subscribe(json!({"pane_id": "p1"})).await;
+    let event = tokio::time::timeout(WAIT, events.recv())
+        .await
+        .expect("a summary in time")
+        .unwrap();
+    assert_eq!(event.pane.pane_id, "p1");
+    assert_eq!(event.pane.agent, "claude");
+    assert_eq!(event.summary.spoken.as_deref(), Some("Written and pushed."));
+    assert_eq!(event.summary.points, ["Wrote the plan", "Pushed it"]);
+    assert!(event.reply.contains("Reply "), "{}", event.reply);
+}

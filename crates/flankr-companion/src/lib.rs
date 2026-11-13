@@ -27,6 +27,7 @@ pub mod client;
 pub mod cross;
 pub mod keys;
 mod net;
+pub mod policy;
 pub mod remote_state;
 pub mod scan;
 pub mod terminal;

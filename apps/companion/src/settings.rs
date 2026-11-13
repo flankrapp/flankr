@@ -104,6 +104,50 @@ pub struct Settings {
     /// *Drawer sessions* (plan 20261103_02, decision 2): grouped by
     /// workspace (the default), or not.
     pub drawer_sessions: DrawerSessions,
+    /// *Home view* (plan 20261112_03, the 21:58 EST amendment, item 1):
+    /// every agent's card (the default), or the Active tasks.
+    pub home_view: HomeView,
+}
+
+/// What the home screen shows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HomeView {
+    #[default]
+    Agents,
+    Plans,
+}
+
+/// *Home view*'s values, in the order its arrows step through them.
+pub static HOME_VIEW_OPTIONS: [HomeView; 2] = [HomeView::Agents, HomeView::Plans];
+
+impl HomeView {
+    /// As `settings.toml` writes it.
+    pub fn name(self) -> &'static str {
+        match self {
+            HomeView::Agents => "agents",
+            HomeView::Plans => "plans",
+        }
+    }
+
+    /// As the screen shows it.
+    pub fn label(self) -> &'static str {
+        match self {
+            HomeView::Agents => copy::HOME_VIEW_AGENTS.text,
+            HomeView::Plans => copy::HOME_VIEW_PLANS.text,
+        }
+    }
+}
+
+impl std::fmt::Display for HomeView {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
+impl Choice for HomeView {
+    fn options() -> &'static [Self] {
+        &HOME_VIEW_OPTIONS
+    }
 }
 
 /// The values of a settings row on libcontrols' `SelectableLabel`
@@ -282,6 +326,7 @@ impl Default for Settings {
             dark_theme: None,
             startup: Startup::Overview,
             drawer_sessions: DrawerSessions::Grouped,
+            home_view: HomeView::Agents,
         }
     }
 }
@@ -329,6 +374,13 @@ struct SettingsFile {
     /// `grouped` or `flat`.
     #[serde(default = "grouped")]
     drawer_sessions: String,
+    /// `agents` or `plans`.
+    #[serde(default = "agents")]
+    home_view: String,
+}
+
+fn agents() -> String {
+    HomeView::Agents.name().to_string()
 }
 
 fn grouped() -> String {
@@ -456,6 +508,10 @@ impl Settings {
                 .into_iter()
                 .find(|o| o.name() == file.drawer_sessions)
                 .unwrap_or_default(),
+            home_view: HOME_VIEW_OPTIONS
+                .into_iter()
+                .find(|o| o.name() == file.home_view)
+                .unwrap_or_default(),
         }
     }
 
@@ -480,6 +536,7 @@ impl Settings {
             dark_theme: self.dark_theme.clone(),
             startup: self.startup.name().to_string(),
             drawer_sessions: self.drawer_sessions.name().to_string(),
+            home_view: self.home_view.name().to_string(),
         };
         let text = toml::to_string(&file).map_err(|e| e.to_string())?;
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -780,6 +837,7 @@ mod tests {
             dark_theme: Some("nord".into()),
             startup: Startup::LastSession,
             drawer_sessions: DrawerSessions::Flat,
+            home_view: HomeView::Plans,
         };
         s.save(dir.path()).unwrap();
         assert_eq!(Settings::load(dir.path()), s);
@@ -794,6 +852,7 @@ mod tests {
         assert!(text.contains("dark_theme = \"nord\""), "{text}");
         assert!(text.contains("startup = \"last_session\""), "{text}");
         assert!(text.contains("drawer_sessions = \"flat\""), "{text}");
+        assert!(text.contains("home_view = \"plans\""), "{text}");
         // *Default* is left out of the file.
         Settings::default().save(dir.path()).unwrap();
         let text = std::fs::read_to_string(dir.path().join(FILE)).unwrap();

@@ -54,6 +54,28 @@ impl ProjectLookup for HerdrLookup {
     }
 }
 
+/// The lookup of one pane whose folder is already known: a Finished
+/// card's, for [`super::Plugin::on_card_summary`].
+pub struct FixedLookup {
+    pub pane_id: String,
+    pub agent: String,
+    pub folder: String,
+}
+
+#[async_trait::async_trait]
+impl ProjectLookup for FixedLookup {
+    async fn folder(&self, pane_id: Option<&str>) -> Result<AgentFolder, String> {
+        match pane_id {
+            Some(p) if crate::watch::pane_ids_match(p, &self.pane_id) => Ok(AgentFolder {
+                pane_id: self.pane_id.clone(),
+                agent: self.agent.clone(),
+                folder: self.folder.clone(),
+            }),
+            _ => Err(crate::project::NO_PROJECT.to_string()),
+        }
+    }
+}
+
 /// The focused project.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Project {
@@ -81,6 +103,8 @@ pub struct Commands {
 /// What one plugin call may do.
 pub struct PluginCtx {
     ns: &'static str,
+    /// Who called: a device's principal, or the plugin's own for a hook.
+    principal: Principal,
     project: Result<Project, PluginError>,
     /// The configured `[llm.uses.planning] read`.
     read: Vec<ReadPattern>,
@@ -111,6 +135,7 @@ impl PluginCtx {
         let project = resolve(&parts.principal, parts.pane.as_deref(), &*parts.lookup).await;
         PluginCtx {
             ns: parts.ns,
+            principal: parts.principal,
             project,
             read: parts.read,
             plugin_read: parts.plugin_read,
@@ -118,6 +143,43 @@ impl PluginCtx {
             config: parts.config,
             notifier: parts.notifier,
         }
+    }
+
+    /// This context for another folder of the same project: the main
+    /// checkout `git worktree list` gives for a pane in one of its
+    /// worktrees (plan 20261112_02, 2.8 item 2). The same reads, commands
+    /// and principal; `root` must exist.
+    pub(crate) fn rooted_at(&self, root: &Path) -> Result<PluginCtx, PluginError> {
+        let project = self.project()?;
+        let root = std::fs::canonicalize(root).map_err(|e| {
+            PluginError::new(
+                codes::PROJECT_UNAVAILABLE,
+                format!("{} cannot be read: {e}", root.display()),
+            )
+        })?;
+        Ok(PluginCtx {
+            ns: self.ns,
+            principal: self.principal.clone(),
+            project: Ok(Project {
+                name: root
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                root,
+                agent: project.agent.clone(),
+                pane_id: project.pane_id.clone(),
+            }),
+            read: self.read.clone(),
+            plugin_read: self.plugin_read.clone(),
+            commands: self.commands.clone(),
+            config: self.config.clone(),
+            notifier: self.notifier.clone(),
+        })
+    }
+
+    /// Who called.
+    pub fn principal(&self) -> &Principal {
+        &self.principal
     }
 
     /// The focused project: the call's `session`, else the conversation's

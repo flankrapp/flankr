@@ -857,3 +857,24 @@ mod tests {
         assert_eq!(req.pane_id, None);
     }
 }
+
+/// Build's messages from the app (flankr-companion's
+/// `policy::build_request`, plan 20261112_03, the 2026-11-13 00:09 EST
+/// amendment) pass the filter unchanged and within its limit.
+#[cfg(test)]
+mod build_message_tests {
+    use super::*;
+
+    #[test]
+    fn build_messages_pass_unchanged() {
+        for m in [
+            "approve and build the 20261112 plan, Active plans, a plan grouped home view, setting its status to In implementation first",
+            "approve and build the 20261112 plan, libherdr worktree API v2, setting its status to In implementation first",
+            "approve and build the 20261113 plan, Garden irrigation schedule Garden irrigation schedule Garden irrigation schedule Garden irrigation schedule Garden irrigation schedule Garden irrigation, setting its status to In implementation first",
+            "approve and build the 20261113 plan, What's next? v2 0 notes, quoted, setting its status to In implementation first",
+        ] {
+            assert!(m.len() <= MAX_ARBITRARY_COMMAND_LEN, "{}", m.len());
+            assert_eq!(validate_arbitrary_command(m).as_deref(), Ok(m), "{m}");
+        }
+    }
+}

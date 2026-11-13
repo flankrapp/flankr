@@ -153,6 +153,22 @@ The two speak options, shared by the Sound rows and the volume menu
 
 - text: Not grouped
 
+# [Copy] home_view
+
+- title: Home view
+- text: |
+    What the home screen shows: every agent's card, or the active
+    tasks, the plans you chose Build on, with their agents, questions
+    and the plan policy's decisions under each.
+
+# [Copy] home_view_agents
+
+- text: All agents
+
+# [Copy] home_view_plans
+
+- text: Active tasks
+
 # [Copy] scrollbar
 
 - text: Scrollbar
@@ -785,3 +801,130 @@ it moves into the ⋮ menu, keeps menu_settings.
 # [Copy] planning_all_plans
 
 - text: All plans…
+
+The plan policy plugin's popup menu, the Finished card's policy line and
+the confirmation card's requester (plan 20261112_02, 2.7, with its 22:31
+EST amendment: tasks are managed in the Active tasks view).
+
+# [Copy] policy_reading
+
+- text: Reading the plan policy…
+
+# [Copy] policy_running
+
+- text: Running: asks you before each continue
+
+# [Copy] policy_paused
+
+- text: Paused: no decisions are made
+
+# [Copy] policy_pause
+
+- text: Pause
+
+# [Copy] policy_resume
+
+- text: Resume
+
+# [Copy] policy_none
+
+- text: No decisions yet
+
+# [Copy] policy_stop
+
+- text: Stop
+
+# [Copy] policy_requester
+
+- text: Plan policy
+
+# [Copy] policy_waiting
+
+- text: waiting for you
+
+# [Copy] policy_sent
+
+- text: sent
+
+# [Copy] policy_declined
+
+- text: declined
+
+# [Copy] policy_blocked
+
+- text: held by a question
+
+The Active tasks view (plan 20261112_03, 2.3 to 2.5, with its 23:23 EST
+amendment).
+
+# [Copy] tasks_turn_on
+
+- text: Turn on Plan policy in Settings → Plugins to group by plan
+
+# [Copy] tasks_older_flankr
+
+- text: This flankr cannot group by plan
+
+# [Copy] tasks_none
+
+- text: No plan is being worked on
+
+# [Copy] tasks_not_on_a_plan
+
+- text: Not on a plan
+
+# [Copy] tasks_not_armed
+
+- text: not armed
+
+# [Copy] tasks_auto_on
+
+- text: Auto on
+
+# [Copy] tasks_auto_off
+
+- text: Auto off
+
+# [Copy] tasks_approval
+
+- text: Approval
+
+# [Copy] tasks_asking
+
+- text: Asking
+
+# [Copy] tasks_approve
+
+- text: Approve
+
+# [Copy] tasks_deny
+
+- text: Deny
+
+# [Copy] tasks_yes
+
+- text: Yes
+
+# [Copy] tasks_no
+
+- text: No
+
+# [Copy] tasks_continue
+
+- text: Continue
+
+# [Copy] tasks_open
+
+- text: Open
+
+# [Copy] tasks_build
+
+- text: Build
+
+# [Copy] tasks_building
+
+- text: Building
+
+# [Copy] tasks_build_no_agent
+
+- text: Open an agent's view first: Build asks that agent to build the plan.

@@ -92,7 +92,7 @@ use super::option_row::OptionRow;
 use super::plugin_row::PluginRow;
 use super::remote_details::{self as details, DetailsModal, DetailsState};
 use super::remote_row::{REMOVE_PART, RemoteRow};
-use super::startup_row::{DrawerSessionsRow, StartupRow};
+use super::startup_row::{DrawerSessionsRow, HomeViewRow, StartupRow};
 use super::toggle_row::ToggleRow;
 use super::voice;
 use super::{Settings, dim_since, scrollbar_label, step_scrollbar};
@@ -183,6 +183,7 @@ enum Info {
     TabFollowsFocus,
     AtStartup,
     DrawerSessions,
+    HomeView,
     Background,
     Alerts,
     Optimization,
@@ -201,6 +202,7 @@ impl Info {
             Info::TabFollowsFocus => copy::TAB_FOLLOWS_FOCUS,
             Info::AtStartup => copy::AT_STARTUP,
             Info::DrawerSessions => copy::DRAWER_SESSIONS,
+            Info::HomeView => copy::HOME_VIEW,
             Info::Background => copy::BACKGROUND,
             Info::Alerts => copy::ALERTS,
             Info::Optimization => copy::BATTERY_OPTIMIZATION,
@@ -332,6 +334,7 @@ impl Asking {
             Asking::Info(Info::TabFollowsFocus) => "info_tab_follows_focus",
             Asking::Info(Info::AtStartup) => "info_at_startup",
             Asking::Info(Info::DrawerSessions) => "info_drawer_sessions",
+            Asking::Info(Info::HomeView) => "info_home_view",
             Asking::Info(Info::Background) => "info_background",
             Asking::Info(Info::Alerts) => "info_alerts",
             Asking::Info(Info::Optimization) => "info_optimization",
@@ -362,6 +365,8 @@ struct Nodes {
     startup: NodeId,
     /// *Drawer sessions*, after *At startup*.
     drawer_sessions: NodeId,
+    /// *Home view*, after *Drawer sessions*.
+    home_view: NodeId,
     scrollbar: NodeId,
     appearance: NodeId,
     light_theme: NodeId,
@@ -1111,6 +1116,11 @@ impl SettingsScreen {
             row.label_w = self.label_w(copy::DRAWER_SESSIONS.label());
             router.add(under, row)
         };
+        let home_view = {
+            let mut row = HomeViewRow::new(copy::HOME_VIEW.label(), self.settings.home_view, s);
+            row.label_w = self.label_w(copy::HOME_VIEW.label());
+            router.add(under, row)
+        };
         let scrollbar = router.add(
             under,
             OptionRow::new(
@@ -1206,6 +1216,7 @@ impl SettingsScreen {
             tab_follows_focus,
             startup,
             drawer_sessions,
+            home_view,
             scrollbar,
             appearance,
             light_theme,
@@ -1367,6 +1378,11 @@ impl SettingsScreen {
                     if let Some(r) = router.get_mut::<DrawerSessionsRow>(n.drawer_sessions) {
                         r.set_rect(rect);
                         r.set_value(settings.drawer_sessions);
+                    }
+                    let rect = row(&mut y);
+                    if let Some(r) = router.get_mut::<HomeViewRow>(n.home_view) {
+                        r.set_rect(rect);
+                        r.set_value(settings.home_view);
                     }
                 }
                 Section::Display => {
@@ -1589,6 +1605,10 @@ impl SettingsScreen {
             r.get::<DrawerSessionsRow>(n.drawer_sessions)
                 .map(|row| (row.label.clone(), row.rect)),
         )
+        .chain(
+            r.get::<HomeViewRow>(n.home_view)
+                .map(|row| (row.label.clone(), row.rect)),
+        )
         .chain([n.optimization, n.vendor].into_iter().filter_map(|id| {
             r.get::<LinkRow>(id)
                 .filter(|_| shown(id))
@@ -1683,6 +1703,14 @@ impl SettingsScreen {
     pub fn drawer_sessions_shown(&self) -> Option<(String, Rect, Rect)> {
         let n = self.nodes.as_ref()?;
         let row = self.router.get::<DrawerSessionsRow>(n.drawer_sessions)?;
+        let (left, right) = row.arrows();
+        Some((row.select.display_string(), left, right))
+    }
+
+    /// The *Home view* row: its value as shown, and its arrows' rects.
+    pub fn home_view_shown(&self) -> Option<(String, Rect, Rect)> {
+        let n = self.nodes.as_ref()?;
+        let row = self.router.get::<HomeViewRow>(n.home_view)?;
         let (left, right) = row.arrows();
         Some((row.select.display_string(), left, right))
     }
@@ -1810,6 +1838,7 @@ impl SettingsScreen {
                 (n.tab_follows_focus, Info::TabFollowsFocus),
                 (n.startup, Info::AtStartup),
                 (n.drawer_sessions, Info::DrawerSessions),
+                (n.home_view, Info::HomeView),
                 (n.background, Info::Background),
                 (n.alerts, Info::Alerts),
                 (n.optimization, Info::Optimization),
@@ -1868,6 +1897,12 @@ impl SettingsScreen {
                 .router
                 .get::<DrawerSessionsRow>(n.drawer_sessions)
                 .map(DrawerSessionsRow::value)?;
+        } else if target == n.home_view {
+            step(action)?;
+            s.home_view = self
+                .router
+                .get::<HomeViewRow>(n.home_view)
+                .map(HomeViewRow::value)?;
         } else if target == n.background {
             s.background = !s.background;
         } else if target == n.alerts {
@@ -2449,6 +2484,13 @@ impl SettingsScreen {
         {
             return r.info.then(|| r.info_rect().center());
         }
+        if let Some(r) = self
+            .router
+            .get::<HomeViewRow>(n.home_view)
+            .filter(|r| r.label == label)
+        {
+            return r.info.then(|| r.info_rect().center());
+        }
         [n.optimization, n.vendor]
             .into_iter()
             .filter(|&id| !self.router.flags(id).contains(NodeFlags::HIDDEN))
@@ -2555,7 +2597,8 @@ mod tests {
 
     /// A taller phone, for the rows at the end of the Device section with
     /// the Sound section's two speak rows (plan 20261028_06) above them.
-    const TALL: Layout = Layout { h: 2700.0, ..PHONE };
+    // Tall enough for every row down to the battery's, under *Home view*.
+    const TALL: Layout = Layout { h: 2900.0, ..PHONE };
 
     /// A host whose battery state cannot be known.
     struct NoBattery;
@@ -2922,6 +2965,28 @@ mod tests {
              remote you last used. The saved session shows at once and updates once \
              connected."
         );
+    }
+
+    #[test]
+    fn home_view_steps_between_all_agents_and_active_tasks_under_drawer_sessions() {
+        // Plan 20261112_03, the 21:58 EST amendment, item 1.
+        use super::super::HomeView;
+        let mut s = plain();
+        let drawer = s.row_rect("Drawer sessions").unwrap();
+        let r = s.row_rect("Home view").unwrap();
+        assert_eq!(r.y, drawer.y + drawer.h, "right after Drawer sessions");
+        let (shown, left, right) = s.home_view_shown().unwrap();
+        assert_eq!(shown, "All agents", "the default");
+        assert_eq!(s.settings().home_view, HomeView::Agents);
+        assert_eq!(tap(&mut s, left.center()[0], left.center()[1]), None);
+        let Some(SettingsHit::Changed(now)) = tap(&mut s, right.center()[0], right.center()[1])
+        else {
+            panic!("the right arrow steps");
+        };
+        assert_eq!(now.home_view, HomeView::Plans);
+        assert_eq!(s.home_view_shown().unwrap().0, "Active tasks");
+        s.set_layout(Layout { w: 1200.0, ..PHONE });
+        assert_eq!(s.home_view_shown().unwrap().0, "Active tasks");
     }
 
     #[test]
@@ -4011,6 +4076,7 @@ mod tests {
     #[test]
     fn the_alerts_toggle_follows_settings_given_to_it() {
         let mut s = plain();
+        s.set_layout(TALL);
         tap_row(&mut s, ALERTS);
         assert!(s.toggle(ALERTS).unwrap().on);
         // Refused, or revoked while away: the app turns it off.
@@ -4022,6 +4088,7 @@ mod tests {
     #[test]
     fn the_alerts_row_is_dim_while_background_is_off() {
         let mut s = plain();
+        s.set_layout(TALL);
         let Some(SettingsHit::Changed(now)) = tap_row(&mut s, BACKGROUND) else {
             panic!("background toggles");
         };
@@ -4145,6 +4212,7 @@ mod tests {
             ("Tab follows focus", Info::TabFollowsFocus),
             ("At startup", Info::AtStartup),
             ("Drawer sessions", Info::DrawerSessions),
+            ("Home view", Info::HomeView),
             (BACKGROUND, Info::Background),
             (ALERTS, Info::Alerts),
             ("Battery optimization", Info::Optimization),

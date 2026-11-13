@@ -496,6 +496,11 @@ pub struct ConfirmRequested {
     /// message and for other principals' confirmations. Added in 0.5.10.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_id: Option<u64>,
+    /// When the daemon announced it, RFC 3339 on the daemon's clock;
+    /// absent from an older daemon (plan 20261112_03, the 21:58 EST
+    /// amendment, item 7). Added in 0.5.15.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<String>,
 }
 
 /// `notice`: speak when free.
@@ -671,6 +676,7 @@ mod tests {
         assert_eq!(thinking.tool, "");
         assert_eq!(thinking.label, "");
         round_trip(ConfirmRequested {
+            at: None,
             confirm_id: 3,
             pane_id: "w2:pZ".into(),
             agent: "claude".into(),
@@ -686,6 +692,7 @@ mod tests {
             turn_id: None,
         });
         round_trip(ConfirmRequested {
+            at: None,
             confirm_id: 4,
             pane_id: "w2:pZ".into(),
             agent: "claude".into(),
@@ -1077,5 +1084,23 @@ mod tests {
         assert_eq!(v["blob"]["namespaces"], json!(["images", "files", "git"]));
         let back: ServerCapabilities = serde_json::from_value(v).unwrap();
         assert_eq!(back, c);
+    }
+
+    /// Plan 20261112_03, the 21:58 EST amendment, item 7.
+    #[test]
+    fn a_confirmation_carries_its_time() {
+        let old: ConfirmRequested = serde_json::from_value(serde_json::json!({
+            "confirm_id": 3, "text": "Approve?"
+        }))
+        .unwrap();
+        assert_eq!(old.at, None);
+        assert!(serde_json::to_value(&old).unwrap().get("at").is_none());
+        let c = ConfirmRequested {
+            at: Some("2026-11-12T23:40:00-05:00".into()),
+            ..old
+        };
+        let v = serde_json::to_value(&c).unwrap();
+        assert_eq!(v["at"], "2026-11-12T23:40:00-05:00");
+        assert_eq!(serde_json::from_value::<ConfirmRequested>(v).unwrap(), c);
     }
 }

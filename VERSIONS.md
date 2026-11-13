@@ -1293,3 +1293,178 @@ It takes libflankr_proto 0.5.13, additive.
   the view is given again when it changes. Never kept: `false` for a view
   with no session, restored from the cache, parked, or whose
   subscription went with its connection.
+
+## libherdr 0.3.2 — 2026-11-12 (the commit tagged `libherdr-v0.3.2`)
+
+Strictly additive (new functions and types; plan 20261112_02, step 6):
+herdr's `worktree.*` API, sent as JSON-RPC through
+`HerdrRequest::Custom`, so `HerdrRequest` gains no variant.
+
+- **Added:**
+  - the module `worktrees`, re-exported from the crate root:
+    `WorktreeCreate { workspace_id, cwd, branch, base, path, label, focus }`
+    and `WorktreeOpen { workspace_id, cwd, path, branch, label, focus }`
+    (each `Default`; `None` fields are not sent), `WorktreeInfo`,
+    `WorktreeSource` and `WorktreeList { source, worktrees }` with
+    `WorktreeList::from_reply(&Value)`;
+  - `HerdrRequest::worktree_list(workspace_id, cwd)`,
+    `HerdrRequest::worktree_create(&WorktreeCreate)`,
+    `HerdrRequest::worktree_open(&WorktreeOpen)` and
+    `HerdrRequest::worktree_remove(workspace_id, force)`;
+  - `HerdrClient::worktree_list`, `worktree_create`, `worktree_open` and
+    `worktree_remove`, each returning herdr's JSON.
+
+## dev.flankr.plugins.policy 0.1.0 — 2026-11-12 (the commit tagged `dev.flankr.plugins.policy-v0.1.0`)
+
+Plan 20261112_02 (plan policy agent), steps 1 to 7, with its amendments
+and the owner's rulings of 2026-11-12. The plugin's first release,
+disabled by default (before it, its version was the git hash `4703cb8`):
+
+- **Added:** the methods `state {}` → `{paused, sessions: [{pane_id,
+  agent, project, plan, last_decision, blocked, question}]}`; `pause
+  {paused}`; `stop {pane_id}`; `plans {}` → `{plans: [row]}`, newest
+  first, each row `{path, base, title, status, status_allows, armed,
+  approved, approved_at, approved_by, changed_since_approval,
+  autocontinue, started_at, pane_id, steps: [{n, title}],
+  continues_used, blocked, question}`; `build {path, pane_id?}`,
+  `task_enable {path}`, `task_disable {path}` and `task_remove {path}`,
+  each → the plan's row; `worktree_create {path, pane_id?}` →
+  `{worktree_path, branch}`. All but `state` and `plans` need a principal
+  that may approve (`NOT_PERMITTED`). Errors -32120 (no task store),
+  -32121 (no plan at the path), -32122 (no task, or its status does not
+  allow work) and -32123 (herdr made no worktree).
+- **Added:** the notifications `decision` (`{pane_id, agent, project,
+  plan, plan_title, step, decision, reason, rule, summary_serial,
+  confirm_id, worktree, at}`), `approval` (a plan's row) and `state` (as
+  the `state` result), to every phone while the plugin is enabled.
+- **Added:** the menu item `policy` ("Plan policy", a popup menu, both
+  screens); the read patterns `docs/design/*.md`, `AGENTS.md` and
+  `CLAUDE.md`; the command `worktree_list` (`git worktree list
+  --porcelain`); no general agent tools.
+
+## flankr-companion 0.8.6 — 2026-11-12 (the commit tagged `flankr-companion-v0.8.6`)
+
+Plan 20261112_02 (plan policy agent), step 8. Strictly additive (a new
+module):
+
+- **Added:** the module `policy`: `NS`, `PRINCIPAL_ID`, the call names in
+  `policy::methods` and the notice names in `policy::notices`;
+  `PolicyStep`, `PolicyPlan`, `PolicyDecision` (with `line()`, the
+  Finished card's policy line), `PolicySession`, `PolicyState`,
+  `PolicyPlans` and `PolicyWorktree`, serialised to and from the plugin's
+  JSON with every field defaulted; the `#[non_exhaustive]`
+  `PolicyNotice { Decision, Approval, State }` with
+  `PolicyNotice::of(&PluginNotify)`; `plan_params(path, pane_id)`.
+
+## libflankr_proto 0.5.14 — 2026-11-12 (the commit tagged `libflankr_proto-v0.5.14`)
+
+Strictly additive (fields appended to structs, by the owner's ruling
+that appending is additive, and a new struct; plan 20261112_03, the
+21:58 EST amendment, items 4 and 7). A literal of `AgentInfo` or
+`ConfirmRequested` that names every field has to name the new one.
+
+- **Added:** `common::WorktreeInfo { path, branch, label, is_detached,
+  is_prunable, open_workspace_id }`, each but `path` optional and left
+  off the wire when unset; `AgentInfo::worktree: Option<WorktreeInfo>`,
+  the herdr worktree the pane's cwd lies in, absent for a main checkout
+  or from an older daemon; `ConfirmRequested::at: Option<String>`, when
+  the confirmation was asked for, RFC 3339 on the daemon's clock.
+
+## dev.flankr.plugins.policy 0.1.1 — 2026-11-12 (the commit tagged `dev.flankr.plugins.policy-v0.1.1`)
+
+Plan 20261112_03 (active plans home view), step 1. Strictly additive:
+
+- **Added:** the method `overview {}` → `{plans: [{path, title, status,
+  armed, approved, task, autocontinue, steps_total, current_step,
+  agents: [{pane_id, linked_by, worktree {path, branch, label},
+  last_decision}]}], unlinked: [pane_id], paused}`: plans with a task
+  first, then the rest, each newest path first; `linked_by` is an open
+  set (`pinned`, `reply_path`, `summary_title`, `worktree_branch`,
+  `gemini`); open to any paired principal.
+- **Added:** the notification `overview`, the same body, at most one per
+  500 ms after any `state`, `approval` or `decision`, and after a pane's
+  link changes.
+
+## flankr-companion 0.8.7 — 2026-11-12 (the commit tagged `flankr-companion-v0.8.7`)
+
+Plan 20261112_03 (active plans home view), step 2. Strictly additive (new
+types, a variant on the `#[non_exhaustive]` `PolicyNotice`). It takes
+libflankr_proto 0.5.14, additive.
+
+- **Added:** `policy::PolicyOverview { plans, unlinked, paused }`,
+  `PolicyPlanGroup` (a plan's row with `task`, `autocontinue`,
+  `steps_total`, `current_step` and `agents`), `PolicyAgentLink`
+  (`linked_by` an open string), `PolicyWorktreeRef`, read with unknown
+  fields ignored; `PolicyOverview::join(&[AgentInfo]) -> Vec<PlanGroup>`,
+  each plan's listed panes and last **Not on a plan** (`plan: None`):
+  the unlinked and any agent pane the daemon did not mention, no shells;
+  `PolicyNotice::Overview`; `methods::OVERVIEW` and `notices::OVERVIEW`.
+
+## libflankr_proto 0.5.15 — 2026-11-12 (the commit tagged `libflankr_proto-v0.5.15`)
+
+Strictly additive (a field appended, by the owner's ruling that appending
+is additive; plan 20261112_03, the 21:58 EST amendment, item 7). A
+literal that names every field has to name the new one.
+
+- **Added:** `companion::ConfirmRequested::at: Option<String>`, when the
+  daemon announced the confirmation, RFC 3339 on its clock; absent from
+  an older daemon and left off the wire when unset.
+
+## flankr-companion 0.8.8 — 2026-11-12 (the commit tagged `flankr-companion-v0.8.8`)
+
+Additive (fields appended to a variant of the `#[non_exhaustive]`
+`Event`, by the owner's ruling that appending is additive; plan
+20261112_03, the 21:58 EST amendment, item 7, and 2.4's confirmation
+rows). A pattern that names every field of `Event::Confirm` without `..`
+has to name the new ones. It takes libflankr_proto 0.5.15, additive.
+
+- **Added:** `Event::Confirm::pane_id` (a handle), `requested_by` (a
+  device's principal, or `plugin:policy`) and `at` (`Option<String>`,
+  when the daemon announced it).
+
+## flankr-companion 0.8.9 — 2026-11-12 (the commit tagged `flankr-companion-v0.8.9`)
+
+Strictly additive (variants on the `#[non_exhaustive]` `Input`, a new
+function; plan 20261112_03, 2.4 and the 22:21 EST amendment):
+
+- **Added:** `Input::RespondTo { pane_id, response }`: Yes, No (answering
+  the pane's pending question as `agents.list` gave it) or Continue, sent
+  to any listed pane with `agents.send`, confirmed by the tap; other
+  suggestions are ignored. `Input::SendMessage { pane_id, text, label }`:
+  a message to a pane, confirmed by the tap.
+- **Added:** `policy::build_message(date, title)`: Build's "approve and
+  build the <date> plan, <title>", the title cleaned to what the daemon's
+  filter takes.
+
+## flankr-companion 0.8.10 — 2026-11-13 (the commit tagged `flankr-companion-v0.8.10`)
+
+Strictly additive (a new function and constants; plan 20261112_03, the
+2026-11-13 00:09 EST amendment, item 1). `build_message` is unchanged.
+
+- **Added:** `policy::build_request(date, title)`: "approve and build the
+  <date> plan, <title>, setting its status to In implementation first",
+  at most `BUILD_MESSAGE_MAX` (256) characters, a long title cut at a
+  word boundary and the status clause (`BUILD_STATUS_CLAUSE`) always
+  kept.
+
+## flankr-companion 0.8.11 — 2026-11-13 (the commit tagged `flankr-companion-v0.8.11`)
+
+A fix, no API change (plan 20261112_03, the 2026-11-13 00:09 EST
+amendment, item 1):
+
+- **Fixed:** `policy::build_request` keeps a title's `. , ? :` only after
+  a letter or digit and before a space, and an apostrophe only between
+  letters, as the daemon's arbitrary-command filter takes them, so its
+  message always passes unchanged ("v2.0" is "v2 0"; a `:` after a
+  removed character goes).
+
+## dev.flankr.plugins.policy 0.1.2 — 2026-11-13 (the commit tagged `dev.flankr.plugins.policy-v0.1.2`)
+
+Plan 20261112_03, the 2026-11-13 00:09 EST amendment, item 2. Strictly
+additive (an optional param and a result field): `build` without `once`
+behaves as before.
+
+- **Added:** `build { path, pane_id?, once: true }`: a plan that already
+  has a task gets that task's row back unchanged, with nothing stored or
+  notified. `build`'s row carries `existing` (`true` for that case,
+  `false` for a new or re-armed task).

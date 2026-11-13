@@ -21,6 +21,7 @@
 pub mod card;
 pub mod modal;
 pub mod planning;
+pub mod policy;
 
 use libcontrols::{DrawContext, PopupItemKind, PopupRow, Rect};
 use libflankr_proto::ErrorObject;
@@ -67,6 +68,7 @@ pub struct Call {
 pub struct PluginOut {
     next_id: u64,
     calls: Vec<Call>,
+    builds: Vec<Build>,
     opens: Vec<ViewKind>,
     close: bool,
     redraw: bool,
@@ -112,10 +114,27 @@ impl PluginOut {
         self.close = true;
     }
 
+    /// The owner chose Build on a plan (plan 20261112_03, the 23:23 EST
+    /// amendment, item 2): the app arms it with the policy plugin and
+    /// sends the agent the build message.
+    pub fn build(&mut self, build: Build) {
+        self.builds.push(build);
+    }
+
     /// Its views changed: they are drawn again.
     pub fn redraw(&mut self) {
         self.redraw = true;
     }
+}
+
+/// A plan the owner chose Build on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Build {
+    /// `docs/design/<base>.md`.
+    pub path: String,
+    /// The front matter's `date`, `YYYY-MM-DD`.
+    pub date: String,
+    pub title: String,
 }
 
 /// A plugin's device half (decision 3.1, item 4). Coordinates given to
@@ -155,6 +174,30 @@ pub trait DevicePlugin {
     /// The item `id` of `item`'s popup menu was chosen; the menu has
     /// closed.
     fn menu_chosen(&mut self, _item: &str, _id: &str, _out: &mut PluginOut) {}
+    /// A line for the Finished card of `pane_id` it has a word on: the
+    /// card's serial and the line (plan 20261112_02, 2.7 item 2).
+    fn card_line(&self, _pane_id: &str) -> Option<(u64, String)> {
+        None
+    }
+    /// A confirmation ended, with plan 01's outcome.
+    fn confirm_resolved(&mut self, _confirm_id: u64, _outcome: &str) {}
+    /// Who the confirmation card names as asking, when this plugin asked
+    /// for `confirm_id` (2.7 item 3).
+    fn requester(&self, _confirm_id: u64) -> Option<&'static str> {
+        None
+    }
+    /// The Active tasks view's data, as last answered or told (plan
+    /// 20261112_03, 2.2): the policy plugin's only.
+    fn tasks(&self) -> Option<flankr_companion::policy::PolicyOverview> {
+        None
+    }
+    /// The decisions that came since last asked, oldest first.
+    fn take_decisions(&mut self) -> Vec<flankr_companion::policy::PolicyDecision> {
+        Vec::new()
+    }
+    /// The plans whose Build stands (their task exists, or its call is
+    /// on its way): Build is inactive for them.
+    fn set_building(&mut self, _paths: &std::collections::HashSet<String>) {}
 }
 
 /// Whether the daemon's plugin `version` is in a device half's `range`
@@ -269,6 +312,8 @@ pub struct Plugins {
     /// The pinned cards, oldest first: `(ns, key)`.
     cards: Vec<(String, String)>,
     dirty: bool,
+    /// Builds asked for, for the app to carry out.
+    builds: Vec<Build>,
 }
 
 impl Plugins {
@@ -280,12 +325,73 @@ impl Plugins {
             modal: None,
             cards: Vec::new(),
             dirty: false,
+            builds: Vec::new(),
         }
     }
 
     /// The app's built-in device halves.
     pub fn builtin() -> Self {
-        Plugins::new(vec![Box::new(planning::Planning::new())])
+        Plugins::new(vec![
+            Box::new(planning::Planning::new()),
+            Box::new(policy::Policy::new()),
+        ])
+    }
+
+    /// The active plugins' line for `pane_id`'s Finished card, if one has
+    /// a word on it: the card's serial and the line.
+    pub fn card_line(&self, pane_id: &str) -> Option<(u64, String)> {
+        self.halves
+            .iter()
+            .filter(|h| self.active(h.ns()))
+            .find_map(|h| h.card_line(pane_id))
+    }
+
+    /// A call to `ns`'s daemon half from the app itself (the Active tasks
+    /// view's glyph and Build), as if its half had asked.
+    pub fn call_on(&mut self, ns: &str, method: &str, params: Value) -> Vec<Outgoing> {
+        let method = method.to_string();
+        self.with_half(ns, move |_, out| {
+            out.call(&method, params);
+        })
+    }
+
+    /// The Active tasks view's data, while its plugin is active.
+    pub fn tasks(&self) -> Option<flankr_companion::policy::PolicyOverview> {
+        self.halves
+            .iter()
+            .filter(|h| self.active(h.ns()))
+            .find_map(|h| h.tasks())
+    }
+
+    /// Tells every half which plans' Build stands.
+    pub fn set_building(&mut self, paths: &std::collections::HashSet<String>) {
+        for h in &mut self.halves {
+            h.set_building(paths);
+        }
+        self.dirty = true;
+    }
+
+    /// The decisions that came since last asked.
+    pub fn take_decisions(&mut self) -> Vec<flankr_companion::policy::PolicyDecision> {
+        self.halves
+            .iter_mut()
+            .flat_map(|h| h.take_decisions())
+            .collect()
+    }
+
+    /// A confirmation ended: every half is told.
+    pub fn confirm_resolved(&mut self, confirm_id: u64, outcome: &str) {
+        for h in &mut self.halves {
+            h.confirm_resolved(confirm_id, outcome);
+        }
+    }
+
+    /// The plugin that asked for `confirm_id`, by the name its card shows.
+    pub fn requester(&self, confirm_id: u64) -> Option<&'static str> {
+        self.halves
+            .iter()
+            .filter(|h| self.active(h.ns()))
+            .find_map(|h| h.requester(confirm_id))
     }
 
     fn half(&self, ns: &str) -> Option<&dyn DevicePlugin> {
@@ -404,8 +510,14 @@ impl Plugins {
         self.apply(ns, out)
     }
 
+    /// The builds asked for since last taken.
+    pub fn take_builds(&mut self) -> Vec<Build> {
+        std::mem::take(&mut self.builds)
+    }
+
     fn apply(&mut self, ns: &str, out: PluginOut) -> Vec<Outgoing> {
         self.next_id = out.next_id;
+        self.builds.extend(out.builds.iter().cloned());
         if out.close && self.modal.as_deref() == Some(ns) {
             self.close_modal();
         }

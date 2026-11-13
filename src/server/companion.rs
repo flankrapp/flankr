@@ -431,6 +431,9 @@ pub(super) fn confirm_requested(
         reminder,
         text: question_text(view, &say),
         turn_id,
+        // When it is announced (plan 20261112_03, the 21:58 EST
+        // amendment, item 7).
+        at: Some(super::link::auth::now_rfc3339()),
     }
 }
 

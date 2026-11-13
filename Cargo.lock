@@ -1363,7 +1363,7 @@ checksum = "d45db016d36b838f563236e9193d0ee6ce38f3f68b6c94e914b4929c96bbb890"
 
 [[package]]
 name = "flankr"
-version = "0.7.11"
+version = "0.7.13"
 dependencies = [
  "async-compat",
  "async-trait",
@@ -1422,7 +1422,7 @@ dependencies = [
 
 [[package]]
 name = "flankr-companion"
-version = "0.8.5"
+version = "0.8.11"
 dependencies = [
  "base64 0.22.1",
  "flankr-speech",
@@ -2350,7 +2350,7 @@ dependencies = [
 
 [[package]]
 name = "libflankr_proto"
-version = "0.5.13"
+version = "0.5.15"
 dependencies = [
  "bip39",
  "blake2",
@@ -2370,7 +2370,7 @@ dependencies = [
 
 [[package]]
 name = "libherdr"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "async-trait",
  "log",

@@ -387,6 +387,10 @@ pub struct App {
     cache: u64,
     /// The clock touches and flings are timed by.
     started: Instant,
+    /// Builds asked of the policy plugin, by call id: the pane and the
+    /// message to send once the answer says the task is new (plan
+    /// 20261112_03, the 2026-11-13 00:09 EST amendment, item 2).
+    pending_builds: std::collections::HashMap<u64, (String, String, String)>,
     /// When the last frame was updated, for a fling's step.
     last_update: Instant,
     /// Links tapped in the agent view, opened once the touch is handled.
@@ -909,6 +913,7 @@ impl App {
                 self.online = true;
                 self.retry_in = None;
                 self.drawer.content_mut().set_retry(None);
+                self.ask_tasks();
             }
             Event::Disconnected { retry_in_ms } => {
                 self.online = false;
@@ -1019,6 +1024,9 @@ impl App {
                 command,
                 agent,
                 project,
+                pane_id,
+                requested_by,
+                at,
                 ..
             } => {
                 self.card_remote = None;
@@ -1029,7 +1037,20 @@ impl App {
                     project,
                     handle: label,
                     state: CardState::Waiting,
-                })
+                });
+                self.overview.tasks.set_now(self.started.elapsed());
+                self.overview.tasks.confirm_opened(
+                    &pane_id,
+                    confirm_id,
+                    &self
+                        .card
+                        .as_ref()
+                        .map(|c| c.command.clone())
+                        .unwrap_or_default(),
+                    &requested_by,
+                    at.as_deref(),
+                );
+                self.policy_shown();
             }
             // The remote in use's: its card, not a background remote's.
             Event::Answered {
@@ -1050,7 +1071,10 @@ impl App {
                 outcome,
             } if self.card_remote.is_none() => {
                 log::info!("confirmation {confirm_id}: {outcome}");
+                self.plugins.confirm_resolved(confirm_id, &outcome);
+                self.overview.tasks.confirm_resolved(confirm_id, &outcome);
                 self.set_card(confirm_id, CardState::Done(outcome));
+                self.policy_shown();
             }
             // The turn's feedback (plan 20261024_03, the 2026-10-30 22:08
             // EDT amendment): thinking from its start, a tool's label while
@@ -1110,6 +1134,8 @@ impl App {
                         .join(", ")
                 );
                 self.plugins.set_infos(list);
+                self.ask_tasks();
+                self.tasks_shown();
                 // A plugin's popup goes with it.
                 if let Some((ns, _)) = &self.popup
                     && !self.plugins.active(ns)
@@ -1122,7 +1148,11 @@ impl App {
                     screen.set_plugins(shown);
                 }
             }
-            Event::PluginResult(r) => self.plugin_calls(|p| p.result(r)),
+            Event::PluginResult(r) => {
+                self.build_answered(&r);
+                self.plugin_calls(|p| p.result(r));
+                self.tasks_shown();
+            }
             // A choice question's answer came back (plan 20261029_01):
             // its card's line, if its view is still open.
             Event::ChoiceAnswered {
@@ -1141,7 +1171,11 @@ impl App {
                     agent.choice_answered(&id, &outcome, &got, code);
                 }
             }
-            Event::PluginNotify(n) => self.plugin_calls(|p| p.notify(n)),
+            Event::PluginNotify(n) => {
+                self.plugin_calls(|p| p.notify(n));
+                self.policy_shown();
+                self.tasks_shown();
+            }
             Event::Agents(agents) => {
                 self.agents = agents;
                 self.follow_sessions();
@@ -1246,6 +1280,7 @@ impl App {
                     // amendment).
                     agent.set_thinking(thinking);
                 }
+                self.policy_shown();
             }
             // The audio played the chime.
             Event::Ding => log::info!("ding: an agent is done"),
@@ -1483,6 +1518,213 @@ impl App {
     /// Runs `f` on the plugins and sends the calls it gives, each with the
     /// agent view's pane as its session; a modal it opened starts at its
     /// top.
+    /// A tap in the Active tasks list (plan 20261112_03, 2.3 and 2.4).
+    fn tasks_hit(&mut self, hit: overview::plan_list::ListHit) {
+        use overview::plan_list::ListHit;
+        log::info!("active tasks: {hit:?}");
+        match &hit {
+            ListHit::Fold(_) => {}
+            ListHit::Autocontinue { path, on } => {
+                let method = if *on { "task_enable" } else { "task_disable" };
+                let params = serde_json::json!({ "path": path });
+                let ns = plugins::policy::NS;
+                self.plugin_calls(|p| p.call_on(ns, method, params));
+            }
+            ListHit::Agent(pane) => self.open_agent(pane.clone()),
+            ListHit::Answer { pane_id, yes } => {
+                self.overview.tasks.pressed(&hit);
+                self.send(Input::RespondTo {
+                    pane_id: pane_id.clone(),
+                    response: if *yes {
+                        Suggestion::Yes
+                    } else {
+                        Suggestion::No
+                    },
+                });
+            }
+            ListHit::Confirm {
+                confirm_id,
+                approve,
+            } => {
+                self.overview.tasks.pressed(&hit);
+                self.send(Input::Answer {
+                    confirm_id: *confirm_id,
+                    approve: *approve,
+                });
+            }
+            ListHit::Continue(pane) => {
+                self.overview.tasks.pressed(&hit);
+                self.send(Input::RespondTo {
+                    pane_id: pane.clone(),
+                    response: Suggestion::Continue,
+                });
+            }
+            ListHit::Settings => self.open_settings(),
+        }
+        self.overview.invalidate();
+    }
+
+    /// The Active tasks list, from the policy plugin as it stands (plan
+    /// 20261112_03, 2.2 item 6 and 2.5).
+    fn tasks_shown(&mut self) {
+        use overview::plan_list::Grouping;
+        let ns = plugins::policy::NS;
+        let grouping = if self.plugins.active(ns) {
+            Grouping::ByPlan
+        } else if self.plugins.availability(ns) == plugins::Availability::NeedsNewerFlankr {
+            Grouping::OlderFlankr
+        } else {
+            Grouping::PluginOff
+        };
+        let now = self.started.elapsed();
+        let tasks = &mut self.overview.tasks;
+        tasks.set_now(now);
+        for d in self.plugins.take_decisions() {
+            tasks.decision(d);
+        }
+        let data = self.plugins.tasks();
+        let grouping = if grouping == Grouping::ByPlan && data.is_none() {
+            Grouping::PluginOff
+        } else {
+            grouping
+        };
+        tasks.set_overview(data, grouping);
+        self.overview.invalidate();
+        self.building_shown();
+    }
+
+    /// Build on a plan (plan 20261112_03, the 22:21 and 23:23 EST
+    /// amendments): the policy plugin's `build` arms it and records the
+    /// task for the agent view's pane, then that agent is sent "approve
+    /// and build the <date> plan, <title>" through `agents.send`, the tap
+    /// its approval.
+    fn build_plan(&mut self, b: plugins::Build) {
+        if self.building().contains(&b.path) {
+            log::info!("build: {} has its task already; nothing sent", b.path);
+            return;
+        }
+        let Some(pane_id) = self.agent_pane.clone() else {
+            self.note = Some((
+                settings::copy::TASKS_BUILD_NO_AGENT.text.to_string(),
+                Role::Warn,
+            ));
+            self.screen.invalidate();
+            return;
+        };
+        let Some(text) = flankr_companion::policy::build_request(&b.date, &b.title) else {
+            log::warn!("build: {} has no date or title to name it by", b.path);
+            return;
+        };
+        log::info!("build: {} on {pane_id}", b.path);
+        let ns = plugins::policy::NS;
+        if !self.plugins.active(ns) {
+            // No policy to arm it: the owner's message only.
+            self.send(Input::SendMessage {
+                pane_id,
+                text,
+                label: "build".to_string(),
+            });
+            return;
+        }
+        // The message goes once the plugin says the task is new.
+        let params = serde_json::json!({ "path": b.path, "pane_id": pane_id, "once": true });
+        let calls = self.plugins.call_on(ns, "build", params);
+        for (ns, call) in calls {
+            if let Some(id) = call.id {
+                self.pending_builds
+                    .insert(id, (pane_id.clone(), text.clone(), b.path.clone()));
+            }
+            self.send(Input::PluginCall {
+                ns,
+                id: call.id,
+                method: call.method,
+                params: call.params,
+                session: Some(pane_id.clone()),
+            });
+        }
+        self.building_shown();
+    }
+
+    /// The policy's answer to a Build: a new task sends the build
+    /// message; a task it had already, or an error, sends nothing.
+    fn build_answered(&mut self, r: &libflankr_proto::companion::PluginResult) {
+        if r.ns != plugins::policy::NS {
+            return;
+        }
+        let Some((pane_id, text, path)) = self.pending_builds.remove(&r.id) else {
+            return;
+        };
+        match (&r.result, &r.error) {
+            (Some(row), None) if row.get("existing") == Some(&serde_json::json!(true)) => {
+                log::info!("build: {path} had its task already; nothing sent");
+            }
+            (Some(_), None) => {
+                log::info!("build: {path}: sending the build message to {pane_id}");
+                self.send(Input::SendMessage {
+                    pane_id,
+                    text,
+                    label: "build".to_string(),
+                });
+            }
+            (_, Some(e)) => {
+                log::warn!("build: {path}: {}", e.message);
+                self.note = Some((format!("Build: {}", e.message), Role::Warn));
+                self.screen.invalidate();
+            }
+            (None, None) => {}
+        }
+        self.building_shown();
+    }
+
+    /// The plans whose Build stands: a task in the policy's overview, or
+    /// a build call on its way.
+    fn building(&self) -> std::collections::HashSet<String> {
+        let mut paths: std::collections::HashSet<String> = self
+            .pending_builds
+            .values()
+            .map(|(_, _, p)| p.clone())
+            .collect();
+        if let Some(o) = self.plugins.tasks() {
+            paths.extend(o.plans.iter().filter(|p| p.task).map(|p| p.path.clone()));
+        }
+        paths
+    }
+
+    /// Tells the plan pages which Builds stand.
+    fn building_shown(&mut self) {
+        let paths = self.building();
+        self.plugins.set_building(&paths);
+    }
+
+    /// Asks the policy plugin for `overview`, while the Active tasks view
+    /// is the home view and the plugin is on.
+    fn ask_tasks(&mut self) {
+        let ns = plugins::policy::NS;
+        // Asked whichever the home view: Build needs to know the tasks.
+        if self.plugins.active(ns) {
+            self.plugin_calls(|p| p.call_on(ns, "overview", serde_json::json!({})));
+        }
+    }
+
+    /// The plan policy's word where it shows (plan 20261112_02, 2.7): the
+    /// line on the agent view's Finished card, and **Plan policy** as the
+    /// requester of a confirmation card it asked for.
+    fn policy_shown(&mut self) {
+        if let (Some(agent), Some(pane)) = (&mut self.agent, &self.agent_pane) {
+            agent.set_policy_line(self.plugins.card_line(pane));
+        }
+        if self.card_remote.is_none()
+            && let Some(card) = &mut self.card
+            && let Some(name) = self.plugins.requester(card.confirm_id)
+        {
+            let lead = format!("{name} \u{b7} ");
+            if !card.agent.starts_with(&lead) {
+                card.agent = format!("{lead}{}", card.agent);
+                self.screen.invalidate();
+            }
+        }
+    }
+
     fn plugin_calls(&mut self, f: impl FnOnce(&mut Plugins) -> Vec<Outgoing>) {
         let before = self.plugins.modal().map(|(ns, _)| ns.to_string());
         let calls = f(&mut self.plugins);
@@ -1497,6 +1739,10 @@ impl App {
             } else {
                 self.popup = None;
             }
+        }
+        let builds = self.plugins.take_builds();
+        for b in builds {
+            self.build_plan(b);
         }
         for (ns, call) in calls {
             log::info!("plugins: {ns} {}", call.method);
@@ -2650,8 +2896,14 @@ impl App {
         let voice_changed = settings.voice != self.settings.voice;
         let coding_changed = settings.read_aloud() != self.settings.read_aloud();
         let muted_changed = settings.muted != self.settings.muted;
+        let home_changed = settings.home_view != self.settings.home_view;
         self.settings = settings.clone();
         settings::set_current(settings.clone());
+        self.overview.set_home_view(settings.home_view);
+        if home_changed {
+            self.ask_tasks();
+            self.tasks_shown();
+        }
         if voice_changed {
             self.apply_voice();
         }
@@ -2865,6 +3117,7 @@ impl App {
         self.settings_screen = None;
         let mut overview = Overview::new();
         overview.shader_panels = self.panel_shader.is_some();
+        overview.set_home_view(self.settings.home_view);
         self.overview = overview;
         self.screen.invalidate();
         self.link = "not paired \u{b7} paste a pairing URL below".into();
@@ -3807,6 +4060,7 @@ impl App {
                 Some(OverviewHit::PluginCard { index, x, y, held }) => {
                     self.plugin_card_hit(index, x, y, held)
                 }
+                Some(OverviewHit::Tasks(hit)) => self.tasks_hit(hit),
                 None => {}
             }
             return;
@@ -4673,6 +4927,7 @@ impl MorphApp for App {
         ));
         let mut overview = Overview::new();
         overview.shader_panels = true;
+        overview.set_home_view(settings.home_view);
         // The pairing window's camera: Android (with `mobile-camera-qr`),
         // and the host's scripted tests that ask for it.
         #[cfg(test)]
@@ -4731,6 +4986,7 @@ impl MorphApp for App {
             models,
             cache: 0,
             started: Instant::now(),
+            pending_builds: Default::default(),
             last_update: Instant::now(),
             links: Vec::new(),
             build_info: settings::build_info::build_info(ctx),

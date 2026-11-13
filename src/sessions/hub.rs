@@ -40,7 +40,9 @@ use tokio::sync::{Notify, broadcast, mpsc};
 
 mod summaries;
 use summaries::SummaryJob;
-pub use summaries::{CARD_SUMMARIES_MAX, CardSummaries, CardSummarizer, CardSummary};
+pub use summaries::{
+    CARD_SUMMARIES_MAX, CardSummaries, CardSummarizer, CardSummary, CardSummaryEvent, PaneOf,
+};
 
 use super::journal::{Approval, Journal};
 use super::links::Linker;
@@ -941,6 +943,8 @@ pub struct Tailer {
     jobs: Option<mpsc::UnboundedSender<SummaryJob>>,
     /// The project named to the summariser: the cwd's last part.
     project: String,
+    /// The pane the session is in, as its last subscriber named it.
+    pane: Mutex<Option<PaneOf>>,
 }
 
 impl std::fmt::Debug for Tailer {
@@ -1007,7 +1011,19 @@ impl Tailer {
             summaries: Arc::new(CardSummaries::default()),
             jobs: None,
             project: String::new(),
+            pane: Mutex::new(None),
         })
+    }
+
+    /// Note the pane the session is in: its summaries are then sent on to
+    /// the plugins (plan 20261112_02, 2.2).
+    pub fn set_pane(&self, pane: PaneOf) {
+        *self.pane.lock().unwrap() = Some(pane);
+    }
+
+    /// The pane the session is in, as last noted.
+    pub fn pane(&self) -> Option<PaneOf> {
+        self.pane.lock().unwrap().clone()
     }
 
     /// This tailer with its cards summarised: given from `summaries`, and
@@ -1806,6 +1822,7 @@ impl Tailer {
             return;
         };
         let agent = self.agent_name(st);
+        let pane = self.pane();
         let finished: Vec<&Section> = cards.iter().filter(|c| is_bookend(c)).collect();
         let new: Vec<&Section> = if primed {
             finished
@@ -1831,6 +1848,7 @@ impl Tailer {
                 project: self.project.clone(),
                 reply,
                 wake: Arc::clone(&self.wake),
+                pane: pane.clone(),
             });
         }
     }
@@ -1943,6 +1961,8 @@ pub struct SessionHub {
     /// Where new Finished cards go to be summarised, once a summariser is
     /// set.
     jobs: Mutex<Option<mpsc::UnboundedSender<SummaryJob>>>,
+    /// Each summary kept for a card whose pane is known.
+    card_events: broadcast::Sender<CardSummaryEvent>,
 }
 
 impl SessionHub {
@@ -1957,14 +1977,25 @@ impl SessionHub {
             tailers: Mutex::new(HashMap::new()),
             summaries: Arc::new(CardSummaries::default()),
             jobs: Mutex::new(None),
+            card_events: broadcast::channel(64).0,
         })
+    }
+
+    /// Each Finished card's summary as it is kept, with its pane (plan
+    /// 20261112_02, 2.2).
+    pub fn card_summaries(&self) -> broadcast::Receiver<CardSummaryEvent> {
+        self.card_events.subscribe()
     }
 
     /// Summarise each new Finished card once with `summarizer`
     /// (`[summary] cards`), for the tailers started from now. Needs a
     /// tokio runtime; without one, nothing is summarised.
     pub fn summarize_cards_with(&self, summarizer: Arc<dyn CardSummarizer>) {
-        let jobs = summaries::spawn_worker(summarizer, Arc::clone(&self.summaries));
+        let jobs = summaries::spawn_worker(
+            summarizer,
+            Arc::clone(&self.summaries),
+            self.card_events.clone(),
+        );
         if jobs.is_none() {
             log::warn!("no runtime for the card summaries; cards are not summarised");
         }
@@ -1992,12 +2023,28 @@ impl SessionHub {
         cwd: Option<&str>,
         located: &Located,
     ) -> std::io::Result<(Arc<Tailer>, broadcast::Receiver<Arc<Batch>>, Snapshot)> {
+        self.subscribe_in(agent, cwd, located, None).await
+    }
+
+    /// [`SessionHub::subscribe`] for the session in `pane`, noted on the
+    /// tailer before it first reads, so its cards' summaries are sent on
+    /// with it (plan 20261112_02, 2.2).
+    pub async fn subscribe_in(
+        self: &Arc<Self>,
+        agent: &str,
+        cwd: Option<&str>,
+        located: &Located,
+        pane: Option<PaneOf>,
+    ) -> std::io::Result<(Arc<Tailer>, broadcast::Receiver<Arc<Batch>>, Snapshot)> {
         loop {
             // Subscribed under the hub's lock, so the tailer cannot leave
             // in between.
             {
                 let tailers = self.tailers.lock().unwrap();
                 if let Some(t) = tailers.get(located.root()) {
+                    if let Some(pane) = &pane {
+                        t.set_pane(pane.clone());
+                    }
                     let (rx, snapshot) = t.subscribe();
                     return Ok((Arc::clone(t), rx, snapshot));
                 }
@@ -2024,6 +2071,9 @@ impl SessionHub {
                 continue; // another subscriber started one meanwhile
             }
             let tailer = Arc::new(opened);
+            if let Some(pane) = &pane {
+                tailer.set_pane(pane.clone());
+            }
             tailers.insert(located.root().to_path_buf(), Arc::clone(&tailer));
             let (rx, snapshot) = tailer.subscribe();
             tokio::spawn(Arc::clone(&tailer).run(Arc::downgrade(self)));

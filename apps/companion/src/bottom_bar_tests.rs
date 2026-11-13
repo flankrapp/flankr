@@ -368,6 +368,9 @@ fn voices_and_a_ding() -> Vec<Event> {
         Event::Say("The tests pass.".into()),
         Event::Say("Claude in flankr is done.".into()),
         Event::Confirm {
+            at: None,
+            pane_id: String::new(),
+            requested_by: String::new(),
             confirm_id: 7,
             text: "Approve running the tests?".into(),
             label: None,
@@ -632,6 +635,9 @@ fn asking_turn() -> Vec<(u32, Event)> {
         (
             READY + 3,
             Event::Confirm {
+                at: None,
+                pane_id: String::new(),
+                requested_by: String::new(),
                 confirm_id: 9,
                 text: "Approve sending \"What did we ship today?\" to Claude?".into(),
                 label: Some("ask-what-did-we".into()),

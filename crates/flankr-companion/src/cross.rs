@@ -386,6 +386,7 @@ mod tests {
 
     fn agent(pane: &str, session: Option<&str>, turn: Option<Turn>) -> AgentInfo {
         AgentInfo {
+            worktree: None,
             pane_id: pane.to_string(),
             name: Some(format!("Claude in {pane}")),
             spoken: None,

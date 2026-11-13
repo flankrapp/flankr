@@ -4593,3 +4593,200 @@ How it is read, within the amendment:
 5. The line's height is part of the list's end, so a view at its end
    follows it into view, and one scrolled back does not move, as item 2
    asks.
+
+## 2026-11-12 22:26 EST — Plan policy agent: approved, implementation starting; daemon 0.7.12, libherdr 0.3.2, flankr-companion 0.8.6, app 0.7.21
+
+Plan: the plan policy agent plan (20261112_02), approved by the owner on
+2026-11-12 with its 21:58, 22:03 and 22:17 EST amendments, and the
+owner's change of 22:25 and 22:28 EST (Build arms a plan and creates an
+active task, managed in the Active tasks view), which goes into the plan
+as one amendment in the commit that starts implementing it. The active
+plans home view plan (20261112_03) follows in the same worktree, with its
+own start entry.
+
+Steps, in the plan's order, one crate per commit, patch bumps only:
+
+1. Daemon: the plugin skeleton, `dev.flankr.plugins.policy`, off by
+   default; `[llm.uses.policy]`; `state` and `pause`.
+2. Daemon: the task store (`approvals.toml`): `plans`, `build`,
+   `task_enable`, `task_disable`, `task_remove`, the `approval`
+   notification, `can_approve` enforced.
+3. Daemon: the hub's card summary broadcast, `on_card_summary`, plan
+   matching, the hard rules, the `decision` notification and log line.
+4. Daemon: the `plan_policy` prompt and judgement, `ask model` on any
+   failure.
+5. Daemon: continuing through `policy::check` and the broker, the
+   `limit` rule; daemon 0.7.12 and its `UPDATES.md` entry.
+6. libherdr 0.3.2: the `worktree.*` wrappers.
+7. Daemon: worktree detection and `worktree_create`.
+8. flankr-companion 0.8.6: `policy.rs`.
+9. App: the policy line on Finished cards and the plugin's state;
+   arming and the task list land with the Active tasks view of plan
+   20261112_03; app 0.7.21.
+
+## 2026-11-12 22:47 EST — Plan policy agent: the owner's rulings, and departures
+
+Plan: the plan policy agent plan (20261112_02), frozen. Two owner rulings
+of 2026-11-12, relayed by the lead, and the small departures needed to
+build it, which the owner accepted as proposed.
+
+Owner rulings:
+
+1. **"use lightweight hash on full file."** The task store keeps `hash`,
+   FNV-1a 64 of the whole plan file in hex, in place of 2.3 item 1's
+   `sha256` of the file: no hash crate is in `Cargo.lock`, so none is
+   added, and the file is read whole, not cut at 64 KiB (steps 2 and 3).
+2. **"right a multiplechoice question blocks the task."** A choice
+   question from the agent gives `ask`, rule `question`, and blocks the
+   pane's task: autocontinue sends nothing for it until the question is
+   answered by the owner through the existing paths, or is gone from the
+   pane; the task's state shows it blocked, with the question, in the
+   `state` and `approval` notifications. This replaces the 22:03
+   amendment's item 2, "the option that accepts continuing", for choice
+   questions (step 3).
+
+Departures (Rule 1.7):
+
+3. **`NOT_PERMITTED` from a plugin** (step 1): the host passed only
+   `INVALID_PARAMS`, `METHOD_NOT_FOUND`, `CANCELLED` and the plugins'
+   own codes; 2.2 says callers that may not approve get `NOT_PERMITTED`,
+   so the host now passes that code too.
+4. **No decision for an agent not in `agents`** (step 3): 2.1 item 2 says
+   that with `agents = []` the plugin "produces decisions for nothing";
+   the rule table's `agent → stop` would send a decision for every
+   Finished card of every other agent. 2.1 is followed: such a card is
+   not judged and nothing is emitted.
+5. **Autocontinue off gives `ask`** (step 3): a card on an armed plan
+   whose task has autocontinue off is decided `ask`, rule
+   `autocontinue_off`, and nothing is sent, as the 21:58 amendment's
+   "arming alone never sends anything" asks.
+6. **The newest card after `quiet_secs`** (step 3): as the 22:17
+   amendment's item 7 settles it, a card is kept for `quiet_secs`, and
+   only if no newer card came from its pane meanwhile do the rules run;
+   the `quiet` row of the table is that wait, not a decision.
+7. **`worktree_create` without `base`** (step 7): the plugin's one
+   declared command is `git worktree list --porcelain` (2.2), so it does
+   not read HEAD; herdr's `worktree.create` is sent without `base`, and
+   herdr starts the branch from the checkout's HEAD, which is what 2.8
+   item 3 asks for.
+
+## 2026-11-12 23:22 EST — Active plans home view: approved by the owner's instruction to build it; implementation starting; libflankr_proto 0.5.14, daemon 0.7.13, flankr-companion 0.8.7, app 0.7.22
+
+Plan: the active plans home view plan (20261112_03), with its 21:58,
+22:03, 22:12, 22:21 and 22:18 EST amendments. The owner's instruction of
+2026-11-12 22:25 EST to build it in this worktree after the plan policy
+agent plan is its approval; the owner's change of 22:25 and 22:28 EST
+(Build creates an active task; the view is titled Active tasks; its
+right-side glyph is the task's autocontinue) goes into the plan as one
+amendment in the commit that starts implementing it.
+
+Steps, in the plan's order as its 21:58 amendment, item 4, extends them,
+one crate per commit, patch bumps only:
+
+0a. libflankr_proto 0.5.14: `AgentInfo::worktree` and
+    `ConfirmRequested::at`, appended and optional.
+0b. Daemon: each agent's worktree from herdr's `worktree.list` (local
+    herdr), and `at` on `confirm.requested`.
+1. Daemon: the plugin's `overview` call and notification, the
+   `plan_match` prompt (the 22:03 amendment's item 1), coalesced to one
+   notice per 500 ms; daemon 0.7.13 and its `UPDATES.md` entry.
+2. flankr-companion 0.8.7: `PolicyOverview` and its join.
+3. App: the Settings row Home view, saved as `home_view`.
+4. App: the Active tasks list, without events.
+5. App: events in place, Build on the plans screen; app 0.7.22.
+
+## 2026-11-12 23:36 EST — Active plans home view: departures so far
+
+Plan: the active plans home view plan (20261112_03), frozen. Small
+departures needed to build its first steps (Rule 1.7), and two for the
+owner.
+
+1. **`plan_match` reads the reply and summary only** (step 1, the 22:03
+   amendment's item 1): the card summary the plugin is handed carries no
+   owner messages from the transcript, so "the session's recent prompts"
+   are not in the prompt yet. The plans offered are the pane's own
+   project's active plans; plans in other repositories are not offered
+   (the 21:58 amendment's item 2's cross-repository grouping is not
+   built yet).
+2. **The `question` link is not a separate source**: the 21:58
+   amendment folded it into the prompt match, and the 22:03 amendment
+   replaced that with `plan_match`, which sees the reply's question.
+3. **`at` on `confirm.requested`** (0b): libflankr_proto 0.5.14 added it
+   to `common::ConfirmRequested`, which non-companion clients get; the
+   phone's `companion::ConfirmRequested` has no `at` yet. Adding it is
+   another additive libflankr_proto patch (0.5.15), past the numbers the
+   owner set for this work, so it waits for the owner. The time sent is
+   when the confirmation is announced.
+4. **Step 3 without an app version bump**, as the plan's step 3 says,
+   though FLANKR RULE 1.3 asks a bump for every user-visible commit: the
+   Settings row shows but changes nothing until the Active tasks list
+   lands. For the owner to rule on.
+
+## 2026-11-12 23:41 EST — Active plans home view: the lead's rulings on the open items
+
+Plan: the active plans home view plan (20261112_03). The owner said
+"continue and keep building"; the lead's rulings on the items of the
+previous entry:
+
+1. The phone's confirmation time: libflankr_proto 0.5.15 adds `at` to
+   `companion::ConfirmRequested`, the daemon fills it, and
+   flankr-companion 0.8.8 carries it on `Event::Confirm` with the pane
+   and requester. The daemon's version does not change for it (FLANKR
+   RULE 2: only the phone shows it).
+2. FLANKR RULE 1.3 stands: commit `ec60d99` (the Home view Settings
+   row) made a visible change without its bump. App 0.7.22, at step 5,
+   carries it, and its `apps/UPDATES.md` entry lists the row with the
+   Active tasks view. No build after `ec60d99` is installed before
+   0.7.22.
+3. No daemon bump for `worktree_create`, as proposed.
+
+## 2026-11-12 23:58 EST — Active plans home view: departures in steps 4 and 5
+
+Plan: the active plans home view plan (20261112_03), frozen. Small
+departures needed to build its steps 4 and 5 (Rule 1.7):
+
+1. **Steps 4 and 5 in one app commit** (`2d82738`): the list, its events
+   and Build share the overview's wiring in `lib.rs`, and the app's one
+   bump, 0.7.22, carries them and the Home view row.
+2. **Order** (the 21:58 amendment, items 2 and 3): groups come in the
+   daemon's order (tasks first, then newest plan first), and agents in
+   the daemon's link order, without the re-sort by recent activity or
+   the per-project sub-headers; an agent's project is not yet shown as
+   its own header. The list does not move under the owner's finger.
+3. **Events**: one open question per pane, from `agents.list`, shown
+   last; confirmations reach the list one at a time, as the client asks
+   them (`Event::Confirm` is given for the front of its queue only).
+   Subagents' questions are not listed under their parent.
+4. **Build** is on the planning plugin's plan page, not yet in the
+   file preview; it uses the agent view's pane, and with no agent view
+   open it says to open one first.
+5. **flankr-companion 0.8.9** adds `Input::RespondTo` and
+   `Input::SendMessage`, so the list's buttons and Build answer any
+   listed pane without opening its view; and `policy::build_message`.
+
+## 2026-11-13 00:26 EST — Active plans home view: the owner's Build report, and its decisions
+
+Plan: the active plans home view plan (20261112_03), its 2026-11-13
+00:09 EST amendment. The owner's report of 2026-11-13: "one of the
+agents has a plan that still shows as Draft in the plans list dropdiwn,
+build should approve and build whivh updatws the frontmatter as first
+step". It concerned a plan in another of the owner's repositories:
+Build was tapped three times and sent its message three times, and the
+agent recorded its approval but left `status: Draft`.
+
+Decisions, as the lead agreed:
+
+1. **`once` instead of a minor bump.** Making the policy plugin's
+   `build` idempotent for every caller would change behaviour a caller
+   can observe, a minor bump (0.2.0) under Critical Rule 5.4. Instead
+   `build` takes an optional `once: true` and answers `existing`;
+   without it, it is as before. Plugin 0.1.2, a patch. Whether `build`
+   should become idempotent outright, as 0.2.0, is left for the owner.
+2. **`build_message` is kept** as it was, and flankr-companion 0.8.10
+   adds `build_request` with the status clause (additive); 0.8.11 fixes
+   its symbols to what the daemon's filter takes unchanged.
+3. **No daemon version change** (FLANKR RULE 2): the person running
+   `flankr` sees only a log line; the app's 0.7.23 entry says what
+   changed.
+4. The optional "Build sent" mark in the plans list is not built; the
+   plan page's Building covers it.

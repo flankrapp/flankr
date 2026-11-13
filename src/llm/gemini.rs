@@ -29,7 +29,7 @@ pub fn default_choice(use_: Use) -> ModelChoice {
             tier: Tier::Flash,
             age: Age::Newest,
         },
-        Use::CardSummaries | Use::SpokenSummaries => ModelChoice::Rule {
+        Use::CardSummaries | Use::SpokenSummaries | Use::Policy => ModelChoice::Rule {
             tier: Tier::FlashLite,
             age: Age::Oldest,
         },
