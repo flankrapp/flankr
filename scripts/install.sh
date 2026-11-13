@@ -15,7 +15,7 @@
 # A remote must be the same OS and CPU as this machine.
 #
 # Environment: CARGO_TARGET_DIR (default target-main), HERDR_SRC (default
-# vendor/herdr).
+# external/herdr).
 set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -38,7 +38,7 @@ done
 [ -n "$remotes" ] || local_install=1
 
 if [ -n "$build" ]; then
-    (cd "$root" && HERDR_SRC=${HERDR_SRC:-$root/vendor/herdr} \
+    (cd "$root" && HERDR_SRC=${HERDR_SRC:-$root/external/herdr} \
         CARGO_TARGET_DIR=$target CARGO_INCREMENTAL=0 \
         cargo build --release -p flankr)
 fi

@@ -1,4 +1,4 @@
-[submodule "vendor/herdr"]
-	path = vendor/herdr
+[submodule "external/herdr"]
+	path = external/herdr
 	url = https://github.com/herdrdev/herdr
 	shallow = true
