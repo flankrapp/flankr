@@ -4806,3 +4806,14 @@ Plan: the active plans home view plan (20261112_03), its 2026-11-13
    task shows as a new question row, which brings the task back.
 4. **flankr-companion 0.8.12** adds `Input::ListAgents` for the refresh;
    the daemon does not change.
+
+## 2026-11-13 01:33 EST — plan 20261112_01 (flankr under Apache-2.0): steps 2 to 5 merged
+
+[flankr under Apache-2.0](docs/design/20261112_01_APACHE_LICENSE_PLAN.md).
+The licence and README changes, prepared on a review branch on the
+owner's 2026-11-12 instruction, are merged on the owner's instruction of
+2026-11-13 ("merge and push the licence branch"), merge commit 6f145ad.
+Departure (Rule 1.7): the branch's commits came before the plan's status
+change, which is made here, after the merge, with the amendment recording
+the owner's text rules and the steps' commits. Step 1 (the submodule
+move) is still to do.

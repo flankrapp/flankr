@@ -1,7 +1,7 @@
 ---
 title: flankr under Apache-2.0, with libherdr_term's own licence and the companion app's notices
 date: 2026-11-12
-status: Draft
+status: In implementation
 covers:
   - "The whole flankr project licensed Apache-2.0: a root LICENSE, a
     `license` field in every flankr manifest, and a Licence section in the
@@ -379,3 +379,46 @@ replaces the earlier text as follows.
    4. The launcher icon's line ("from a source image made with Gemini")
       stays: it records where the icon came from, which bears on its
       licence.
+
+## Amendment — 2026-11-13 01:33 EST: the owner's text rules, the merge, and implementation started
+
+The owner, on 2026-11-12, after the 15:55 EST amendment: "uee a subagent
+and Claude worktree to prepate proposed readme and l8cense changes. be
+clear thst voice models are downloaded separately and include the model
+card references, b7t don't imply they're shipped in the codebase. dint
+mention other projects by name or reuse the exact language except in
+reference to the voice models. the long disclaimer and detailed
+explanation should be shortened and clear to users. dont merge any of
+this until explicitly approved." Then, on 2026-11-13: "merge and push the
+licence branch". This replaces, where they disagree, decision 6 and the
+15:55 EST amendment's item 1:
+
+1. The main README's **Use at your own risk** is one short paragraph:
+   keyboard input through herdr, placed heuristically, the same as typing
+   it yourself, Apache-2.0 "AS IS" with sections 7 and 8 of LICENSE. The
+   quoted text of the 15:55 amendment is not used.
+2. The companion app's README says the voice models are downloaded
+   separately and are not in the repository or the APK, links each
+   model card (Kyutai's STT, CC-BY-4.0 for the weights; Gradium's Phonon
+   and its voices, Apache-2.0), and names no other project, nor where
+   any code, script or text came from; dependencies appear only as rows
+   of its licence table. The font licence copies keep libmsdf's file
+   names but the README does not name the library they came from.
+3. The steps were built out of order on a branch made for review and
+   merged on the owner's instruction (merge commit 6f145ad): step 2
+   (libherdr_term, 862e6ca), step 3 (the app, e23b6c6), step 4 (the root
+   LICENSE and README sections, c4a5f65), step 5 (the license fields,
+   1309488 to 9601b0d). Step 1, the move of the submodule to
+   external/herdr, is not done; libherdr_term's README describes
+   vendor/herdr until it is.
+4. Open, from the review: the STT repository states a licence only for
+   its weights, not its tokenizer and config; the quantized model file
+   the app loads is not published, and how users get it is undecided; the
+   font licence copies come from a newer libmsdf than the app pins; two
+   origin comments remain in apps/companion/Cargo.toml and the push
+   scripts.
+
+## Amendment — 2026-11-13 01:33 EST: implementation started; this document is now immutable
+
+Steps 2 to 5 are merged (above). From here the plan changes only on the
+owner's explicit instruction.
