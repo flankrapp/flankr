@@ -439,3 +439,8 @@ These changes came before the app had version numbers.
 
 **Added**
 - A plan's row says how many of its open questions are still unanswered ("3 open questions").
+
+## 0.7.28 — 2026-11-13
+
+**Fixed**
+- When an agent asks you to go ahead without a question mark ("Say go and I'll draft it", "Say the word and I'll carry on"), or asks and then adds a one-line note ("Still holding the test, unstarted."), its reply now shows as a question card with Yes and No, pinned until you answer. Before, it showed as a finished turn, and only the spoken summary asked the question, with nothing to tap. Needs the daemon 0.7.15 or later.
