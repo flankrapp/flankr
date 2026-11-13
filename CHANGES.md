@@ -4932,3 +4932,37 @@ the count needs. Steps, in order:
 
 Steps 2 to 4 of the plan questions plan (the answers message, the plan
 page's answers, the plans table's badge) are not part of this work.
+
+## 2026-11-13 02:58 EST — Active tasks by project, and plans' open questions: departures
+
+Plans: the active plans home view plan (20261112_03), its 2026-11-13
+01:52 EST amendment; and the plan questions plan (20261113_02), step 1.
+Small departures (Rule 1.7):
+
+1. **flankr-companion is 0.8.15, not 0.8.13.** The 01:52 EST amendment's
+   item 7 names 0.8.13; 0.8.14 was released on another branch first, so
+   this work takes 0.8.15. The app is 0.7.27, as the amendment says.
+2. **Which amendment answers a question** (the plan questions plan,
+   decision 2): the numbers an amendment names next to "open
+   question(s)" win over its subject; the subject answers every item
+   only when the amendment names no numbers. A subject answers all when
+   it calls the open questions answered, settled or approved, or gives
+   the owner's answers (`answers:`, `owner's answers`), not on any use
+   of the word "answers": plan 20261112_02's 22:03 EST subject,
+   "autocontinue only answers the agent's own continue question", would
+   otherwise have answered every item.
+3. **Recommendations** include a sentence with `(recommended,` as well
+   as `(recommended)`; plan 20261112_03's item 3 is written that way.
+4. **Step 1's Done when** says items 1 to 6 of plan 20261112_03 are
+   answered by its 21:58 EST amendment; that amendment also names open
+   questions 7 and 8 (in its items 7 and 6), so eight are answered and
+   item 9, named only in part, stays open. The test checks against
+   copies of the two plans in `tests/fixtures/plan_questions/` rather
+   than the planning fixture, so the list fixture's tests are unchanged.
+5. **The policy plugin 0.1.3** lists every Draft or In implementation
+   plan of the projects it has read, which can be many in a long-running
+   repository; they are one row each with no children.
+6. **The plan row's tap** opens the agent view of its first agent; a plan
+   with no agent folds (it has no children to fold). A project's line
+   folds its plans. **Not on a plan** keeps its agent lines, since it has
+   no plan row to carry them.
