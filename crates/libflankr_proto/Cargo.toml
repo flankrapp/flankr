@@ -3,6 +3,7 @@ name = "libflankr_proto"
 version = "0.5.12"
 edition = "2024"
 description = "Wire types for flankr's protocols: flankr.harness, flankr.companion and flankr link"
+license = "Apache-2.0"
 
 [features]
 # The encrypted link layer (docs/design/20261022_02_LINK_AND_COMPANION_PLAN.md).
