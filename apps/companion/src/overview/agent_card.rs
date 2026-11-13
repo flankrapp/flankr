@@ -395,6 +395,7 @@ pub(crate) mod tests {
     /// An agent in tab `tab` of workspace `ws`, with `turn`.
     pub(crate) fn agent(pane: &str, ws: &str, tab: u32, turn: Option<Turn>) -> AgentInfo {
         AgentInfo {
+            worktree: None,
             pane_id: pane.to_string(),
             name: Some(format!("Claude in flankr, tab {tab}-fl")),
             spoken: None,

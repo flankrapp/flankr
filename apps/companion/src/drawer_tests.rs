@@ -53,6 +53,7 @@ fn remote(n: u8, name: &str, active: bool) -> RemoteInfo {
 
 fn agent(pane: &str, tab: u32) -> AgentInfo {
     AgentInfo {
+        worktree: None,
         pane_id: pane.into(),
         name: Some(format!("Claude {pane}")),
         spoken: None,

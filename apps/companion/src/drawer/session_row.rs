@@ -292,6 +292,7 @@ pub(crate) mod tests {
     /// A Claude Code pane in tab `tab`.
     pub(crate) fn agent(pane: &str, tab: Option<u32>, turn: Option<Turn>) -> AgentInfo {
         AgentInfo {
+            worktree: None,
             pane_id: pane.to_string(),
             name: Some("Claude".to_string()),
             spoken: None,

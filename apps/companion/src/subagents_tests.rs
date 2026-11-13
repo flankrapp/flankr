@@ -81,6 +81,7 @@ fn children() -> Vec<ChildInfo> {
 
 fn agent(children: Vec<ChildInfo>) -> AgentInfo {
     AgentInfo {
+        worktree: None,
         pane_id: "p1".into(),
         name: Some("Claude p1".into()),
         spoken: None,

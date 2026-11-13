@@ -1133,7 +1133,7 @@ dependencies = [
 
 [[package]]
 name = "flankr-companion"
-version = "0.8.6"
+version = "0.8.7"
 dependencies = [
  "base64 0.22.1",
  "flankr-speech",
@@ -1667,7 +1667,7 @@ dependencies = [
 
 [[package]]
 name = "libflankr_proto"
-version = "0.5.13"
+version = "0.5.14"
 dependencies = [
  "bip39",
  "blake2",
