@@ -116,12 +116,20 @@ pub struct Extracted {
     pub items: BTreeSet<String>,
 }
 
-/// The submodule's root: `HERDR_SRC` when set, else `vendor/herdr` two
-/// levels above the crate.
+/// The submodule's root: `HERDR_SRC` when set, else `external/herdr` two
+/// levels above the crate, falling back to `vendor/herdr` while the
+/// submodule moves (plan 20261112_01, step 1).
 pub fn herdr_root(manifest_dir: &Path, herdr_src: Option<&str>) -> PathBuf {
     match herdr_src {
         Some(dir) if !dir.is_empty() => PathBuf::from(dir),
-        _ => manifest_dir.join("../../vendor/herdr"),
+        _ => {
+            let external = manifest_dir.join("../../external/herdr");
+            if external.join("src").is_dir() {
+                external
+            } else {
+                manifest_dir.join("../../vendor/herdr")
+            }
+        }
     }
 }
 
