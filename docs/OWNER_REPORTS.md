@@ -684,3 +684,26 @@ the log does not show what they did.
 keyboard (the daemon's input-row recognisers on a real Claude Code screen,
 the rows reaching the app, the tap's row mapping), the 200 ms drop, and a
 log line for each terminal tap's outcome.
+
+## 2026-11-13 00:09 EST — Owner: Build leaves a Draft plan showing Draft
+
+Device: Galaxy S23 Ultra (app 0.7.22, daemon 0.7.13, both from the
+unmerged plan-policy branch, with the Plan policy plugin on).
+
+**Report.** "one of the agents has a plan that still shows as Draft in the
+plans list dropdown, build should approve and build which updates the
+frontmatter as first step". The plan is in another of the owner's
+repositories; the owner asked that the app it belongs to is not named in
+any plan document here.
+
+**Seen** (the daemon's log, 2026-11-13 05:04 to 05:05 UTC). Build was
+tapped three times (05:04:40, :45, :52): each tap armed the plan in the
+policy's store and sent the 70-character build message to the agent's
+pane, so the agent received it three times. The agent then committed an
+"approved and frozen" amendment to the plan (00:05:42 EST) but left its
+front-matter `status: Draft`, which is what the plans list shows.
+
+**In hand.** Handed to the plan-policy branch's subagent: Build's message
+asks the agent to set the plan's status first; one Build per plan until
+the task is removed, with the button showing it was sent; recorded as an
+amendment to the Active plans home view plan.
