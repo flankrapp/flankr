@@ -1537,6 +1537,12 @@ impl App {
             ListHit::Agent(pane) => self.open_agent(pane.clone()),
             ListHit::Answer { pane_id, yes } => {
                 self.overview.tasks.pressed(&hit);
+                // The open view's agent: its card is answered.
+                if self.agent_pane.as_ref() == Some(pane_id)
+                    && let Some(agent) = &mut self.agent
+                {
+                    agent.answered_pinned();
+                }
                 self.send(Input::RespondTo {
                     pane_id: pane_id.clone(),
                     response: if *yes {
@@ -3182,6 +3188,10 @@ impl App {
             .flatten()
             .map(|d| d.text.clone());
         let Some(text) = other else {
+            // A reply to the pinned question card answers it.
+            if let Some(agent) = self.agent.as_mut().filter(|a| a.replying_to().is_some()) {
+                agent.answered_pinned();
+            }
             self.send(Input::Submit);
             return;
         };
@@ -3359,13 +3369,28 @@ impl App {
                 }
                 self.send(Input::Respond(Suggestion::Discuss));
             }
-            AgentHit::Suggest(suggestion) => self.send(Input::Respond(suggestion)),
+            // An answer: the card it answers is not answered again by a
+            // drag (owner report, 2026-11-13 01:42 EST).
+            AgentHit::Suggest(suggestion) => {
+                if matches!(
+                    suggestion,
+                    Suggestion::Yes | Suggestion::No | Suggestion::Approve | Suggestion::Implement
+                ) && let Some(agent) = &mut self.agent
+                {
+                    agent.answered_pinned();
+                }
+                self.send(Input::Respond(suggestion));
+            }
             // One of the daemon's answers (plan 20261027_06, step 4): one
             // that opens the message card takes it in reply to the card.
             AgentHit::Answer { index, opens, .. } => {
                 if let Some(answer) = self.agent.as_ref().and_then(|a| a.answer(index)) {
-                    if opens && let Some(agent) = &mut self.agent {
-                        agent.begin_reply();
+                    if let Some(agent) = &mut self.agent {
+                        if opens {
+                            agent.begin_reply();
+                        } else if answer.answers {
+                            agent.answered_pinned();
+                        }
                     }
                     self.send(Input::Suggested(answer));
                 }
@@ -5876,6 +5901,8 @@ pub(crate) mod probe {
         /// The agent view's first question card record (`AgentHit::Reply`)
         /// on screen, and the card the message replies to, by title.
         pub reply: Option<Rect>,
+        /// The agent view's question card's Yes, on screen.
+        pub yes: Option<Rect>,
         /// The agent view's scroll offset.
         pub agent_offset: Option<f32>,
         pub replying_to: Option<String>,
@@ -6070,6 +6097,11 @@ pub(crate) mod probe {
                 .agent
                 .as_ref()
                 .and_then(|a| a.rect_of(crate::agent::AgentHit::Reply)),
+            yes: app.agent.as_ref().and_then(|a| {
+                a.rect_of(crate::agent::AgentHit::Suggest(
+                    flankr_companion::Suggestion::Yes,
+                ))
+            }),
             replying_to: app
                 .agent
                 .as_ref()

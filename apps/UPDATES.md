@@ -409,3 +409,9 @@ These changes came before the app had version numbers.
 - Swipe a question, approval or plan policy decision sideways to hide it from Active tasks. Hiding only tidies the list: nothing is answered, approved or denied, and an open question or approval still shows on the cards and in the agent view.
 - Swipe a plan's header sideways to hide the whole task until something new happens under it, or its state changes (switched on or off, its status or its step). Hiding does not stop the task or its autocontinue.
 - While anything is hidden, the last line says how many, with Show to bring them all back.
+
+## 0.7.26 — 2026-11-13
+
+**Fixed**
+- Answering a question card (its Yes or No, approve or implement, one of the agent's answers, a typed or spoken reply, or Yes or No in Active tasks) now takes the card away at once; it no longer stays pinned after you answer.
+- Dragging away a question card you have already answered only puts it away: it no longer sends No to the agent. A question you have not answered is still answered No when dragged away, as before.
