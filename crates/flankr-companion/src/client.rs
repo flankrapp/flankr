@@ -263,6 +263,10 @@ pub enum Input {
     /// where the view is, and a fetch of the newest screen's contents,
     /// whatever their revs. [`Event::Refreshed`] says when it is done.
     Refresh,
+    /// Lists the agents now, unless a list is on its way or the client is
+    /// offline: the Active tasks view's pull to refresh (plan
+    /// 20261112_03, the 2026-11-13 01:05 EST amendment). Added in 0.8.12.
+    ListAgents,
     /// A summary card's play button: say its spoken text again (the
     /// 12:03 EDT amendment, item 3). Nothing with sound off.
     Replay(String),
@@ -3043,6 +3047,11 @@ impl State {
                 log::debug!("{input:?}: handled by the net thread");
             }
             Input::Refresh => self.refresh(&mut out),
+            Input::ListAgents => {
+                if self.online() && !self.listing {
+                    self.ask_list(&mut out);
+                }
+            }
             Input::DrawerShown(on) => {
                 self.drawer = on;
                 if on && self.online() && !self.background && !self.listing {
@@ -12247,6 +12256,17 @@ mod tests {
             response: Suggestion::Discuss,
         });
         assert!(requests(&out, "agents.send").is_empty());
+    }
+
+    /// Plan 20261112_03, the 2026-11-13 01:05 EST amendment: a pull to
+    /// refresh lists the agents now, once.
+    #[test]
+    fn list_agents_asks_now_and_not_twice() {
+        let (mut s, _) = listed(json!([]));
+        let out = s.input(Input::ListAgents);
+        assert_eq!(requests(&out, "agents.list").len(), 1);
+        let out = s.input(Input::ListAgents);
+        assert!(requests(&out, "agents.list").is_empty(), "one on its way");
     }
 
     /// The next list, due at `at` seconds, answered with `agents`.

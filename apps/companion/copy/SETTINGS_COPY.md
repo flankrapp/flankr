@@ -928,3 +928,7 @@ amendment).
 # [Copy] tasks_build_no_agent
 
 - text: Open an agent's view first: Build asks that agent to build the plan.
+
+# [Copy] tasks_show
+
+- text: Show

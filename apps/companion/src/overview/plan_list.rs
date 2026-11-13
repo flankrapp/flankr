@@ -70,6 +70,11 @@ pub enum ListHit {
     Continue(String),
     /// *Turn on Plan policy*: Settings.
     Settings,
+    /// A pull to refresh let go past its threshold: `overview` and the
+    /// agent list are asked again (the 2026-11-13 01:07 EST amendment).
+    Refresh,
+    /// *N hidden · Show*: everything swiped away shows again.
+    ShowHidden,
 }
 
 /// Why the list has no plans of its own.
@@ -110,6 +115,15 @@ struct Event {
 }
 
 impl Event {
+    /// Its identity, for a swipe: a confirmation's id, a decision's pane
+    /// and serial.
+    fn key(&self, pane: &str) -> String {
+        match &self.kind {
+            EventKind::Confirmation { confirm_id, .. } => format!("confirm/{confirm_id}"),
+            EventKind::Decision(d) => format!("decision/{pane}/{}", d.summary_serial),
+        }
+    }
+
     fn open(&self, confirms: &HashMap<u64, Option<String>>) -> bool {
         match &self.kind {
             EventKind::Confirmation { outcome, .. } => outcome.is_none(),
@@ -134,7 +148,39 @@ struct Item {
     texts: Vec<(String, [f32; 2], f32, [f32; 4])>,
     fills: Vec<(Rect, [f32; 4], f32)>,
     hits: Vec<(Rect, ListHit)>,
+    /// What a sideways swipe on it hides, if anything.
+    key: Option<Hide>,
 }
+
+/// What a swipe hides (the 2026-11-13 01:07 EST amendment, items 2 and 3).
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Hide {
+    /// An event row, by its identity.
+    Event(String),
+    /// A plan's group, by its path.
+    Task(String),
+}
+
+/// A touch held on the list: where it came down, and whether the list
+/// was at its top then (a pull to refresh can start).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Gesture {
+    id: u64,
+    x0: f32,
+    y0: f32,
+    at_top: bool,
+    pulling: bool,
+}
+
+/// Pull to refresh, as the agent view's: the movement counts at this
+/// share, up to `PULL_MAX` points; let go past `PULL_ARM`, it refreshes.
+const PULL_RESIST: f32 = 0.5;
+const PULL_MAX: f32 = 96.0;
+const PULL_ARM: f32 = 64.0;
+/// The longest a refresh's line shows without an answer.
+pub const REFRESH_MAX: Duration = Duration::from_secs(5);
+/// How far a finger goes sideways for a swipe, in points.
+const SWIPE: f32 = 72.0;
 
 /// The list.
 pub struct PlanList {
@@ -157,6 +203,17 @@ pub struct PlanList {
     height: f32,
     now: Duration,
     dirty: bool,
+    /// Event rows swiped away, by identity.
+    hidden_events: HashSet<String>,
+    /// Tasks swiped away: their state then and their event rows then.
+    hidden_tasks: HashMap<String, (String, HashSet<String>)>,
+    /// How many are hidden in the layout.
+    hidden: usize,
+    gesture: Option<Gesture>,
+    /// How far the list is pulled down, in pixels.
+    pull: f32,
+    /// A refresh asked, and how long ago.
+    refreshing: Option<Duration>,
 }
 
 impl Default for PlanList {
@@ -183,6 +240,12 @@ impl PlanList {
             height: 0.0,
             now: Duration::ZERO,
             dirty: true,
+            hidden_events: HashSet::new(),
+            hidden_tasks: HashMap::new(),
+            hidden: 0,
+            gesture: None,
+            pull: 0.0,
+            refreshing: None,
         }
     }
 
@@ -351,6 +414,35 @@ impl PlanList {
         let w = self.viewport.w;
         let mut y = 0.0;
         let mut items = Vec::new();
+        let mut hidden = 0;
+        // The pull's line, while pulled or refreshing.
+        let pull_h = if self.refreshing.is_some() {
+            PULL_ARM * s
+        } else {
+            self.pull
+        };
+        if pull_h > 0.0 {
+            let text = if self.refreshing.is_some() {
+                crate::agent::REFRESHING
+            } else if self.pull >= PULL_ARM * s {
+                crate::agent::RELEASE_TO_REFRESH
+            } else {
+                crate::agent::PULL_TO_REFRESH
+            };
+            items.push(Item {
+                rect: Rect::new(0.0, y, w, pull_h),
+                texts: vec![(
+                    text.to_string(),
+                    [PAD * s, y + (pull_h - line_h(DIM_PT * s)) * 0.5],
+                    DIM_PT * s,
+                    theme().dim,
+                )],
+                fills: Vec::new(),
+                hits: Vec::new(),
+                key: None,
+            });
+            y += pull_h;
+        }
         if self.grouping != Grouping::ByPlan {
             let text = if self.grouping == Grouping::OlderFlankr {
                 copy::TASKS_OLDER_FLANKR.text
@@ -368,6 +460,7 @@ impl PlanList {
                 )],
                 fills: Vec::new(),
                 hits: vec![(Rect::new(0.0, y, w, h), ListHit::Settings)],
+                key: None,
             });
             y += h;
         }
@@ -385,12 +478,26 @@ impl PlanList {
                 )],
                 fills: Vec::new(),
                 hits: Vec::new(),
+                key: None,
             });
             y += h;
         }
+        // A task swiped away stays hidden until a new event row or a
+        // state change (the 2026-11-13 01:07 EST amendment, item 3).
+        let mut back: Vec<String> = Vec::new();
         for g in &groups {
             if g.plan.is_none() && g.agents.is_empty() {
                 continue;
+            }
+            if let Some(p) = &g.plan
+                && let Some((sig, keys)) = self.hidden_tasks.get(&p.path)
+            {
+                let now_keys = self.event_keys(g);
+                if *sig == task_state(p, g) && now_keys.is_subset(keys) {
+                    hidden += 1;
+                    continue;
+                }
+                back.push(p.path.clone());
             }
             let item = self.header(g, y, w);
             y += item.rect.h;
@@ -404,14 +511,86 @@ impl PlanList {
                 y += item.rect.h;
                 items.push(item);
                 for item in self.event_rows(agent, y, w) {
+                    if let Some(Hide::Event(k)) = &item.key
+                        && self.hidden_events.contains(k)
+                    {
+                        hidden += 1;
+                        continue;
+                    }
                     y += item.rect.h;
                     items.push(item);
                 }
             }
         }
+        if hidden > 0 {
+            let h = 28.0 * s;
+            items.push(Item {
+                rect: Rect::new(0.0, y, w, h),
+                texts: vec![(
+                    format!("{hidden} hidden \u{b7} {}", copy::TASKS_SHOW.text),
+                    [PAD * s, y + 6.0 * s],
+                    DIM_PT * s,
+                    theme().dim,
+                )],
+                fills: Vec::new(),
+                hits: vec![(Rect::new(0.0, y, w, h), ListHit::ShowHidden)],
+                key: None,
+            });
+            y += h;
+        }
+        for path in back {
+            self.hidden_tasks.remove(&path);
+        }
+        self.hidden = hidden;
         self.items = items;
         self.height = y;
         self.scroll.set_extent(y, self.viewport.h);
+    }
+
+    /// The identities of a group's event rows now.
+    fn event_keys(&self, g: &PlanGroup) -> HashSet<String> {
+        let mut keys = HashSet::new();
+        for (a, _) in &g.agents {
+            if let Some(list) = self.events.get(&a.pane_id) {
+                keys.extend(list.iter().map(|e| e.key(&a.pane_id)));
+            }
+            if let Some(q) = question_of(a) {
+                keys.insert(question_key(&a.pane_id, &q));
+            }
+        }
+        keys
+    }
+
+    /// How many rows and tasks are hidden.
+    pub fn hidden(&self) -> usize {
+        self.hidden
+    }
+
+    /// The refresh's answer came: its line goes.
+    pub fn refreshed(&mut self) {
+        if self.refreshing.take().is_some() {
+            self.relayout();
+        }
+    }
+
+    /// Hides what `key` names.
+    fn hide(&mut self, key: Hide) {
+        match key {
+            Hide::Event(k) => {
+                self.hidden_events.insert(k);
+            }
+            Hide::Task(path) => {
+                let groups = self.groups();
+                if let Some(g) = groups
+                    .iter()
+                    .find(|g| g.plan.as_ref().is_some_and(|p| p.path == path))
+                {
+                    let sig = task_state(g.plan.as_ref().unwrap(), g);
+                    self.hidden_tasks.insert(path, (sig, self.event_keys(g)));
+                }
+            }
+        }
+        self.relayout();
     }
 
     fn header(&self, g: &PlanGroup, y: f32, w: f32) -> Item {
@@ -488,11 +667,13 @@ impl PlanList {
             hits.push((r, ListHit::Autocontinue { path, on: !on }));
         }
         hits.push((rect, ListHit::Fold(key)));
+        let hide = g.plan.as_ref().map(|p| Hide::Task(p.path.clone()));
         Item {
             rect,
             texts,
             fills,
             hits,
+            key: hide,
         }
     }
 
@@ -584,6 +765,7 @@ impl PlanList {
             texts,
             fills,
             hits: vec![(rect, ListHit::Agent(a.pane_id.clone()))],
+            key: None,
         }
     }
 
@@ -689,7 +871,14 @@ impl PlanList {
                     (text, if open { theme().fg } else { theme().dim }, b)
                 }
             };
-            rows.push((e.time.clone(), e.daemon_time, label, colour, buttons));
+            rows.push((
+                e.time.clone(),
+                e.daemon_time,
+                label,
+                colour,
+                buttons,
+                e.key(&a.pane_id),
+            ));
         }
         // The open question: its time is its own; it sorts by it among
         // the rest only as it came, so it goes last, as the newest.
@@ -715,10 +904,11 @@ impl PlanList {
                         },
                     ),
                 ],
+                question_key(&a.pane_id, &q),
             ));
         }
         let mut out = Vec::new();
-        for (time, daemon_time, text, colour, buttons) in rows {
+        for (time, daemon_time, text, colour, buttons, key) in rows {
             let h = if buttons.is_empty() {
                 24.0 * s
             } else {
@@ -769,6 +959,7 @@ impl PlanList {
                 texts,
                 fills,
                 hits,
+                key: Some(Hide::Event(key)),
             });
             y += h;
         }
@@ -796,7 +987,9 @@ impl PlanList {
         None
     }
 
-    /// A touch: a drag scrolls; a tap gives its hit (and folds a group
+    /// A touch: a drag scrolls; a pull down from the top past
+    /// `PULL_ARM` refreshes; a sideways swipe hides the row or task under
+    /// it; a tap gives its hit (and folds a group, or shows the hidden,
     /// itself).
     pub fn touch(
         &mut self,
@@ -806,18 +999,79 @@ impl PlanList {
         y: f32,
         now: Duration,
     ) -> Option<ListHit> {
-        match self.scroll.touch(id, phase, x, y, now, self.s) {
+        let s = self.s;
+        if phase == TouchPhase::Started {
+            self.gesture = Some(Gesture {
+                id,
+                x0: x,
+                y0: y,
+                at_top: self.scroll.offset() <= 0.5,
+                pulling: false,
+            });
+        }
+        let scrolled = self.scroll.touch(id, phase, x, y, now, s);
+        let Some(mut g) = self.gesture.filter(|g| g.id == id) else {
+            return self.scrolled(scrolled, x, y);
+        };
+        let (dx, dy) = (x - g.x0, y - g.y0);
+        match phase {
+            TouchPhase::Moved => {
+                if g.at_top && self.refreshing.is_none() && dy > 0.0 && dy > dx.abs() {
+                    g.pulling = true;
+                    self.pull = (dy * PULL_RESIST).min(PULL_MAX * s);
+                    self.relayout();
+                } else if g.pulling {
+                    self.pull = 0.0;
+                    self.relayout();
+                }
+                self.gesture = Some(g);
+                None
+            }
+            TouchPhase::Ended | TouchPhase::Cancelled => {
+                self.gesture = None;
+                let pulled = std::mem::take(&mut self.pull);
+                if g.pulling {
+                    let armed = phase == TouchPhase::Ended && pulled >= PULL_ARM * s;
+                    if armed {
+                        self.refreshing = Some(Duration::ZERO);
+                    }
+                    self.relayout();
+                    return armed.then_some(ListHit::Refresh);
+                }
+                if phase == TouchPhase::Ended && dx.abs() >= SWIPE * s && dx.abs() > 2.0 * dy.abs()
+                {
+                    if let Some(key) = self.key_at(g.x0, g.y0) {
+                        self.hide(key);
+                    }
+                    return None;
+                }
+                self.scrolled(scrolled, x, y)
+            }
+            _ => self.scrolled(scrolled, x, y),
+        }
+    }
+
+    fn scrolled(&mut self, touched: Touched, x: f32, y: f32) -> Option<ListHit> {
+        match touched {
             Touched::Scrolled => {
                 self.dirty = true;
                 None
             }
             Touched::Tap => {
                 let hit = self.hit_at(x, y)?;
-                if let ListHit::Fold(key) = &hit {
-                    if !self.folded.remove(key) {
-                        self.folded.insert(key.clone());
+                match &hit {
+                    ListHit::Fold(key) => {
+                        if !self.folded.remove(key) {
+                            self.folded.insert(key.clone());
+                        }
+                        self.relayout();
                     }
-                    self.relayout();
+                    ListHit::ShowHidden => {
+                        self.hidden_events.clear();
+                        self.hidden_tasks.clear();
+                        self.relayout();
+                    }
+                    _ => {}
                 }
                 Some(hit)
             }
@@ -825,8 +1079,27 @@ impl PlanList {
         }
     }
 
+    /// What a swipe starting at `(x, y)` on the screen hides.
+    fn key_at(&self, x: f32, y: f32) -> Option<Hide> {
+        let cy = y - self.viewport.y + self.scroll.offset();
+        self.items
+            .iter()
+            .find(|i| i.rect.contains([x, cy]))
+            .and_then(|i| i.key.clone())
+    }
+
     pub fn tick(&mut self, dt: Duration) -> bool {
-        let moved = self.scroll.tick(dt, self.s);
+        // A refresh's line goes after `REFRESH_MAX` without an answer.
+        let mut cleared = false;
+        if let Some(t) = self.refreshing.as_mut() {
+            *t += dt;
+            if *t >= REFRESH_MAX {
+                self.refreshing = None;
+                self.relayout();
+                cleared = true;
+            }
+        }
+        let moved = self.scroll.tick(dt, self.s) || cleared;
         if moved {
             self.dirty = true;
         }
@@ -882,13 +1155,33 @@ impl PlanList {
 
 /// An event row before it is placed: its time, whether the daemon gave
 /// it, its text and colour, and its buttons.
+/// And the identity a swipe hides it by.
 type RowSpec = (
     Option<String>,
     bool,
     String,
     [f32; 4],
     Vec<(String, ListHit)>,
+    String,
 );
+
+/// A question row's identity: its pane and its text.
+fn question_key(pane: &str, question: &str) -> String {
+    format!("question/{pane}/{question}")
+}
+
+/// A task's state, for its swipe (the 2026-11-13 01:07 EST amendment,
+/// item 3): armed, autocontinue, status and current step; whether any of
+/// its agents asks is in its event rows.
+fn task_state(p: &PolicyPlanGroup, _g: &PlanGroup) -> String {
+    format!(
+        "{}|{}|{}|{:?}",
+        p.armed,
+        p.autocontinue,
+        p.status.as_deref().unwrap_or(""),
+        p.current_step
+    )
+}
 
 fn press_key(hit: &ListHit) -> Option<String> {
     match hit {
@@ -1201,5 +1494,146 @@ mod tests {
         assert_eq!(l.texts()[0], copy::TASKS_OLDER_FLANKR.text);
         assert_eq!(clock("2026-11-12T21:30:00-05:00").as_deref(), Some("21:30"));
         assert_eq!(clock("x"), None);
+    }
+
+    fn drag(l: &mut PlanList, id: u64, from: [f32; 2], to: [f32; 2]) -> Option<ListHit> {
+        l.touch(id, TouchPhase::Started, from[0], from[1], Duration::ZERO);
+        let mid = [(from[0] + to[0]) * 0.5, (from[1] + to[1]) * 0.5];
+        l.touch(
+            id,
+            TouchPhase::Moved,
+            mid[0],
+            mid[1],
+            Duration::from_millis(30),
+        );
+        l.touch(
+            id,
+            TouchPhase::Moved,
+            to[0],
+            to[1],
+            Duration::from_millis(60),
+        );
+        l.touch(
+            id,
+            TouchPhase::Ended,
+            to[0],
+            to[1],
+            Duration::from_millis(90),
+        )
+    }
+
+    fn rect_of(l: &PlanList, hit: &ListHit) -> Rect {
+        l.hits().into_iter().find(|(_, h)| h == hit).unwrap().0
+    }
+
+    /// The 2026-11-13 01:07 EST amendment, item 1.
+    #[test]
+    fn a_pull_from_the_top_refreshes_until_the_answer() {
+        let mut l = list();
+        let top = l.viewport().y + 10.0;
+        // A short pull: nothing.
+        assert_eq!(drag(&mut l, 1, [500.0, top], [500.0, top + 60.0]), None);
+        assert!(!l.texts().iter().any(|t| t.contains("refresh")));
+        // Past the threshold: a refresh, and its line until the answer.
+        assert_eq!(
+            drag(&mut l, 2, [500.0, top], [500.0, top + 400.0]),
+            Some(ListHit::Refresh)
+        );
+        assert!(l.texts().contains(&crate::agent::REFRESHING.to_string()));
+        l.refreshed();
+        assert!(!l.texts().contains(&crate::agent::REFRESHING.to_string()));
+        // Or for REFRESH_MAX at most.
+        drag(&mut l, 3, [500.0, top], [500.0, top + 400.0]);
+        assert!(l.tick(REFRESH_MAX));
+        assert!(!l.texts().contains(&crate::agent::REFRESHING.to_string()));
+    }
+
+    /// Items 2 and 4.
+    #[test]
+    fn a_swiped_row_is_hidden_and_never_answered() {
+        let mut l = list();
+        l.confirm_opened("p1", 7, "continue", "plugin:policy", None);
+        let approve = ListHit::Confirm {
+            confirm_id: 7,
+            approve: true,
+        };
+        let r = rect_of(&l, &approve);
+        // From the row's text, left of its buttons, sideways.
+        let start = [r.x + 4.0, r.y - 10.0];
+        assert_eq!(
+            drag(&mut l, 1, start, [start[0] + 400.0, start[1]]),
+            None,
+            "no answer"
+        );
+        assert!(!l.hits().iter().any(|(_, h)| *h == approve), "hidden");
+        assert_eq!(l.hidden(), 1);
+        assert!(l.texts().iter().any(|t| t == "1 hidden \u{b7} Show"));
+        // Its question row stays, and the confirmation is still open.
+        assert!(
+            l.hits()
+                .iter()
+                .any(|(_, h)| matches!(h, ListHit::Answer { .. }))
+        );
+        let show = rect_of(&l, &ListHit::ShowHidden).center();
+        l.touch(2, TouchPhase::Started, show[0], show[1], Duration::ZERO);
+        assert_eq!(
+            l.touch(
+                2,
+                TouchPhase::Ended,
+                show[0],
+                show[1],
+                Duration::from_millis(40)
+            ),
+            Some(ListHit::ShowHidden)
+        );
+        assert!(
+            l.hits().iter().any(|(_, h)| *h == approve),
+            "back, still open"
+        );
+    }
+
+    /// Item 3.
+    #[test]
+    fn a_swiped_task_comes_back_on_a_new_event_or_a_state_change() {
+        let mut l = list();
+        let path = "docs/design/20261112_02_A_PLAN.md".to_string();
+        let r = rect_of(&l, &ListHit::Fold(path.clone()));
+        let start = [r.x + 30.0, r.y + 10.0];
+        assert_eq!(drag(&mut l, 1, start, [start[0] - 400.0, start[1]]), None);
+        assert!(
+            !l.texts().contains(&"Plan policy agent".to_string()),
+            "hidden"
+        );
+        assert!(
+            !l.hits()
+                .iter()
+                .any(|(_, h)| *h == ListHit::Agent("p1".into()))
+        );
+        assert_eq!(l.hidden(), 1);
+        // The same state again: still hidden.
+        l.set_overview(Some(overview()), Grouping::ByPlan);
+        assert!(!l.texts().contains(&"Plan policy agent".to_string()));
+        // A new event under its agent brings it back.
+        l.confirm_opened("p1", 8, "continue", "plugin:policy", None);
+        assert!(l.texts().contains(&"Plan policy agent".to_string()));
+        // Hidden again; a state change (its step) brings it back.
+        let r = rect_of(&l, &ListHit::Fold(path.clone()));
+        drag(
+            &mut l,
+            2,
+            [r.x + 30.0, r.y + 10.0],
+            [r.x + 430.0, r.y + 10.0],
+        );
+        assert!(!l.texts().contains(&"Plan policy agent".to_string()));
+        let mut next = overview();
+        next.plans[0].current_step = Some(4);
+        l.set_overview(Some(next), Grouping::ByPlan);
+        assert!(l.texts().contains(&"Plan policy agent".to_string()));
+        // Hiding never turns autocontinue off: its glyph is as it was.
+        assert!(l.hits().iter().any(|(_, h)| *h
+            == ListHit::Autocontinue {
+                path: path.clone(),
+                on: false
+            }));
     }
 }

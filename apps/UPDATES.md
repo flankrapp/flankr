@@ -401,3 +401,11 @@ These changes came before the app had version numbers.
 **Fixed**
 - Build is sent once per plan. While the plan is an active task, its plan page shows Building in place of Build, and tapping it again sends nothing. Removing the task in Active tasks makes Build available again.
 - A plan title with a version number, quotes or other punctuation no longer makes Build's message fail to send.
+
+## 0.7.24 — 2026-11-13
+
+**Added**
+- Pull down from the top of Active tasks to refresh it: past a short pull it says "release to refresh", then "refreshing…" until the newest plans and agents arrive.
+- Swipe a question, approval or plan policy decision sideways to hide it from Active tasks. Hiding only tidies the list: nothing is answered, approved or denied, and an open question or approval still shows on the cards and in the agent view.
+- Swipe a plan's header sideways to hide the whole task until something new happens under it, or its state changes (switched on or off, its status or its step). Hiding does not stop the task or its autocontinue.
+- While anything is hidden, the last line says how many, with Show to bring them all back.

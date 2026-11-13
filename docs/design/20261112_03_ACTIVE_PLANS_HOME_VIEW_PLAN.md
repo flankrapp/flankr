@@ -691,3 +691,30 @@ message, and adds to the 23:23 EST amendment's item 2.
    already has a task gets its task back unchanged, marked `existing`,
    and the app then sends no message; only a new task's answer sends it.
    Removing the task (`task_remove`) makes Build active again.
+
+## Amendment — 2026-11-13 01:07 EST: pull to refresh, and swiping rows and tasks away
+
+The owner, on 2026-11-13 at 01:05 EST: "first use pull to refresh on
+active tasks screen, as well as support dismissing not8fications on the
+active task screen with swipe, or dismiss an active task unyil a new
+event or state change". The owner's instruction is what allows this
+amendment to the frozen plan. It adds to 2.3 and 2.4.
+
+1. **Pull to refresh.** Dragging the list down from its top past a small
+   threshold (64 pt, the agent view's) and letting go asks `overview`
+   again and the agent list (flankr-companion's `Input::ListAgents`). A
+   dim line at the top says *pull to refresh*, *release to refresh*,
+   then *refreshing…* until the answer comes, or 5 s at most.
+2. **Swipe an event row away.** A sideways swipe on an event row (a
+   question, a confirmation, a policy decision) hides it from this view.
+   Hiding never answers, approves or denies: an open question or
+   confirmation stays open in the daemon, on the cards and in the agent
+   view. Hidden rows are kept on the phone by the event's identity (a
+   confirmation's id, a decision's pane and serial, a question's pane
+   and text) and stay hidden.
+3. **Swipe a task away.** A sideways swipe on a plan's header hides the
+   whole group until a new event row appears under its agents or its
+   state changes: armed, autocontinue, status or current step. Hiding
+   never disarms, stops autocontinue or removes the task.
+4. **Getting them back.** While anything is hidden, a dim last line,
+   *N hidden · Show*, shows everything again.
