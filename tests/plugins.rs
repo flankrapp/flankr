@@ -395,3 +395,40 @@ async fn the_general_agent_is_offered_the_planning_tools_while_on() {
     assert_eq!(r["result"], json!({"enabled": false}), "{r}");
     assert!(names(&env).is_empty());
 }
+
+/// Plan 20261112_02, step 2: Build on a plan is kept in the daemon's
+/// state folder under the temporary home, its `approval` goes to every
+/// phone, and a device that may not approve is refused.
+#[tokio::test]
+async fn the_plan_policy_keeps_a_task_and_tells_every_phone() {
+    const POLICY: &str = "dev.flankr.plugins.policy";
+    const PLAN: &str = "docs/design/20261112_02_PLAN_POLICY_AGENT_PLAN.md";
+    let env = start(&format!("{READ}[plugins.\"{POLICY}\"]\nenabled = true\n")).await;
+    let mut owner = env.device("owner", true).await;
+    let mut viewer = env.device("viewer", false).await;
+    let call = |id: u64, method: &str, params: Value| json!({"ns": POLICY, "id": id, "method": method, "params": params, "session": "p1"});
+    let r = owner
+        .call("plugin.call", call(1, "build", json!({"path": PLAN})))
+        .await;
+    assert_eq!(r["result"], json!({}), "{r}");
+    let result = owner.note("plugin.result").await;
+    assert_eq!(result["params"]["result"]["armed"], true, "{result}");
+    assert_eq!(result["params"]["result"]["title"], "Plan policy agent");
+    for device in [&mut owner, &mut viewer] {
+        let note = device.note("plugin.notify").await;
+        assert_eq!(note["params"]["ns"], POLICY);
+        assert_eq!(note["params"]["method"], "approval");
+        assert_eq!(note["params"]["params"]["path"], PLAN);
+    }
+    let store = env
+        .dir
+        .path()
+        .join("home/.local/state/flankr/plugins/policy/approvals.toml");
+    assert!(std::fs::read_to_string(&store).unwrap().contains(PLAN));
+    let r = viewer
+        .call("plugin.call", call(2, "task_remove", json!({"path": PLAN})))
+        .await;
+    assert_eq!(r["result"], json!({}), "{r}");
+    let result = viewer.note("plugin.result").await;
+    assert_eq!(result["params"]["error"]["code"], codes::NOT_PERMITTED);
+}

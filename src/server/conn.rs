@@ -1886,6 +1886,9 @@ async fn forward_events(conn: Arc<Conn>) {
     let mut plugins = conn.daemon.plugins.subscribe();
     plugins.mark_unchanged();
     let mut plugins_open = true;
+    // A plugin's notifications to every phone (plan 20261112_02, 2.2).
+    let mut plugin_notes = conn.daemon.plugins.notes();
+    let mut plugin_notes_open = true;
     let mut vocabulary_check = tokio::time::interval_at(
         tokio::time::Instant::now() + turns::VOCABULARY_INTERVAL,
         turns::VOCABULARY_INTERVAL,
@@ -1926,6 +1929,15 @@ async fn forward_events(conn: Arc<Conn>) {
                     ));
                 }
                 Err(_) => plugins_open = false,
+            },
+            note = plugin_notes.recv(), if companion && plugin_notes_open => match note {
+                Ok(note) => {
+                    conn.send(&Notification::new(companion::methods::PLUGIN_NOTIFY, note));
+                }
+                Err(broadcast::error::RecvError::Lagged(n)) => {
+                    log::warn!("{} missed {n} plugin notification(s)", principal.id);
+                }
+                Err(broadcast::error::RecvError::Closed) => plugin_notes_open = false,
             },
             event = confirms.recv() => match event {
                 // A companion's own voice-turn question is sent by its turn,

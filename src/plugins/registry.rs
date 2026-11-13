@@ -20,7 +20,13 @@ pub const OWN_PREFIX: &str = "dev.flankr.plugins.";
 
 /// The built-in plugins, checked.
 pub fn builtin() -> Vec<Arc<dyn Plugin>> {
-    let (kept, problems) = check(declared());
+    builtin_with(None)
+}
+
+/// The built-in plugins, checked, the plan policy plugin with the
+/// daemon's `policy` services.
+pub fn builtin_with(policy: Option<Arc<dyn super::policy::Services>>) -> Vec<Arc<dyn Plugin>> {
+    let (kept, problems) = check(declared_with(policy));
     for problem in &problems {
         log::warn!("plugins: {problem}; left out");
     }
@@ -28,11 +34,17 @@ pub fn builtin() -> Vec<Arc<dyn Plugin>> {
 }
 
 /// The list as written, unchecked.
+#[cfg(test)]
 fn declared() -> Vec<Arc<dyn Plugin>> {
-    vec![
-        Arc::new(super::planning::Planning),
-        Arc::new(super::policy::PlanPolicy::new()),
-    ]
+    declared_with(None)
+}
+
+fn declared_with(policy: Option<Arc<dyn super::policy::Services>>) -> Vec<Arc<dyn Plugin>> {
+    let policy = match policy {
+        Some(services) => super::policy::PlanPolicy::with_services(services),
+        None => super::policy::PlanPolicy::new(),
+    };
+    vec![Arc::new(super::planning::Planning), Arc::new(policy)]
 }
 
 /// `plugins` with the bad entries left out, and why each was.

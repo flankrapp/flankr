@@ -62,6 +62,8 @@ pub struct HostOptions {
     pub env: Option<CommandEnv>,
     /// Instead of [`RELOAD_INTERVAL`].
     pub interval: Option<Duration>,
+    /// The daemon's services for the plan policy plugin (plan 20261112_02).
+    pub policy: Option<Arc<dyn super::policy::Services>>,
 }
 
 /// Sends one notification on the calling connection.
@@ -209,6 +211,9 @@ pub struct PluginHost {
     infos: watch::Sender<Vec<PluginInfo>>,
     /// Held while `plugin.set_enabled` writes the file.
     writing: Mutex<()>,
+    /// A plugin's notifications to every phone, not to one call's
+    /// connection (plan 20261112_02, 2.2).
+    notes: tokio::sync::broadcast::Sender<PluginNotify>,
 }
 
 impl PluginHost {
@@ -222,7 +227,7 @@ impl PluginHost {
                 }
                 kept
             }
-            None => super::registry::builtin(),
+            None => super::registry::builtin_with(options.policy.clone()),
         };
         let env = options.env.unwrap_or_else(CommandEnv::from_process);
         let entries = plugins
@@ -275,6 +280,7 @@ impl PluginHost {
             state: Mutex::new(state),
             infos: watch::Sender::new(Vec::new()),
             writing: Mutex::new(()),
+            notes: tokio::sync::broadcast::channel(64).0,
         };
         let infos = host.infos_of(&host.state.lock().unwrap());
         host.infos.send_replace(infos);
@@ -290,6 +296,28 @@ impl PluginHost {
     /// `server.capabilities`.
     pub fn infos(&self) -> Vec<PluginInfo> {
         self.infos.borrow().clone()
+    }
+
+    /// Sends `plugin.notify { ns, method, params }` to every phone, while
+    /// the plugin `ns` is enabled.
+    pub fn broadcast(&self, ns: &str, method: &str, params: Value) {
+        if !companion::is_plugin_method(method) {
+            log::warn!("plugin {ns}: the notification {method:?} is not a method's name; dropped");
+            return;
+        }
+        if !enabled(&self.state.lock().unwrap().plugins, ns) {
+            return;
+        }
+        let _ = self.notes.send(PluginNotify {
+            ns: ns.to_string(),
+            method: method.to_string(),
+            params,
+        });
+    }
+
+    /// The notifications for every phone.
+    pub fn notes(&self) -> tokio::sync::broadcast::Receiver<PluginNotify> {
+        self.notes.subscribe()
     }
 
     /// The list, as it changes.
@@ -1062,6 +1090,7 @@ pub(crate) mod tests {
                 plugins: Some(vec![Arc::new(TestPlugin::named("dev.flankr.plugins.test"))]),
                 env: Some(CommandEnv::default()),
                 interval: None,
+                policy: None,
             },
         );
         Env {
@@ -1127,6 +1156,7 @@ pub(crate) mod tests {
                 plugins: Some(vec![Arc::new(crate::plugins::planning::Planning)]),
                 env: Some(CommandEnv::default()),
                 interval: None,
+                policy: None,
             },
         );
         let infos = host.infos();

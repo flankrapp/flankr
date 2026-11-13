@@ -11,6 +11,7 @@ pub mod conn;
 pub mod herdr_attach;
 pub mod input_bar;
 pub mod link;
+pub mod policy;
 pub mod speech;
 mod subscriptions;
 pub mod terminal;
@@ -179,12 +180,15 @@ impl Daemon {
         broker.continue_after(journalled);
         let herdr_attach =
             attach_settings(&client, config, &turns).map(herdr_attach::HerdrAttach::new);
-        // `[plugins]` comes from the file `[llm]` is read from.
+        // `[plugins]` comes from the file `[llm]` is read from. The plan
+        // policy plugin reaches the daemon once it exists (plan 20261112_02).
+        let policy = Arc::new(policy::DaemonPolicy::default());
         let plugins = crate::plugins::PluginHost::new(
             config,
             crate::plugins::HostOptions {
                 config_path: turns.llm.config_path.clone(),
                 plugins: turns.plugins.clone(),
+                policy: Some(Arc::clone(&policy) as Arc<dyn crate::plugins::policy::Services>),
                 ..Default::default()
             },
         );
@@ -223,6 +227,7 @@ impl Daemon {
             blob,
             choice_answering: Default::default(),
         });
+        policy.set(Arc::downgrade(&daemon));
         // `[llm.uses.card_summaries]`: each new Finished card summarised
         // once, while card summaries are available.
         daemon
