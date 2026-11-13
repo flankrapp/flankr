@@ -728,3 +728,28 @@ question card once any answer (suggestion, Yes/No, typed) has been sent
 for it, and make dragging a card away only dismiss it, never answer No,
 once it has been answered, recorded as an amendment to the plan that
 covers the pinned question card.
+
+## 2026-11-13 09:50 EST — Owner: an agent's yes/no questions don't stay as question cards
+
+Device: Galaxy S23 Ultra (app 0.7.27, daemon 0.7.14, from the unmerged
+Active tasks regrouping branch, with the Plan policy plugin on).
+
+**Report.** "there's open questions/approvals in the [other repository's]
+agent which are not appearing as cards or are appearing and disappearing,
+a clear question such as should I tell it to proceed has a yes/no answer".
+The agent works in another of the owner's repositories; it is not named
+here.
+
+**Seen** (the daemon's log, 2026-11-13 14:28 to 14:44 UTC, pane `w7:p1`).
+Four of the agent's turns ended by asking the owner to decide ("Should I
+go ahead…", "Shall I go ahead and draft these…"); the spoken catch-up at
+14:44:14 ended "Shall I tell it to proceed?". For each, the Plan policy
+plugin judged the card 15 s later with `decision=ask rule=autocontinue_off`
+against the street cross-section plan. The phone's log shows only
+`catch-up: pinned` at 09:33:16 and 09:44:14 local, and nothing about a
+question card being raised or dismissed.
+
+**In hand.** Handed to a subagent in a new worktree: find why a turn that
+ends with a yes/no question is not raised, or is raised and then removed,
+as a question card with Yes/No; record the fix as an amendment to the
+plan that covers question cards.
