@@ -1,7 +1,7 @@
 ---
 title: Active plans, a plan-grouped home view
 date: 2026-11-12
-status: Draft
+status: In implementation
 covers:
   - "A choice on the home screen, libcontrols' `SelectableLabel`: **All
     agents** (today's overview, the card grid) or **Active plans** (a new
@@ -625,3 +625,43 @@ their own message.
 The amendment headed "2026-11-12 22:21 EST: Build names the plan by its
 date and title" was written at 2026-11-12 22:18 EST by the system clock;
 its heading's time was typed wrongly. Its content is unchanged.
+
+## Amendment — 2026-11-12 23:23 EST: Active tasks: Build creates the task, and the row's glyph is its autocontinue
+
+The owner, on 2026-11-12 at 22:25 EST: "if this is first focus on it, I
+had the order backwards. the checkbox is more like an enaled setting in
+the plan list,this coyld be a right side enable/dusable glyph for the
+build task, or we just use the upcoming Active tasks screen to manage
+them. if ut makes sense to build both in the same worktree do that"; and
+at 22:28 EST: "it oribably makes more sense to mak Active tasks the
+management UI once Build us chosen on a plan instwad if the plans
+screen". The owner's instruction to build this plan is its approval. This
+replaces the header's **Approve** and **Autocontinue** actions of the
+21:58 amendment's item 6 and the 22:03 amendment's item 2, and the view's
+name.
+
+1. **The view is titled *Active tasks*** in the app (the Settings row's
+   choice reads **‹ Active tasks ›**; `home_view = "plans"` is kept as
+   the saved value).
+2. **A plan appears as a task once Build is chosen** on it. Build stays
+   on the plans screen (the planning plugin's plan list) and on the
+   plan's preview; it calls the policy plugin's `build { path, pane_id }`
+   (the plan policy agent plan's 22:31 EST amendment), which arms the
+   plan and records the task, then sends the 22:21 amendment's message
+   through `agents.send`, with its usual checks and confirmation.
+3. **The task's row has a right-side enable/disable glyph** that turns
+   its autocontinue on and off (`task_enable`, `task_disable`). Removing
+   or finishing the task (`task_remove`) disarms the plan.
+4. **Open** stays, opening the plan's text in the preview. The plans
+   screen does no management: no arm glyph and no checkbox.
+5. Plans with no task but a linked pane still appear, as the 21:58
+   amendment groups them, without the glyph; the policy acts only on a
+   task's plan with autocontinue on.
+
+## Amendment — 2026-11-12 23:23 EST: implementation started; this document is now immutable
+
+Implementation started with the 21:58 amendment's item 4 (libflankr_proto
+0.5.14's `AgentInfo::worktree`, with item 7's `ConfirmRequested::at`) in
+the commit that sets `status: In implementation`. From now on this
+document changes only on the owner's explicit instruction; departures go
+to `CHANGES.md`.

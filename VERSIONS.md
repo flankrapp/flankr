@@ -1355,3 +1355,17 @@ module):
   JSON with every field defaulted; the `#[non_exhaustive]`
   `PolicyNotice { Decision, Approval, State }` with
   `PolicyNotice::of(&PluginNotify)`; `plan_params(path, pane_id)`.
+
+## libflankr_proto 0.5.14 — 2026-11-12 (the commit tagged `libflankr_proto-v0.5.14`)
+
+Strictly additive (fields appended to structs, by the owner's ruling
+that appending is additive, and a new struct; plan 20261112_03, the
+21:58 EST amendment, items 4 and 7). A literal of `AgentInfo` or
+`ConfirmRequested` that names every field has to name the new one.
+
+- **Added:** `common::WorktreeInfo { path, branch, label, is_detached,
+  is_prunable, open_workspace_id }`, each but `path` optional and left
+  off the wire when unset; `AgentInfo::worktree: Option<WorktreeInfo>`,
+  the herdr worktree the pane's cwd lies in, absent for a main checkout
+  or from an older daemon; `ConfirmRequested::at: Option<String>`, when
+  the confirmation was asked for, RFC 3339 on the daemon's clock.

@@ -244,6 +244,31 @@ pub struct AgentInfo {
     /// from 1 (plan 20261103_02, decision 1). Absent from an older daemon.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_number: Option<u32>,
+    /// The herdr worktree the pane's cwd lies in, as herdr's
+    /// `worktree.list` gives it; absent for a main checkout, a remote
+    /// herdr, a herdr without worktrees, or an older daemon
+    /// (docs/design/20261112_03_ACTIVE_PLANS_HOME_VIEW_PLAN.md, the 21:58
+    /// EST amendment, item 4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<WorktreeInfo>,
+}
+
+/// A herdr worktree, as [`AgentInfo::worktree`] carries it: the fields
+/// herdr's `WorktreeInfo` has, each optional but `path`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorktreeInfo {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_detached: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_prunable: bool,
+    /// The workspace herdr has it open as, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open_workspace_id: Option<String>,
 }
 
 /// The most subagents an [`AgentInfo`] lists.
@@ -1124,6 +1149,11 @@ pub struct ConfirmRequested {
     /// A second announcement of a confirmation still waiting.
     #[serde(default)]
     pub reminder: bool,
+    /// When the confirmation was asked for, RFC 3339, on the daemon's
+    /// clock; absent from an older daemon (plan 20261112_03, the 21:58 EST
+    /// amendment, item 7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<String>,
 }
 
 /// `confirm.resolved`
@@ -2671,6 +2701,7 @@ mod tests {
         });
         round_trip(AgentsListResult {
             agents: vec![AgentInfo {
+                worktree: None,
                 pane_id: "w2:pZ".to_string(),
                 name: Some("the flankr agent".to_string()),
                 spoken: Some("the flankr agent".to_string()),
@@ -2952,6 +2983,7 @@ mod tests {
             status: "blocked".to_string(),
         });
         round_trip(ConfirmRequested {
+            at: None,
             confirm_id: 3,
             pane_id: "p1".to_string(),
             agent: "claude".to_string(),
@@ -3812,5 +3844,37 @@ mod tests {
             );
         }
         assert_eq!(methods::CHOICE_CANCEL, "choice.cancel");
+    }
+
+    /// Plan 20261112_03, the 21:58 EST amendment, items 4 and 7.
+    #[test]
+    fn worktrees_on_agents_and_times_on_confirmations() {
+        let wt = WorktreeInfo {
+            path: "/r/.claude/worktrees/x".into(),
+            branch: Some("plan/20261112_02".into()),
+            label: Some("x".into()),
+            open_workspace_id: Some("w3".into()),
+            ..WorktreeInfo::default()
+        };
+        round_trip(wt.clone());
+        let v = serde_json::to_value(&wt).unwrap();
+        assert!(v.get("is_detached").is_none(), "false is left off: {v}");
+        // An older daemon's agent and confirmation read with none.
+        let agent: AgentInfo = serde_json::from_value(serde_json::json!({
+            "pane_id": "p1", "agent": "claude", "status": "idle", "focused": false
+        }))
+        .unwrap();
+        assert_eq!(agent.worktree, None);
+        let c: ConfirmRequested = serde_json::from_value(serde_json::json!({
+            "confirm_id": 1, "pane_id": "p1", "agent": "claude", "command": "continue",
+            "requested_by": "plugin:policy"
+        }))
+        .unwrap();
+        assert_eq!(c.at, None);
+        let c = ConfirmRequested {
+            at: Some("2026-11-12T23:30:00-05:00".into()),
+            ..c
+        };
+        round_trip(c);
     }
 }
