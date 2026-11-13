@@ -3,6 +3,7 @@ name = "libflankr_term"
 version = "0.1.2"
 edition = "2024"
 description = "A terminal mirrored over flankr's link: ANSI to styled runs, frames and their diffs, the daemon's Mirror and the app's Screen"
+license = "Apache-2.0"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
