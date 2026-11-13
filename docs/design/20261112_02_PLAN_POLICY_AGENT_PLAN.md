@@ -470,3 +470,30 @@ disagree, this amendment wins.
    sends a plan's name or path. Approving a plan and asking an agent to
    build it stays the owner's: the Active plans home view's **Build**
    action (that plan's 22:03 amendment) or the owner's own message.
+
+## Amendment — 2026-11-12 22:17 EST: approved by the owner, with the open questions settled
+
+The owner approved this plan on 2026-11-12 ("yes, approve it"), with its
+amendments of 21:58 and 22:03 EST. Implementation has not started; the
+status stays `Draft` until the first implementing commit sets
+`In implementation`. The open questions of section 4 are settled by their
+recommendations, as follows:
+
+1. The checkbox is the app's, kept in the daemon's store (2.3); no
+   checkbox in the plan file.
+2. Arming and autocontinue are not shown in the README's decision table.
+3. The text for a free-text continue question is `continue` alone (and
+   the 22:03 amendment's choice answer for a choice question).
+4. Events stay on `plugin.notify`, with no protocol change. A later
+   first-class event would be additive: `flankr_companion::Event` is
+   `#[non_exhaustive]` (found while writing the Active plans home view
+   plan), so a new variant is a patch.
+5. The unattended mode is not built for now: `confirm` has the one value
+   `"always"`, so every continue waits for the owner's tap on the
+   confirmation card. `"agent"` may be proposed later by amendment.
+6. The unconfirmed details are settled while building: the steps parser
+   is written in step 2 if the planning reader has none; step 1 uses the
+   `MenuItem` variant the plugins plan defines for the planning screen;
+   `worktree.*` is called on the local herdr socket only, never over SSH.
+7. `quiet_secs` stays 15 s, and the plugin judges only the newest
+   Finished card of a pane once that quiet time has passed.
