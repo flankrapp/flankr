@@ -4790,3 +4790,19 @@ Decisions, as the lead agreed:
    changed.
 4. The optional "Build sent" mark in the plans list is not built; the
    plan page's Building covers it.
+
+## 2026-11-13 01:13 EST — Active plans home view: pull to refresh and swipes, departures
+
+Plan: the active plans home view plan (20261112_03), its 2026-11-13
+01:07 EST amendment. Small departures (Rule 1.7):
+
+1. **Gestures in the app.** libcontrols' `Scroll` has no overscroll
+   hook, so the list tracks its own touch beside it for the pull and the
+   swipes; libcontrols is not changed.
+2. **Hidden rows are kept in memory only**, for the app's run, not in a
+   file: a restart shows everything again.
+3. **"Blocked versus unblocked"** is not part of a task's state for its
+   swipe: `overview` does not carry it; a choice question that blocks a
+   task shows as a new question row, which brings the task back.
+4. **flankr-companion 0.8.12** adds `Input::ListAgents` for the refresh;
+   the daemon does not change.
