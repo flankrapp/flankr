@@ -785,3 +785,55 @@ it moves into the ⋮ menu, keeps menu_settings.
 # [Copy] planning_all_plans
 
 - text: All plans…
+
+The plan policy plugin's popup menu, the Finished card's policy line and
+the confirmation card's requester (plan 20261112_02, 2.7, with its 22:31
+EST amendment: tasks are managed in the Active tasks view).
+
+# [Copy] policy_reading
+
+- text: Reading the plan policy…
+
+# [Copy] policy_running
+
+- text: Running: asks you before each continue
+
+# [Copy] policy_paused
+
+- text: Paused: no decisions are made
+
+# [Copy] policy_pause
+
+- text: Pause
+
+# [Copy] policy_resume
+
+- text: Resume
+
+# [Copy] policy_none
+
+- text: No decisions yet
+
+# [Copy] policy_stop
+
+- text: Stop
+
+# [Copy] policy_requester
+
+- text: Plan policy
+
+# [Copy] policy_waiting
+
+- text: waiting for you
+
+# [Copy] policy_sent
+
+- text: sent
+
+# [Copy] policy_declined
+
+- text: declined
+
+# [Copy] policy_blocked
+
+- text: held by a question

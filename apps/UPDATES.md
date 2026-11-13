@@ -375,3 +375,10 @@ These changes came before the app had version numbers.
 
 **Added**
 - While Claude is thinking, the session shows a spinner and Thinking… at its end.
+
+## 0.7.21 — 2026-11-12
+
+**Added**
+- Plan policy, a new plugin you can turn on in Settings → Plugins. Its ⋮ item shows whether it is running or paused, with Pause and Resume, and the last thing it decided for each agent, with Stop for one whose continue is waiting on you.
+- When Plan policy has decided about a session's newest Finished card, the card shows it as its last point: "Policy: continue, step 4 — waiting for you", then "sent" or "declined", or "Policy: stop" or "Policy: ask" with the reason.
+- An approval Plan policy asks for says Plan policy before the agent's name, so you know it is not from you or the assistant.

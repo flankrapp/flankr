@@ -1029,7 +1029,8 @@ impl App {
                     project,
                     handle: label,
                     state: CardState::Waiting,
-                })
+                });
+                self.policy_shown();
             }
             // The remote in use's: its card, not a background remote's.
             Event::Answered {
@@ -1050,7 +1051,9 @@ impl App {
                 outcome,
             } if self.card_remote.is_none() => {
                 log::info!("confirmation {confirm_id}: {outcome}");
+                self.plugins.confirm_resolved(confirm_id, &outcome);
                 self.set_card(confirm_id, CardState::Done(outcome));
+                self.policy_shown();
             }
             // The turn's feedback (plan 20261024_03, the 2026-10-30 22:08
             // EDT amendment): thinking from its start, a tool's label while
@@ -1141,7 +1144,10 @@ impl App {
                     agent.choice_answered(&id, &outcome, &got, code);
                 }
             }
-            Event::PluginNotify(n) => self.plugin_calls(|p| p.notify(n)),
+            Event::PluginNotify(n) => {
+                self.plugin_calls(|p| p.notify(n));
+                self.policy_shown();
+            }
             Event::Agents(agents) => {
                 self.agents = agents;
                 self.follow_sessions();
@@ -1246,6 +1252,7 @@ impl App {
                     // amendment).
                     agent.set_thinking(thinking);
                 }
+                self.policy_shown();
             }
             // The audio played the chime.
             Event::Ding => log::info!("ding: an agent is done"),
@@ -1483,6 +1490,25 @@ impl App {
     /// Runs `f` on the plugins and sends the calls it gives, each with the
     /// agent view's pane as its session; a modal it opened starts at its
     /// top.
+    /// The plan policy's word where it shows (plan 20261112_02, 2.7): the
+    /// line on the agent view's Finished card, and **Plan policy** as the
+    /// requester of a confirmation card it asked for.
+    fn policy_shown(&mut self) {
+        if let (Some(agent), Some(pane)) = (&mut self.agent, &self.agent_pane) {
+            agent.set_policy_line(self.plugins.card_line(pane));
+        }
+        if self.card_remote.is_none()
+            && let Some(card) = &mut self.card
+            && let Some(name) = self.plugins.requester(card.confirm_id)
+        {
+            let lead = format!("{name} \u{b7} ");
+            if !card.agent.starts_with(&lead) {
+                card.agent = format!("{lead}{}", card.agent);
+                self.screen.invalidate();
+            }
+        }
+    }
+
     fn plugin_calls(&mut self, f: impl FnOnce(&mut Plugins) -> Vec<Outgoing>) {
         let before = self.plugins.modal().map(|(ns, _)| ns.to_string());
         let calls = f(&mut self.plugins);

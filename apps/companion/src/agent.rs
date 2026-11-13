@@ -1038,6 +1038,10 @@ fn replay_button(key: u64, x: f32, y: f32, s: f32) -> FlowButton {
     }
 }
 
+/// The plan policy's line's lead on a Finished card (plan 20261112_02,
+/// 2.7 item 2).
+pub const POLICY_LEAD: &str = "Policy: ";
+
 /// The replay button's width and height, in points.
 const REPLAY_W: f32 = 28.0;
 
@@ -2848,6 +2852,9 @@ pub struct AgentScreen {
     /// The agent is thinking (`Event::AgentView::thinking`): a temporary
     /// line at the list's end, not a section, not kept.
     thinking: bool,
+    /// The plan policy's line and the packed serial of the Finished card
+    /// it is on (plan 20261112_02, 2.7 item 2).
+    policy_line: Option<(u64, String)>,
     /// The thinking line's spinner clock, run on while the line shows,
     /// and the frame last drawn.
     spin: Duration,
@@ -3152,6 +3159,7 @@ impl AgentScreen {
             self.pin_overridden = false;
         }
         self.sync_choice();
+        self.apply_policy_line();
         self.refresh_blocks();
         self.hold(keep);
         self.flow_stale = true;
@@ -3348,6 +3356,53 @@ impl AgentScreen {
     /// 2026-11-11 16:27 EST amendment, items 2 and 3): the line at the
     /// list's end comes or goes. A view at its end follows it into view;
     /// one scrolled back stays where it is.
+    /// The plan policy's line for one Finished card, by its packed serial,
+    /// or none (plan 20261112_02, 2.7 item 2): shown as the card's last
+    /// point, "Policy: …".
+    pub fn set_policy_line(&mut self, line: Option<(u64, String)>) {
+        if self.policy_line == line {
+            return;
+        }
+        if let Some((serial, _)) = self.policy_line.take() {
+            self.strip_policy_line(serial);
+        }
+        self.policy_line = line;
+        self.apply_policy_line();
+        self.refresh_blocks();
+        self.flow_stale = true;
+        self.settle();
+    }
+
+    fn strip_policy_line(&mut self, serial: u64) {
+        if let Some(block) = self.blocks.get_mut(&serial)
+            && let Shows::Card(card) = &mut block.shows
+        {
+            let before = card.points.len();
+            card.points.retain(|p| !p.starts_with(POLICY_LEAD));
+            if card.points.len() != before {
+                block.stale = true;
+            }
+        }
+    }
+
+    /// The policy line on its card, once that card is held.
+    fn apply_policy_line(&mut self) {
+        let Some((serial, line)) = &self.policy_line else {
+            return;
+        };
+        if let Some(block) = self.blocks.get_mut(serial)
+            && let Shows::Card(card) = &mut block.shows
+            && card.kind == CardKind::Finished
+        {
+            let text = format!("{POLICY_LEAD}{line}");
+            if card.points.last() != Some(&text) {
+                card.points.retain(|p| !p.starts_with(POLICY_LEAD));
+                card.points.push(text);
+                block.stale = true;
+            }
+        }
+    }
+
     pub fn set_thinking(&mut self, on: bool) {
         if on == self.thinking {
             return;

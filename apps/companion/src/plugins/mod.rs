@@ -21,6 +21,7 @@
 pub mod card;
 pub mod modal;
 pub mod planning;
+pub mod policy;
 
 use libcontrols::{DrawContext, PopupItemKind, PopupRow, Rect};
 use libflankr_proto::ErrorObject;
@@ -155,6 +156,18 @@ pub trait DevicePlugin {
     /// The item `id` of `item`'s popup menu was chosen; the menu has
     /// closed.
     fn menu_chosen(&mut self, _item: &str, _id: &str, _out: &mut PluginOut) {}
+    /// A line for the Finished card of `pane_id` it has a word on: the
+    /// card's serial and the line (plan 20261112_02, 2.7 item 2).
+    fn card_line(&self, _pane_id: &str) -> Option<(u64, String)> {
+        None
+    }
+    /// A confirmation ended, with plan 01's outcome.
+    fn confirm_resolved(&mut self, _confirm_id: u64, _outcome: &str) {}
+    /// Who the confirmation card names as asking, when this plugin asked
+    /// for `confirm_id` (2.7 item 3).
+    fn requester(&self, _confirm_id: u64) -> Option<&'static str> {
+        None
+    }
 }
 
 /// Whether the daemon's plugin `version` is in a device half's `range`
@@ -285,7 +298,34 @@ impl Plugins {
 
     /// The app's built-in device halves.
     pub fn builtin() -> Self {
-        Plugins::new(vec![Box::new(planning::Planning::new())])
+        Plugins::new(vec![
+            Box::new(planning::Planning::new()),
+            Box::new(policy::Policy::new()),
+        ])
+    }
+
+    /// The active plugins' line for `pane_id`'s Finished card, if one has
+    /// a word on it: the card's serial and the line.
+    pub fn card_line(&self, pane_id: &str) -> Option<(u64, String)> {
+        self.halves
+            .iter()
+            .filter(|h| self.active(h.ns()))
+            .find_map(|h| h.card_line(pane_id))
+    }
+
+    /// A confirmation ended: every half is told.
+    pub fn confirm_resolved(&mut self, confirm_id: u64, outcome: &str) {
+        for h in &mut self.halves {
+            h.confirm_resolved(confirm_id, outcome);
+        }
+    }
+
+    /// The plugin that asked for `confirm_id`, by the name its card shows.
+    pub fn requester(&self, confirm_id: u64) -> Option<&'static str> {
+        self.halves
+            .iter()
+            .filter(|h| self.active(h.ns()))
+            .find_map(|h| h.requester(confirm_id))
     }
 
     fn half(&self, ns: &str) -> Option<&dyn DevicePlugin> {
