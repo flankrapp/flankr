@@ -148,6 +148,30 @@ pub trait Services: Send + Sync {
     async fn open_choice(&self, _pane_id: &str) -> Option<String> {
         None
     }
+    /// The `[[agents]]` entries, as the daemon checks sends against them.
+    fn agents(&self) -> Vec<crate::config::AgentConfig> {
+        Vec::new()
+    }
+    /// Opens a confirmation for `command` on `pane_id`, already checked by
+    /// `core::policy::check`, as `principal`, standing: its id, and its
+    /// outcome once it is resolved (`sent`, `failed`, `denied`, `expired`
+    /// or `cancelled`). Only its approval sends the command.
+    fn request_confirmation(
+        &self,
+        _principal: &crate::core::principal::Principal,
+        _pane_id: &str,
+        _agent: &str,
+        _command: &str,
+    ) -> Result<(u64, tokio::sync::oneshot::Receiver<&'static str>), String> {
+        Err("no confirmations here".to_string())
+    }
+    /// Withdraws `principal`'s pending confirmation `confirm_id`.
+    fn cancel_confirmation(
+        &self,
+        _principal: &crate::core::principal::Principal,
+        _confirm_id: u64,
+    ) {
+    }
     /// One answer of `[llm.uses.policy]` to `system` and `user`, or why
     /// there is none (no model, a timeout, an error).
     async fn judge(&self, _system: &str, _user: &str) -> Result<String, String> {
@@ -168,6 +192,8 @@ struct Session {
     blocked: Option<String>,
     /// The newest card's serial.
     latest: u64,
+    /// The continue waiting for the owner's tap: its confirmation id.
+    pending: Option<u64>,
 }
 
 /// What the plugin keeps while the daemon runs.
@@ -181,7 +207,7 @@ struct State {
 /// The plan policy plugin.
 #[derive(Default)]
 pub struct PlanPolicy {
-    state: Mutex<State>,
+    state: Arc<Mutex<State>>,
     services: Option<Arc<dyn Services>>,
 }
 
@@ -590,6 +616,19 @@ impl Plugin for PlanPolicy {
                     .collect();
                 Ok(json!({ "plans": rows }))
             }
+            "stop" => {
+                need_approver(ctx, method)?;
+                let Some(pane_id) = params
+                    .get("pane_id")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|p| !p.is_empty())
+                else {
+                    return Err(PluginError::invalid("stop needs { pane_id }."));
+                };
+                self.stop_pane(pane_id, ctx);
+                Ok(json!({}))
+            }
             "build" | "task_enable" | "task_disable" | "task_remove" => {
                 need_approver(ctx, method)?;
                 self.task_call(method, &params, ctx).await
@@ -627,13 +666,195 @@ impl Plugin for PlanPolicy {
         if !newest || self.paused() {
             return;
         }
-        if let Some(decision) = self.decide(event, ctx, &settings).await {
+        if let Some(mut decision) = self.decide(event, ctx, &settings).await {
+            match decision.verdict {
+                Verdict::Continue => self.continue_through_the_gate(&mut decision, ctx, &settings),
+                Verdict::Stop => self.clear_counters(&decision, ctx),
+                Verdict::Ask => {}
+            }
             self.emit(&decision);
         }
     }
 }
 
 impl PlanPolicy {
+    /// The principal its continues are asked as (2.5 item 2): only the
+    /// configured agents, never an approver.
+    fn principal(settings: &Settings) -> crate::core::principal::Principal {
+        crate::core::principal::Principal {
+            id: PRINCIPAL_ID.to_string(),
+            agents: Some(settings.agents.clone()),
+            can_approve: false,
+        }
+    }
+
+    /// 2.5: `continue_command` through `policy::check` (on the agent's
+    /// `allowed_commands` only) and a standing confirmation, never sent
+    /// directly (`confirm = "always"`). A refusal makes the decision
+    /// `stop`, rule `denied`. `continues_used` counts the confirmations
+    /// that end `sent`.
+    fn continue_through_the_gate(
+        &self,
+        decision: &mut Decision,
+        ctx: &PluginCtx,
+        settings: &Settings,
+    ) {
+        let Some(services) = self.services.clone() else {
+            return;
+        };
+        let principal = Self::principal(settings);
+        let agents = services.agents();
+        let command = settings.continue_command.as_str();
+        let deny = |decision: &mut Decision, why: String| {
+            log::info!(
+                "[policy] pane={} agent={}: '{command}' denied: {why}",
+                decision.pane_id,
+                decision.agent
+            );
+            decision.verdict = Verdict::Stop;
+            decision.rule = "denied";
+            decision.reason = why;
+        };
+        let checked = match crate::core::policy::check(
+            &principal,
+            &agents,
+            &decision.agent,
+            &decision.pane_id,
+            command,
+        ) {
+            Ok(checked) => checked,
+            Err(denied) => return deny(decision, denied.to_string()),
+        };
+        if !crate::core::policy::is_allow_listed(&agents, &decision.agent, command) {
+            return deny(
+                decision,
+                format!(
+                    "'{command}' is not on {}'s allowed_commands.",
+                    decision.agent
+                ),
+            );
+        }
+        let (confirm_id, outcome) = match services.request_confirmation(
+            &principal,
+            &decision.pane_id,
+            &decision.agent,
+            &checked.command,
+        ) {
+            Ok(opened) => opened,
+            Err(e) => return deny(decision, e),
+        };
+        log::info!(
+            "[policy] pane={} plan={}: confirmation {confirm_id} opened for '{}'",
+            decision.pane_id,
+            decision.plan.as_deref().unwrap_or("-"),
+            checked.command
+        );
+        decision.confirm_id = Some(confirm_id);
+        let pane_id = decision.pane_id.clone();
+        {
+            let mut state = self.state.lock().unwrap();
+            state.sessions.entry(pane_id.clone()).or_default().pending = Some(confirm_id);
+        }
+        let root = root_of(ctx).ok();
+        let path = decision.plan.clone();
+        let state = Arc::clone(&self.state);
+        let store = self.store().ok();
+        tokio::spawn(async move {
+            let outcome = outcome.await.unwrap_or("cancelled");
+            log::info!("[policy] pane={pane_id}: confirmation {confirm_id} {outcome}");
+            {
+                let mut state = state.lock().unwrap();
+                if let Some(s) = state.sessions.get_mut(&pane_id)
+                    && s.pending == Some(confirm_id)
+                {
+                    s.pending = None;
+                }
+            }
+            if outcome == "sent"
+                && let (Some(root), Some(path), Some(store)) = (root, path, store)
+            {
+                count_continue(&store, &root, &path);
+            }
+        });
+    }
+}
+
+/// One more continue sent for the task of `path` in `root`.
+fn count_continue(store: &Store, root: &str, path: &str) {
+    {
+        match store.update(root, path, |old| {
+            old.map(|t| Task {
+                continues_used: t.continues_used + 1,
+                ..t
+            })
+        }) {
+            Ok(Some(task)) => log::info!(
+                "[policy] {path}: {} continue(s) sent for this task",
+                task.continues_used
+            ),
+            Ok(None) => {}
+            Err(e) => log::warn!("[policy] {path}: {e}"),
+        }
+    }
+}
+
+impl PlanPolicy {
+    /// A `stop` clears the counters of the decision's task (2.5 item 4).
+    fn clear_counters(&self, decision: &Decision, ctx: &PluginCtx) {
+        let (Some(path), Ok(root), Ok(store)) = (&decision.plan, root_of(ctx), self.store()) else {
+            return;
+        };
+        if store
+            .find(&root, path)
+            .is_some_and(|t| t.continues_used > 0)
+        {
+            let _ = store.update(&root, path, |old| {
+                old.map(|t| Task {
+                    continues_used: 0,
+                    ..t
+                })
+            });
+        }
+    }
+
+    /// `stop { pane_id }`: its waiting continue cancelled, its tasks'
+    /// counters cleared.
+    fn stop_pane(&self, pane_id: &str, ctx: &PluginCtx) {
+        let pending = {
+            let mut state = self.state.lock().unwrap();
+            state
+                .sessions
+                .get_mut(pane_id)
+                .and_then(|s| s.pending.take())
+        };
+        let settings = Settings::of(ctx.config());
+        if let (Some(id), Some(services)) = (pending, &self.services) {
+            services.cancel_confirmation(&Self::principal(&settings), id);
+        }
+        if let Ok(store) = self.store() {
+            for task in store.load() {
+                if task
+                    .pane_id
+                    .as_deref()
+                    .is_some_and(|p| crate::watch::pane_ids_match(p, pane_id))
+                {
+                    let _ = store.update(&task.project_root, &task.path, |old| {
+                        old.map(|t| Task {
+                            continues_used: 0,
+                            ..t
+                        })
+                    });
+                }
+            }
+        }
+        log::info!(
+            "[policy] stop pane={pane_id} by {}{}",
+            ctx.principal().id,
+            pending.map_or(String::new(), |id| format!(", confirmation {id} cancelled"))
+        );
+        self.notify("state", self.state_json());
+    }
+
     /// `build`, `task_enable`, `task_disable` and `task_remove` (the
     /// 22:31 EST amendment, items 1 to 3): the plan's row as it now is,
     /// also sent to every phone as `approval`.

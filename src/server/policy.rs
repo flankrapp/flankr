@@ -84,6 +84,50 @@ impl Services for DaemonPolicy {
         Some(first.text.clone())
     }
 
+    fn agents(&self) -> Vec<crate::config::AgentConfig> {
+        self.daemon().map(|d| d.agents.clone()).unwrap_or_default()
+    }
+
+    /// The broker's standing confirmation, as `agents.send` opens it; a
+    /// task waits for its resolution.
+    fn request_confirmation(
+        &self,
+        principal: &crate::core::principal::Principal,
+        pane_id: &str,
+        agent: &str,
+        command: &str,
+    ) -> Result<(u64, tokio::sync::oneshot::Receiver<&'static str>), String> {
+        use crate::core::confirm::{ConfirmEvent, Lifetime, Outcome};
+        let daemon = self.daemon().ok_or("the daemon is gone")?;
+        let mut events = daemon.broker.subscribe();
+        let id = daemon
+            .broker
+            .request(principal, pane_id, agent, command, None, Lifetime::Standing)
+            .map_err(|e| e.to_string())?;
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            loop {
+                match events.recv().await {
+                    Ok(ConfirmEvent::Resolved { view, outcome, .. })
+                        if view.confirm_id == id && outcome != Outcome::Approved =>
+                    {
+                        let _ = tx.send(outcome.as_str());
+                        return;
+                    }
+                    Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                }
+            }
+        });
+        Ok((id, rx))
+    }
+
+    fn cancel_confirmation(&self, principal: &crate::core::principal::Principal, confirm_id: u64) {
+        if let Some(daemon) = self.daemon() {
+            let _ = daemon.broker.cancel(principal, confirm_id);
+        }
+    }
+
     /// One call on `[llm.uses.policy]`: the system text, one user message,
     /// no tools, at most [`JUDGE_TIMEOUT`].
     async fn judge(&self, system: &str, user: &str) -> Result<String, String> {

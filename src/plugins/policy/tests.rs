@@ -107,6 +107,24 @@ pub(super) struct Fake {
     pub(super) answers: std::sync::Mutex<std::collections::VecDeque<String>>,
     /// The user messages it was sent.
     pub(super) asked: std::sync::Mutex<Vec<String>>,
+    /// A real broker over a recording sink, and the `[[agents]]`.
+    pub(super) broker: Option<Arc<crate::core::confirm::Broker>>,
+    pub(super) agents: Vec<crate::config::AgentConfig>,
+}
+
+/// What an approved confirmation sent: (pane, command).
+#[derive(Default)]
+pub(super) struct Sink(pub(super) std::sync::Mutex<Vec<(String, String)>>);
+
+#[async_trait::async_trait]
+impl crate::core::confirm::CommandSink for Sink {
+    async fn send(&self, pane_id: &str, command: &str) -> Result<(), String> {
+        self.0
+            .lock()
+            .unwrap()
+            .push((pane_id.to_string(), command.to_string()));
+        Ok(())
+    }
 }
 
 impl Fake {
@@ -143,6 +161,41 @@ impl Services for Fake {
     }
     async fn open_choice(&self, _pane_id: &str) -> Option<String> {
         self.choice.lock().unwrap().clone()
+    }
+    fn agents(&self) -> Vec<crate::config::AgentConfig> {
+        self.agents.clone()
+    }
+    fn request_confirmation(
+        &self,
+        principal: &Principal,
+        pane_id: &str,
+        agent: &str,
+        command: &str,
+    ) -> Result<(u64, tokio::sync::oneshot::Receiver<&'static str>), String> {
+        use crate::core::confirm::{ConfirmEvent, Lifetime, Outcome};
+        let broker = self.broker.as_ref().ok_or("no broker")?;
+        let mut events = broker.subscribe();
+        let id = broker
+            .request(principal, pane_id, agent, command, None, Lifetime::Standing)
+            .map_err(|e| e.to_string())?;
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            while let Ok(event) = events.recv().await {
+                if let ConfirmEvent::Resolved { view, outcome, .. } = event
+                    && view.confirm_id == id
+                    && outcome != Outcome::Approved
+                {
+                    let _ = tx.send(outcome.as_str());
+                    return;
+                }
+            }
+        });
+        Ok((id, rx))
+    }
+    fn cancel_confirmation(&self, principal: &Principal, confirm_id: u64) {
+        if let Some(broker) = &self.broker {
+            let _ = broker.cancel(principal, confirm_id);
+        }
     }
     async fn judge(&self, _system: &str, user: &str) -> Result<String, String> {
         self.asked.lock().unwrap().push(user.to_string());
@@ -535,7 +588,7 @@ pub(super) async fn armed(e: &Env) -> PluginCtx {
 
 #[tokio::test]
 async fn the_judgement_with_a_scripted_model() {
-    let e = env();
+    let e = gated(Arc::new(Sink::default()), &["continue"]);
     let c = armed(&e).await;
     *e.fake.question.lock().unwrap() = Some("Continue with step 4?".into());
     e.fake.answer(
@@ -597,4 +650,147 @@ async fn the_judgement_with_a_scripted_model() {
         .on_card_summary(&card(6, "Done.", "Done."), &c)
         .await;
     assert_eq!(e.decisions()[5], Env::pair("stop", "complete"));
+}
+
+const CONTINUE_4: &str = "{\"asks_continue\": true, \"decision\": \"continue\", \"step\": 4, \"reason\": \"Step 3 is done.\"}";
+
+/// An env whose fake has a real broker over `sink`, and Claude allowed
+/// `continue` (or not).
+fn gated(sink: Arc<Sink>, allowed: &[&str]) -> Env {
+    let agents = vec![crate::config::AgentConfig {
+        name: "claude".into(),
+        allowed_commands: allowed.iter().map(|c| c.to_string()).collect(),
+        allow_arbitrary_commands: true,
+        ..toml::from_str("name = \"claude\"").unwrap()
+    }];
+    env_with(move |state| Fake {
+        state: Some(state),
+        broker: Some(crate::core::confirm::Broker::new(
+            sink,
+            std::time::Duration::from_secs(60),
+        )),
+        agents,
+        ..Fake::default()
+    })
+}
+
+async fn settle() {
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+}
+
+#[tokio::test]
+async fn a_continue_is_only_ever_a_confirmation() {
+    use crate::core::confirm::ConfirmEvent;
+    let sink = Arc::new(Sink::default());
+    let e = gated(Arc::clone(&sink), &["continue"]);
+    let broker = e.fake.broker.clone().unwrap();
+    let mut events = broker.subscribe();
+    let c = ctx_as(&e.root, owner(), on()).await;
+    // Not built: the model is never asked and the broker never reached.
+    e.fake.answer(CONTINUE_4);
+    let named = format!("{PLAN_PATH}: step 3 done. Continue with step 4?");
+    e.policy
+        .on_card_summary(&card(1, &named, "Done."), &c)
+        .await;
+    assert_eq!(e.decisions()[0], Env::pair("stop", "unapproved"));
+    assert!(e.fake.asked.lock().unwrap().is_empty(), "no model call");
+    assert!(events.try_recv().is_err(), "nothing asked");
+    e.fake.answers.lock().unwrap().clear();
+
+    let c = armed(&e).await;
+    e.fake.answer(CONTINUE_4);
+    e.policy
+        .on_card_summary(&card(2, &named, "Done."), &c)
+        .await;
+    let d = e.fake.notes("decision").pop().unwrap();
+    assert_eq!(d["decision"], "continue");
+    let id = d["confirm_id"].as_u64().expect("a confirmation");
+    let Ok(ConfirmEvent::Requested { view, .. }) = events.try_recv() else {
+        panic!("one confirm.requested");
+    };
+    assert_eq!(view.confirm_id, id);
+    assert_eq!(view.command, "continue");
+    assert_eq!(view.requested_by, PRINCIPAL_ID);
+    assert!(events.try_recv().is_err(), "exactly one");
+    settle().await;
+    assert!(
+        sink.0.lock().unwrap().is_empty(),
+        "nothing runs without confirm.reply"
+    );
+    // The plugin's own principal could never approve it.
+    assert!(!PlanPolicy::principal(&Settings::of(&on())).can_approve);
+    broker.reply(&owner(), id, true, None).await.unwrap();
+    assert_eq!(
+        *sink.0.lock().unwrap(),
+        [("w1:p1".to_string(), "continue".to_string())]
+    );
+    settle().await;
+    let plans = e.policy.call("plans", json!({}), &c).await.unwrap();
+    assert_eq!(plans["plans"][0]["continues_used"], 1);
+}
+
+#[tokio::test]
+async fn a_denied_continue_stops_and_the_fourth_asks() {
+    let sink = Arc::new(Sink::default());
+    // Arbitrary commands are on, but `continue` must be on the allow list.
+    let e = gated(Arc::clone(&sink), &["/compact"]);
+    let c = armed(&e).await;
+    e.fake.answer(CONTINUE_4);
+    e.policy
+        .on_card_summary(&card(1, "Continue with step 4?", "Done."), &c)
+        .await;
+    assert_eq!(e.decisions()[0], Env::pair("stop", "denied"));
+
+    let sink = Arc::new(Sink::default());
+    let e = gated(Arc::clone(&sink), &["continue"]);
+    let broker = e.fake.broker.clone().unwrap();
+    let c = armed(&e).await;
+    for serial in 1..=3 {
+        e.fake.answer(CONTINUE_4);
+        e.policy
+            .on_card_summary(&card(serial, "Continue with step 4?", "Done."), &c)
+            .await;
+        let d = e.fake.notes("decision").pop().unwrap();
+        assert_eq!(d["decision"], "continue", "{d}");
+        broker
+            .reply(&owner(), d["confirm_id"].as_u64().unwrap(), true, None)
+            .await
+            .unwrap();
+        settle().await;
+    }
+    e.fake.answer(CONTINUE_4);
+    e.policy
+        .on_card_summary(&card(4, "Continue with step 4?", "Done."), &c)
+        .await;
+    assert_eq!(e.decisions()[3], Env::pair("ask", "limit"));
+    assert_eq!(sink.0.lock().unwrap().len(), 3);
+
+    // Stop cancels the waiting continue and clears the counters.
+    e.policy
+        .call("stop", json!({"pane_id": "w1:p1"}), &c)
+        .await
+        .unwrap();
+    e.fake.answer(CONTINUE_4);
+    e.policy
+        .on_card_summary(&card(5, "Continue with step 4?", "Done."), &c)
+        .await;
+    let d = e.fake.notes("decision").pop().unwrap();
+    assert_eq!(d["decision"], "continue");
+    let id = d["confirm_id"].as_u64().unwrap();
+    e.policy
+        .call("stop", json!({"pane_id": "w1:p1"}), &c)
+        .await
+        .unwrap();
+    assert!(broker.pending(id).is_none(), "cancelled");
+    assert!(broker.reply(&owner(), id, true, None).await.is_err());
+    assert_eq!(sink.0.lock().unwrap().len(), 3, "nothing more sent");
+    let viewer = ctx_as(&e.root, Principal::local("t"), on()).await;
+    assert_eq!(
+        e.policy
+            .call("stop", json!({"pane_id": "w1:p1"}), &viewer)
+            .await
+            .unwrap_err()
+            .code,
+        wire::NOT_PERMITTED
+    );
 }
