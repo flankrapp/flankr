@@ -301,7 +301,10 @@ async fn build_arms_a_plan_and_the_task_calls_change_it() {
     assert_eq!(row["pane_id"], "w1:p1");
     assert_eq!(row["approved_by"], "paired:phone");
     assert_eq!(row["changed_since_approval"], false);
-    assert_eq!(e.fake.notes("approval"), std::slice::from_ref(&row));
+    assert_eq!(row["existing"], false, "a new task");
+    let mut told = row.clone();
+    told.as_object_mut().unwrap().remove("existing");
+    assert_eq!(e.fake.notes("approval"), std::slice::from_ref(&told));
 
     let row = e
         .policy
@@ -1061,4 +1064,64 @@ async fn overview_notices_are_coalesced() {
     let sent = e.fake.notes("overview");
     assert_eq!(sent.len(), 1, "{sent:?}");
     assert_eq!(sent[0]["paused"], false, "the latest wins");
+}
+
+/// Plan 20261112_03, the 2026-11-13 00:09 EST amendment, item 2.
+#[tokio::test]
+async fn build_once_keeps_a_task_it_already_has() {
+    let e = env();
+    let c = ctx_as(&e.root, owner(), on()).await;
+    let first = e
+        .policy
+        .call(
+            "build",
+            json!({"path": PLAN_PATH, "pane_id": "w1:p1", "once": true}),
+            &c,
+        )
+        .await
+        .unwrap();
+    assert_eq!(first["existing"], false);
+    e.policy
+        .call("task_enable", json!({"path": PLAN_PATH}), &c)
+        .await
+        .unwrap();
+    let before = e.policy.store().unwrap().load();
+    let notes = e.fake.notes("approval").len();
+    let again = e
+        .policy
+        .call(
+            "build",
+            json!({"path": PLAN_PATH, "pane_id": "w1:p9", "once": true}),
+            &c,
+        )
+        .await
+        .unwrap();
+    assert_eq!(again["existing"], true);
+    assert_eq!(again["autocontinue"], true);
+    assert_eq!(again["pane_id"], "w1:p1", "unchanged");
+    assert_eq!(e.policy.store().unwrap().load(), before);
+    assert_eq!(e.fake.notes("approval").len(), notes, "nothing to tell");
+    // Removed, Build makes a new task again.
+    e.policy
+        .call("task_remove", json!({"path": PLAN_PATH}), &c)
+        .await
+        .unwrap();
+    let new = e
+        .policy
+        .call(
+            "build",
+            json!({"path": PLAN_PATH, "pane_id": "w1:p2", "once": true}),
+            &c,
+        )
+        .await
+        .unwrap();
+    assert_eq!(new["existing"], false);
+    assert_eq!(new["pane_id"], "w1:p2");
+    // Without `once`, as before: the task is armed again.
+    let rearmed = e
+        .policy
+        .call("build", json!({"path": PLAN_PATH, "pane_id": "w1:p3"}), &c)
+        .await
+        .unwrap();
+    assert_eq!(rearmed["pane_id"], "w1:p3");
 }

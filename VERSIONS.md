@@ -1457,3 +1457,14 @@ amendment, item 1):
   letters, as the daemon's arbitrary-command filter takes them, so its
   message always passes unchanged ("v2.0" is "v2 0"; a `:` after a
   removed character goes).
+
+## dev.flankr.plugins.policy 0.1.2 — 2026-11-13 (the commit tagged `dev.flankr.plugins.policy-v0.1.2`)
+
+Plan 20261112_03, the 2026-11-13 00:09 EST amendment, item 2. Strictly
+additive (an optional param and a result field): `build` without `once`
+behaves as before.
+
+- **Added:** `build { path, pane_id?, once: true }`: a plan that already
+  has a task gets that task's row back unchanged, with nothing stored or
+  notified. `build`'s row carries `existing` (`true` for that case,
+  `false` for a new or re-armed task).

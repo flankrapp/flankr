@@ -1,4 +1,4 @@
-//! The plan policy plugin's daemon half, `dev.flankr.plugins.policy@0.1.1`
+//! The plan policy plugin's daemon half, `dev.flankr.plugins.policy@0.1.2`
 //! (docs/design/20261112_02_PLAN_POLICY_AGENT_PLAN.md, with its
 //! amendments).
 //!
@@ -628,7 +628,7 @@ impl Plugin for PlanPolicy {
     }
 
     fn version(&self) -> PluginVersion {
-        PluginVersion::Semver("0.1.1")
+        PluginVersion::Semver("0.1.2")
     }
 
     fn menu(&self) -> &'static [MenuItem] {
@@ -1122,6 +1122,17 @@ impl PlanPolicy {
         let by = ctx.principal().id.clone();
         let now = crate::server::link::auth::now_rfc3339();
         let failed = |e: String| PluginError::new(NO_STORE, e);
+        // `build { once: true }` (plan 20261112_03, the 2026-11-13 00:09
+        // EST amendment, item 2): a plan with a task keeps it unchanged.
+        if method == "build"
+            && params.get("once").and_then(Value::as_bool) == Some(true)
+            && let Some(task) = store.find(&root, &path).filter(|t| t.armed)
+        {
+            log::info!("[policy] build {path} in {root} by {by}: it has a task already; unchanged");
+            let mut row = self.row(&plan, Some(&task));
+            row["existing"] = json!(true);
+            return Ok(row);
+        }
         let task = match method {
             "build" => {
                 let pane_id = params
@@ -1193,8 +1204,11 @@ impl PlanPolicy {
                 ),
             }
         );
-        let row = self.row(&plan, task.as_ref());
+        let mut row = self.row(&plan, task.as_ref());
         self.notify("approval", row.clone());
+        if method == "build" {
+            row["existing"] = json!(false);
+        }
         Ok(row)
     }
 }
