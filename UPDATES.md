@@ -292,3 +292,8 @@ These changes came before the program had version numbers.
 **Added**
 - With the Plan policy plugin on, the daemon works out which plan each agent pane is on, for the phone's Active tasks view: the plan you chose Build on for that pane, else a plan path in its newest reply, else a plan's title, else the `plan/<date>_<nn>` branch of the worktree it is in, else one question to the `[llm.uses.policy]` model with the titles of the project's active plans. This only places the pane in the phone's list; it never makes the plugin send anything. The log says `[policy] pane=<pane> plan=<plan> linked_by=<how> worktree=<path or ->` when a pane's plan changes.
 - The phone's agent list now says which herdr worktree each agent is in, from herdr's own list of worktrees, on a herdr on this computer.
+
+## 0.7.14 — 2026-11-13
+
+**Added**
+- The planning plugin reads each plan's open questions: the items of its "Open questions" section, the recommendation each gives, and which amendment answered it. The general agent's `planning_plan_show` tool and the phone's plan list now see them, with a count of those still open for each plan.

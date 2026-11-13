@@ -10,7 +10,10 @@
 //!   outside fenced code blocks, timestamps kept as written;
 //! - `README.md`'s `## Architectural decisions` table.
 //!
-//! Only titles, headings and subjects are returned, never the bodies.
+//! Only titles, headings and subjects are returned, never the bodies,
+//! but for a plan's open questions (docs/design/20261113_02_PLAN_QUESTIONS_PLAN.md,
+//! decisions 2 and 3): the items of its `## Open questions` section, and
+//! which a later amendment answered ([`open_questions`]).
 
 use serde_json::{Map, Value, json};
 
@@ -378,6 +381,8 @@ pub struct Plan {
     pub amendments: Vec<Amendment>,
     /// Its row in the README's table, if it has one.
     pub readme: Option<ReadmeRow>,
+    /// Its open questions section, if it has one.
+    pub questions: Option<Questions>,
     pub error: Option<String>,
 }
 
@@ -397,6 +402,7 @@ pub fn read_plan(file: &str, name: FileName, text: &str, cut: bool) -> Plan {
         headings: Vec::new(),
         amendments: Vec::new(),
         readme: None,
+        questions: None,
         error: None,
     };
     let body_start = match front_matter(&lines) {
@@ -442,6 +448,7 @@ pub fn read_plan(file: &str, name: FileName, text: &str, cut: bool) -> Plan {
             None => {}
         }
     }
+    plan.questions = open_questions(&lines, body_start, &plan.amendments);
     if cut && plan.error.is_none() {
         // Amendments may follow the cut unseen.
         plan.error = Some("cut at 64 KiB".to_string());
@@ -639,6 +646,7 @@ pub fn plan_json(plan: &Plan, full: bool) -> Value {
             "status": r.status,
             "decision": r.decision,
         })),
+        "open_questions": plan.questions.as_ref().map_or(0, Questions::open),
         "error": plan.error,
     });
     if full {
@@ -660,6 +668,7 @@ pub fn plan_json(plan: &Plan, full: bool) -> Value {
             "living_sections": living,
             "extra": extra,
             "headings": plan.headings.iter().map(|h| json!({"line": h.line, "text": h.text})).collect::<Vec<_>>(),
+            "questions": plan.questions.as_ref().map(Questions::json),
             "amendments": plan.amendments.iter().map(|a| json!({
                 "index": a.index,
                 "line": a.line,
@@ -803,6 +812,301 @@ pub fn agent_list(listed: &Value) -> Value {
     })
 }
 
+/// A plan's `## Open questions` section (the plan questions plan,
+/// decision 2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Questions {
+    /// The heading's text, as written: `4. Open questions for the owner`.
+    pub heading: String,
+    /// The heading's line, 1-based.
+    pub line: usize,
+    pub items: Vec<Question>,
+}
+
+/// One numbered item of the section.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Question {
+    pub n: u32,
+    pub line: usize,
+    /// The `**…**` the item opens with, without the asterisks.
+    pub lead: Option<String>,
+    /// Its lines, continuation indents removed, as Markdown.
+    pub text: String,
+    pub recommendation: Option<String>,
+    pub answered: Option<Answered>,
+}
+
+/// The amendment that answered an item.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Answered {
+    /// The amendment's index, 1 for the first.
+    pub amendment: usize,
+    pub timestamp: String,
+}
+
+impl Questions {
+    /// How many items no amendment answered.
+    pub fn open(&self) -> usize {
+        self.items.iter().filter(|q| q.answered.is_none()).count()
+    }
+
+    pub fn json(&self) -> Value {
+        json!({
+            "heading": self.heading,
+            "line": self.line,
+            "items": self.items.iter().map(|q| json!({
+                "n": q.n,
+                "line": q.line,
+                "lead": q.lead,
+                "text": q.text,
+                "recommendation": q.recommendation,
+                "answered": q.answered.as_ref().map(|a| json!({
+                    "amendment": a.amendment,
+                    "timestamp": a.timestamp,
+                })),
+            })).collect::<Vec<_>>(),
+        })
+    }
+}
+
+/// `N. ` at column 0: the item's number and the marker's width.
+fn item_start(line: &str) -> Option<(u32, usize)> {
+    let digits = line.bytes().take_while(u8::is_ascii_digit).count();
+    if digits == 0 || digits > 4 || line.get(digits..digits + 2) != Some(". ") {
+        return None;
+    }
+    Some((line[..digits].parse().ok()?, digits + 2))
+}
+
+/// Whether a level-2 heading's text names the open questions: an
+/// optional `<digits>. ` and then `open questions`, in any case.
+fn questions_heading(text: &str) -> bool {
+    let rest = match item_start(text) {
+        Some((_, w)) => &text[w..],
+        None => text,
+    };
+    rest.to_ascii_lowercase().starts_with("open questions")
+}
+
+/// `text`'s sentences, each ending at `.`, `?` or `!` before whitespace
+/// or the end; whitespace folded to single spaces.
+fn sentences(text: &str) -> Vec<String> {
+    let folded: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut out = Vec::new();
+    let mut start = 0;
+    let chars: Vec<(usize, char)> = folded.char_indices().collect();
+    for (i, (at, c)) in chars.iter().enumerate() {
+        let next_space = chars.get(i + 1).is_none_or(|(_, n)| *n == ' ');
+        if matches!(c, '.' | '?' | '!') && next_space {
+            let end = at + c.len_utf8();
+            let s = folded[start..end].trim();
+            if !s.is_empty() {
+                out.push(s.to_string());
+            }
+            start = end;
+        }
+    }
+    let s = folded[start..].trim();
+    if !s.is_empty() {
+        out.push(s.to_string());
+    }
+    out
+}
+
+/// The item's recommendation (decision 2): the first sentence after the
+/// lead that starts with `recommend`, else the first with
+/// `(recommended)` (or `(recommended, …`).
+fn recommendation(after_lead: &str) -> Option<String> {
+    let all = sentences(after_lead);
+    let starts = |s: &str| {
+        s.trim_start_matches(['-', '*', ' '])
+            .to_ascii_lowercase()
+            .starts_with("recommend")
+    };
+    all.iter()
+        .find(|s| starts(s))
+        .or_else(|| {
+            all.iter()
+                .find(|s| s.to_ascii_lowercase().contains("(recommended"))
+        })
+        .map(|s| s.trim_start_matches(['-', '*', ' ']).to_string())
+}
+
+/// The numbers a body names next to `open question(s)`: `Open questions
+/// 1, 2 and 4`, `open question 1 (nested subagents) and 2`.
+fn numbers_named(body: &str) -> Vec<u32> {
+    let low = body
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase();
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(at) = low[from..].find("open question") {
+        let mut rest = &low[from + at + "open question".len()..];
+        rest = rest.strip_prefix('s').unwrap_or(rest);
+        from += at + "open question".len();
+        loop {
+            rest = rest.trim_start();
+            let d = rest.bytes().take_while(u8::is_ascii_digit).count();
+            if d == 0 {
+                break;
+            }
+            if let Ok(n) = rest[..d].parse() {
+                out.push(n);
+            }
+            rest = rest[d..].trim_start();
+            // A parenthesis after a number is skipped.
+            if rest.starts_with('(') {
+                match rest.find(')') {
+                    Some(close) => rest = rest[close + 1..].trim_start(),
+                    None => break,
+                }
+            }
+            if let Some(r) = rest.strip_prefix(", and ") {
+                rest = r;
+            } else if let Some(r) = rest.strip_prefix(',') {
+                rest = r;
+            } else if let Some(r) = rest.strip_prefix("and ") {
+                rest = r;
+            } else {
+                break;
+            }
+        }
+    }
+    out
+}
+
+/// Whether an amendment answers every item: its subject names the open
+/// questions as answered, settled or approved, or gives the owner's
+/// answers (`answers:`, `owner's answers`); or its
+/// body says it answered the open questions.
+fn answers_all(subject: &str, body: &str) -> bool {
+    let s = subject.to_ascii_lowercase();
+    // `the owner's answers: …`; not any `answers` (a subject such as
+    // "autocontinue only answers the agent's question" answers nothing).
+    let words = s.contains("answers:") || s.contains("owner's answers");
+    (s.contains("open questions")
+        && ["answered", "settled", "approved"]
+            .iter()
+            .any(|w| s.contains(w)))
+        || words
+        || body
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_ascii_lowercase()
+            .contains("answered the open questions")
+}
+
+/// The open questions of a plan's `lines` (decision 2): the last level-2
+/// heading of the body (from `body_start`, before the first amendment)
+/// that names them, its numbered items, and the amendment that answered
+/// each. An amendment whose body names numbers answers those; one that
+/// names none answers all when [`answers_all`] says so.
+pub fn open_questions(
+    lines: &[&str],
+    body_start: usize,
+    amendments: &[Amendment],
+) -> Option<Questions> {
+    let body_end = amendments
+        .first()
+        .map_or(lines.len(), |a| a.line.saturating_sub(1));
+    let mut in_fence = false;
+    let mut heading: Option<(usize, String)> = None;
+    for (i, line) in lines.iter().enumerate().take(body_end).skip(body_start) {
+        if fence(line) {
+            in_fence = !in_fence;
+            continue;
+        }
+        if !in_fence && let Some(text) = line.strip_prefix("## ") {
+            let text = text.trim();
+            if questions_heading(text) {
+                heading = Some((i, text.to_string()));
+            }
+        }
+    }
+    let (at, text) = heading?;
+    // The items, to the next level-2 heading or the body's end.
+    let mut items: Vec<(u32, usize, usize, Vec<String>)> = Vec::new();
+    let mut in_fence = false;
+    for (i, line) in lines.iter().enumerate().take(body_end).skip(at + 1) {
+        if !in_fence && line.starts_with("## ") {
+            break;
+        }
+        if fence(line.trim_start()) {
+            in_fence = !in_fence;
+        }
+        if !in_fence && let Some((n, w)) = item_start(line) {
+            items.push((n, i + 1, w, vec![line[w..].to_string()]));
+            continue;
+        }
+        if let Some((_, _, w, text)) = items.last_mut() {
+            let indent = line.len() - line.trim_start_matches(' ').len();
+            text.push(line[indent.min(*w)..].to_string());
+        }
+    }
+    let mut out: Vec<Question> = items
+        .into_iter()
+        .map(|(n, line, _, mut text)| {
+            while text.last().is_some_and(|l| l.trim().is_empty()) {
+                text.pop();
+            }
+            let text = text.join("\n");
+            let (lead, rest) = match text.strip_prefix("**").and_then(|r| {
+                let end = r.find("**")?;
+                Some((r[..end].to_string(), r[end + 2..].to_string()))
+            }) {
+                Some((lead, rest)) => (Some(lead), rest),
+                None => (None, text.clone()),
+            };
+            Question {
+                n,
+                line,
+                lead,
+                recommendation: recommendation(&rest),
+                text,
+                answered: None,
+            }
+        })
+        .collect();
+    // Which amendment answered each, the first in order.
+    for (k, a) in amendments.iter().enumerate() {
+        let start = a.line;
+        let end = amendments.get(k + 1).map_or(lines.len(), |b| b.line - 1);
+        let mut in_fence = false;
+        let body: Vec<&str> = lines
+            .get(start..end.max(start))
+            .unwrap_or(&[])
+            .iter()
+            .copied()
+            .filter(|l| {
+                if fence(l) {
+                    in_fence = !in_fence;
+                    return false;
+                }
+                !in_fence
+            })
+            .collect();
+        let body = body.join("\n");
+        let named = numbers_named(&body);
+        let all = named.is_empty() && answers_all(&a.subject, &body);
+        for q in out.iter_mut().filter(|q| q.answered.is_none()) {
+            if all || named.contains(&q.n) {
+                q.answered = Some(Answered {
+                    amendment: a.index,
+                    timestamp: a.timestamp.clone(),
+                });
+            }
+        }
+    }
+    Some(Questions {
+        heading: text,
+        line: at + 1,
+        items: out,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -814,6 +1118,110 @@ mod tests {
             text,
             false,
         )
+    }
+
+    #[test]
+    fn open_questions_shapes() {
+        let text = "---\ntitle: X\nstatus: Draft\n---\n\n## 1. Why\n\n1. Not a question.\n\n## 5. Open questions for the owner\n\n1. **Saving.** Keep it (recommended), or not?\n   Recommend keeping: it is simpler.\n2. **Order.** A or B?\n   - sub point\n\n   ```\n   2. not an item\n   ```\n3. Plain. Recommended: the third.\n\n## Amendment \u{2014} 2026-11-12 21:58 EST: something\n\nThis answers open question 1 (saving) and 3.\n\n## Amendment \u{2014} 2026-11-12 22:00 EST: the open questions settled\n\nAll done.\n";
+        let p = plan(text);
+        let q = p.questions.expect("the section");
+        assert_eq!(q.heading, "5. Open questions for the owner");
+        assert_eq!(q.items.len(), 3);
+        let one = &q.items[0];
+        assert_eq!(one.lead.as_deref(), Some("Saving."));
+        assert_eq!(
+            one.recommendation.as_deref(),
+            Some("Recommend keeping: it is simpler.")
+        );
+        assert_eq!(
+            one.text,
+            "**Saving.** Keep it (recommended), or not?\nRecommend keeping: it is simpler."
+        );
+        assert!(q.items[1].text.contains("- sub point"));
+        assert!(q.items[1].text.contains("2. not an item"), "a fence inside");
+        assert_eq!(q.items[1].recommendation, None);
+        assert_eq!(
+            q.items[2].recommendation.as_deref(),
+            Some("Recommended: the third.")
+        );
+        // The numbers named win; the settling subject answers the rest.
+        assert_eq!(q.items[0].answered.as_ref().unwrap().amendment, 1);
+        assert_eq!(q.items[2].answered.as_ref().unwrap().amendment, 1);
+        assert_eq!(q.items[1].answered.as_ref().unwrap().amendment, 2);
+        assert_eq!(q.open(), 0);
+        let v = plan_json(&plan(text), true);
+        assert_eq!(v["open_questions"], 0);
+        assert_eq!(
+            v["questions"]["items"][1]["answered"]["timestamp"],
+            "2026-11-12 22:00 EST"
+        );
+        // No section.
+        let none = plan("---\ntitle: X\n---\n\n## Open issues\n\n1. A.\n");
+        assert!(none.questions.is_none());
+        assert_eq!(plan_json(&none, false)["open_questions"], 0);
+        // `## Open questions`, and a body saying it answered them.
+        let p = plan(
+            "---\ntitle: X\n---\n## Open questions\n\n1. **A.** B?\n2. C?\n\n## Amendment \u{2014} 2026-11-12 21:58 EST: notes\n\nThe owner answered the open questions today.\n",
+        );
+        assert_eq!(p.questions.unwrap().open(), 0);
+        let p = plan("---\ntitle: X\n---\n## Open questions\n\n1. **A.** B?\n2. C?\n");
+        assert_eq!(p.questions.as_ref().unwrap().open(), 2);
+        assert_eq!(plan_json(&p, false)["open_questions"], 2);
+    }
+
+    /// The plan questions plan's step 1, **Done when:** on copies of two
+    /// plans as they were on 2026-11-13.
+    #[test]
+    fn open_questions_of_two_real_plans() {
+        let read = |file: &str, text: &str| {
+            read_plan(
+                &format!("docs/design/{file}"),
+                file_name(file).unwrap(),
+                text,
+                false,
+            )
+        };
+        let p = read(
+            "20261112_03_ACTIVE_PLANS_HOME_VIEW_PLAN.md",
+            include_str!(
+                "../../../tests/fixtures/plan_questions/20261112_03_ACTIVE_PLANS_HOME_VIEW_PLAN.md"
+            ),
+        );
+        let q = p.questions.unwrap();
+        assert_eq!(q.items.len(), 9);
+        let with: Vec<u32> = q
+            .items
+            .iter()
+            .filter(|i| i.recommendation.is_some())
+            .map(|i| i.n)
+            .collect();
+        assert_eq!(with, [1, 2, 3, 4, 5, 7, 8]);
+        let answered: Vec<(u32, String)> = q
+            .items
+            .iter()
+            .filter_map(|i| Some((i.n, i.answered.as_ref()?.timestamp.clone())))
+            .collect();
+        // Its 21:58 amendment names 1 to 8 (7 and 8 in its items 6 and 7);
+        // 9 only in part, so it stays open.
+        assert_eq!(answered.len(), 8, "{answered:?}");
+        assert!(answered.iter().all(|(_, t)| t == "2026-11-12 21:58 EST"));
+        assert_eq!(q.open(), 1);
+        let p = read(
+            "20261112_02_PLAN_POLICY_AGENT_PLAN.md",
+            include_str!(
+                "../../../tests/fixtures/plan_questions/20261112_02_PLAN_POLICY_AGENT_PLAN.md"
+            ),
+        );
+        let q = p.questions.unwrap();
+        assert!(!q.items.is_empty());
+        assert!(
+            q.items.iter().all(|i| i
+                .answered
+                .as_ref()
+                .is_some_and(|a| a.timestamp == "2026-11-12 22:17 EST")),
+            "{:?}",
+            q.items.iter().map(|i| &i.answered).collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -1060,6 +1468,8 @@ tags:
             "last_amendment",
             "readme",
             "error",
+            // Added on schema 1 by the plan questions plan (decision 3).
+            "open_questions",
         ];
         want.sort();
         let mut keys = keys;

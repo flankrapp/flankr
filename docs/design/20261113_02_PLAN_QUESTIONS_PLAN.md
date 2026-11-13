@@ -1,7 +1,7 @@
 ---
 title: A plan's open questions, extracted by the planning plugin and answered inline, the answers sent to the plan's agent
 date: 2026-11-13
-status: Draft
+status: In implementation
 covers:
   - "The planning plugin's reader finds a plan's `## Open questions` section
     and its numbered items: each item's number, bold lead, text, and the
@@ -440,3 +440,13 @@ what its decisions already say:
    under the plan's header in Active tasks.
 7. The details not confirmed while writing are settled while building,
    and any departure is recorded in `CHANGES.md`.
+
+## Amendment — 2026-11-13 02:47 EST: implementation started; this document is now immutable
+
+Implementation started with step 1 (the planning plugin's reader finds a
+plan's open questions; `plans.show` carries `questions` and
+`plans.list`'s rows `open_questions`) in the commit that sets `status:
+In implementation`, built for the Active plans home view plan's
+2026-11-13 01:52 EST amendment, item 6, which needs the count. Steps 2
+to 4 are not started. From now on this document changes only on the
+owner's explicit instruction; departures go to `CHANGES.md`.

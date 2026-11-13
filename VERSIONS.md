@@ -1488,3 +1488,15 @@ amendment, living section L3; 0.8.13 is reserved for another plan):
   message sent to the viewed agent, and `Input::RespondTo` for the viewed
   pane. It comes back if the send is refused, and a later question in the
   same words shows once the first is no longer live.
+
+## dev.flankr.plugins.planning 0.1.3 — 2026-11-13 (the commit tagged `dev.flankr.plugins.planning-v0.1.3`)
+
+Plan 20261113_02, step 1. Strictly additive (fields added on schema 1).
+
+- **Added:** `plans.show`'s plan carries `questions`: the plan's open
+  questions section (`heading`, `line`) and its numbered `items`, each
+  with `n`, `line`, `lead`, `text`, `recommendation` and `answered` (the
+  amendment's `index` and `timestamp`, or `null`); `null` with no
+  section. The general agent's `planning_plan_show` tool gets it too.
+- **Added:** each `plans.list` row carries `open_questions`, the count
+  of items no amendment answered (`0` with no section).
