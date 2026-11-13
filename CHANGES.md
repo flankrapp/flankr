@@ -4593,3 +4593,33 @@ How it is read, within the amendment:
 5. The line's height is part of the list's end, so a view at its end
    follows it into view, and one scrolled back does not move, as item 2
    asks.
+
+## 2026-11-12 22:26 EST — Plan policy agent: approved, implementation starting; daemon 0.7.12, libherdr 0.3.2, flankr-companion 0.8.6, app 0.7.21
+
+Plan: the plan policy agent plan (20261112_02), approved by the owner on
+2026-11-12 with its 21:58, 22:03 and 22:17 EST amendments, and the
+owner's change of 22:25 and 22:28 EST (Build arms a plan and creates an
+active task, managed in the Active tasks view), which goes into the plan
+as one amendment in the commit that starts implementing it. The active
+plans home view plan (20261112_03) follows in the same worktree, with its
+own start entry.
+
+Steps, in the plan's order, one crate per commit, patch bumps only:
+
+1. Daemon: the plugin skeleton, `dev.flankr.plugins.policy`, off by
+   default; `[llm.uses.policy]`; `state` and `pause`.
+2. Daemon: the task store (`approvals.toml`): `plans`, `build`,
+   `task_enable`, `task_disable`, `task_remove`, the `approval`
+   notification, `can_approve` enforced.
+3. Daemon: the hub's card summary broadcast, `on_card_summary`, plan
+   matching, the hard rules, the `decision` notification and log line.
+4. Daemon: the `plan_policy` prompt and judgement, `ask model` on any
+   failure.
+5. Daemon: continuing through `policy::check` and the broker, the
+   `limit` rule; daemon 0.7.12 and its `UPDATES.md` entry.
+6. libherdr 0.3.2: the `worktree.*` wrappers.
+7. Daemon: worktree detection and `worktree_create`.
+8. flankr-companion 0.8.6: `policy.rs`.
+9. App: the policy line on Finished cards and the plugin's state;
+   arming and the task list land with the Active tasks view of plan
+   20261112_03; app 0.7.21.
