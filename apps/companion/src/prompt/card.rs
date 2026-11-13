@@ -24,6 +24,7 @@ use libcontrols::{DrawContext, DrawControl, Rect, TextArea};
 use libmsdf::drawlist::DrawList;
 
 use super::bars::Bars;
+use super::grid::{GAP as GRID_GAP, Grid, Tile};
 use super::history::{History, Sent};
 use super::input_row::{InputRow, InputTools, ROW_GAP};
 use super::{PromptInput, PromptKind};
@@ -134,6 +135,10 @@ pub struct PromptCard {
     /// box as laid out (plan 20261028_06, decision 8).
     tools: InputTools,
     row: Option<InputRow>,
+    /// *Message*: the images attached, and their grid above the typed box
+    /// as laid out (the add images plan, 20261113_01, decision 10).
+    tiles: Vec<Tile>,
+    grid: Option<Grid>,
     /// While it takes voice (a message being said, or Gemini listening):
     /// the keyboard glyph left of the up arrow, which goes on typed (plan
     /// 20261028_06, the 2026-11-03 13:27 EST amendment).
@@ -171,6 +176,8 @@ impl PromptCard {
             scale: 1.0,
             tools: InputTools::default(),
             row: None,
+            tiles: Vec::new(),
+            grid: None,
             keyboard: None,
         }
     }
@@ -197,6 +204,23 @@ impl PromptCard {
         let changed = tools != self.tools;
         self.tools = tools;
         changed
+    }
+
+    /// *Message*: the attached images' tiles. Returns whether they
+    /// changed.
+    pub fn set_tiles(&mut self, tiles: Vec<Tile>) -> bool {
+        let changed = tiles != self.tiles;
+        self.tiles = tiles;
+        changed
+    }
+
+    pub fn tiles(&self) -> &[Tile] {
+        &self.tiles
+    }
+
+    /// The grid as laid out, while it shows.
+    pub fn grid(&self) -> Option<&Grid> {
+        self.grid.as_ref()
     }
 
     pub fn tools(&self) -> InputTools {
@@ -458,6 +482,7 @@ impl PromptCard {
         self.buttons.clear();
         self.bars.clear();
         self.row = None;
+        self.grid = None;
         self.keyboard = None;
     }
 
@@ -600,7 +625,16 @@ impl PromptCard {
         } else {
             0.0
         };
-        let box_h = typed_box.as_ref().map_or(0.0, |(_, _, h)| h + 8.0 * s) + row_h;
+        // The grid above the typed box grows it by its height and 8 pt.
+        let grid_h = if typed_box.is_some() && self.kind == PromptKind::Message {
+            match Grid::height(self.tiles.len(), inner_w, s) {
+                0.0 => 0.0,
+                h => h + GRID_GAP * s,
+            }
+        } else {
+            0.0
+        };
+        let box_h = typed_box.as_ref().map_or(0.0, |(_, _, h)| h + 8.0 * s) + row_h + grid_h;
         let h = rows_h + box_h + 2.0 * pad + controls;
         let top = bottom - h;
         let rect = Rect::new(x, top, w, h);
@@ -648,7 +682,17 @@ impl PromptCard {
             y += line_h(px);
         }
         if let Some((text, px, bh)) = typed_box {
-            let r = Rect::new(inner_x, y + 8.0 * s, inner_w, bh);
+            if grid_h > 0.0 {
+                self.grid = Some(Grid::lay_out(
+                    self.kind,
+                    &self.tiles,
+                    inner_x,
+                    y + 8.0 * s,
+                    inner_w,
+                    s,
+                ));
+            }
+            let r = Rect::new(inner_x, y + 8.0 * s + grid_h, inner_w, bh);
             self.fills.push(Fill {
                 rect: r,
                 color: theme().input,
@@ -739,6 +783,9 @@ impl PromptCard {
         if let Some(hit) = self.row.as_ref().and_then(|r| r.hit(x, y, 0.0)) {
             return Some(hit);
         }
+        if let Some(hit) = self.grid.as_ref().and_then(|g| g.hit(x, y, 0.0)) {
+            return Some(hit);
+        }
         if self.keyboard.is_some_and(|r| r.contains([x, y])) {
             return Some(AgentHit::PromptIme(self.kind));
         }
@@ -767,6 +814,7 @@ impl PromptCard {
             AgentHit::PromptAttach(_) | AgentHit::PromptIme(_) | AgentHit::PromptMic(_) => {
                 self.row.as_ref().and_then(|r| r.rect_of(hit, 0.0))
             }
+            AgentHit::PromptDetach(..) => self.grid.as_ref().and_then(|g| g.rect_of(hit, 0.0)),
             _ => self.buttons.iter().find(|b| b.hit == hit).map(|b| b.rect),
         }
     }
@@ -803,6 +851,9 @@ impl PromptCard {
         }
         if let Some(row) = &self.row {
             row.draw(list, 0.0);
+        }
+        if let Some(grid) = &self.grid {
+            grid.draw(list, ctx, 0.0);
         }
         up_arrow(list, self.arrow, s, theme().dim);
         if let Some(r) = self.keyboard {
@@ -1060,12 +1111,13 @@ mod tests {
                 Some(AgentHit::PromptIme(kind))
             );
             assert_eq!(c.rect_of(AgentHit::PromptIme(kind)), Some(ime));
-            // The +: Gemini's for Paste text; the message's only with
-            // the daemon's images.
+            // The +, at the row's left edge on both cards on a phone:
+            // Gemini's for Paste text, the message's whether or not the
+            // daemon offers images (the add images plan, decision 2).
+            assert_eq!(row.attach.map(|r| r.x), Some(ta.x), "{kind:?}");
             assert_eq!(
-                row.attach.is_some(),
-                kind == PromptKind::GeneralAgent,
-                "{kind:?}"
+                c.hit(ta.x + 5.0, row.attach.unwrap().y + 5.0),
+                Some(AgentHit::PromptAttach(kind))
             );
             // A dictated message has no row.
             if kind == PromptKind::Message {
@@ -1074,6 +1126,52 @@ mod tests {
                 assert!(c.row().is_none());
             }
         }
+    }
+
+    #[test]
+    fn the_message_cards_grid_sits_above_its_box_and_grows_the_card() {
+        use crate::prompt::grid::Tile;
+        let tile = |n| Tile {
+            n,
+            label: "PNG",
+            thumb: None,
+            progress: 0.0,
+            ready: false,
+            failed: false,
+        };
+        let mut c = PromptCard::new(PromptKind::Message);
+        c.set_tools(PHONE);
+        c.set_input(Some(PromptInput::typed("look [image 1] ")));
+        let without = laid(&mut c);
+        assert!(c.grid().is_none());
+        assert!(c.set_tiles((1..=4).map(tile).collect()));
+        assert!(!c.set_tiles((1..=4).map(tile).collect()), "unchanged");
+        let with = laid(&mut c);
+        let rects = c.grid().expect("the grid").rects();
+        let ta = c.text_area().unwrap().rect;
+        // The test card is wide enough for one row of four: the card
+        // grows by 64 pt and the 8 pt under it.
+        assert!((with - without - (64.0 + 8.0) * 2.0).abs() < 0.01);
+        assert!(rects.iter().all(|r| r.y == rects[0].y));
+        assert!((ta.y - (rects[0].y + rects[0].h + 8.0 * 2.0)).abs() < 0.01);
+        assert_eq!(rects[0].x, ta.x);
+        // The ✕ at a tile's top right detaches it.
+        let r = rects[2];
+        assert_eq!(
+            c.hit(r.x + r.w - 4.0, r.y + 4.0),
+            Some(AgentHit::PromptDetach(PromptKind::Message, 3))
+        );
+        assert!(
+            c.rect_of(AgentHit::PromptDetach(PromptKind::Message, 3))
+                .is_some()
+        );
+        // Gemini's card never has one.
+        let mut g = PromptCard::new(PromptKind::GeneralAgent);
+        g.set_tools(PHONE);
+        g.set_input(Some(PromptInput::typed("hi")));
+        g.set_tiles(vec![tile(1)]);
+        laid(&mut g);
+        assert!(g.grid().is_none());
     }
 
     #[test]

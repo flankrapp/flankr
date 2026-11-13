@@ -1,6 +1,6 @@
 [package]
 name = "companion"
-version = "0.7.24"
+version = "0.7.25"
 edition = "2024"
 publish = false
 license = "Apache-2.0"
@@ -89,10 +89,12 @@ env_logger = "0.11"
 # the battery pages (libmorph 0.4.0, plan 20261024_02's Background and
 # Battery sections); the QR scan and its viewfinder (`mobile-camera-qr`,
 # plan 20261028_02, decision 19), which adds CAMERA and the optional camera
-# `uses-feature` to the manifest.
+# `uses-feature` to the manifest; and the media chooser
+# (`mobile-media-request`, `ctx.media_request`, for Attach image…; plan
+# 20261113_01, decision 6), which adds no permission.
 [target.'cfg(target_os = "android")'.dependencies]
 flankr-audio = { path = "../../crates/flankr-audio", features = ["morph"] }
-libmorph = { git = "https://github.com/tmzt/libmorph", rev = "befe374c3a9da5b5a45c78f8ecc89719baa25a9f", default-features = false, features = ["audio", "mobile", "secure-store", "mobile-foreground-service", "mobile-system-events", "mobile-battery", "mobile-camera-qr", "mobile-clipboard"] }
+libmorph = { git = "https://github.com/tmzt/libmorph", rev = "befe374c3a9da5b5a45c78f8ecc89719baa25a9f", default-features = false, features = ["audio", "mobile", "secure-store", "mobile-foreground-service", "mobile-system-events", "mobile-battery", "mobile-camera-qr", "mobile-clipboard", "mobile-media-request"] }
 android_logger = "0.14"
 
 # Generates the Gradle project when building for Android; a no-op on the

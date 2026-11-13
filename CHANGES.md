@@ -4848,3 +4848,60 @@ complete the other steps before fully merging"). Small departures
 4. **The font licence copies** in `apps/companion/licenses/` now come
    from the libmsdf revision the app pins (`bd7383d`), closing that
    open item; only `FONTS-LICENSE-APACHE.txt` differed.
+
+## 2026-11-13 01:26 EST — Images through the message card's +: approved, starting
+
+Plan: the add images plan (20261113_01). The owner approved it on
+2026-11-13 with the words "approve the image plan and build it", giving
+no answers to its open questions; it is built on its own stated
+assumptions and recommendations (the start amendment records how each
+question is settled). Steps, in order, one crate per commit:
+
+1. companion: the + at the left of the message card's row on a phone,
+   `images` read from the daemon's offer, a tap opening the add menu on
+   both cards, Attach image… dim with its reason (app 0.7.25).
+2. companion: the chooser through libmorph's media request (the
+   `mobile-media-request` feature on Android), the reply sniffed and
+   sent as `Input::AttachImage` (the next app patch).
+3. companion: the attachment grid, the `[image N]` tokens, ✕, and the
+   send refusals shown (the next app patch).
+4. The end-to-end check on the S23 against the owner's daemon: left for
+   the owner's device run; no code unless it finds a fix.
+5. companion: Attach image… in the terminal's + menu, through
+   `terminal.paste` (the next app patch).
+6. README: the decision table's row (in the first implementing commit)
+   and the features paragraph, for the lead.
+
+Each step that changes what the user sees takes its own app patch in the
+0.7.x series (the plan's decision 19, FLANKR RULE 1.3), starting at
+0.7.25, each tagged `flankr-app-v<version>`. No other crate is expected to
+change.
+
+## 2026-11-13 01:47 EST — Images through the message card's +: departures
+
+Plan: the add images plan (20261113_01). Small departures (Rule 1.7):
+
+1. **One app version for the plan.** The lead allotted the app 0.7.25
+   for this plan (0.7.26 and 0.7.27 belong to other branches), so steps
+   1, 2, 3 and 5 share one bump (FLANKR RULE 1.4), in the step 5 commit,
+   with one `apps/UPDATES.md` entry; this replaces the per-step patches
+   of the plan's decision 19 and of the 01:26 EST addendum above. The
+   branch's earlier per-step bumps were taken out of its unpushed
+   commits before anything was shared, and their local tags deleted.
+2. **Thumbnails** (decision 11): a PNG tile's thumbnail is 32 × 32 cells
+   by nearest neighbour, drawn as filled squares in the draw list, not a
+   64 × 64 pt texture, so it sits in the cards' drawing order under
+   menus and sheets.
+3. **Refusals** (decision 8): an item under 16 bytes, or one the chooser
+   could not read, is refused with "This image can't be read." rather
+   than the too-large line; CAMERA refused shows where to turn it on.
+4. **No session open:** Attach image… with no agent view open opens no
+   chooser and says "Open a session to attach an image.", as the client
+   would refuse each image.
+5. **The grid** shows in the expanded message card too, above its input
+   area. Images picked for the terminal are not shown in the message
+   card's grid; if one of them fails, the batch is removed and the line
+   shows over the terminal for 4 s.
+6. **Step 4** (the end-to-end check on the S23) is left for the owner's
+   device run, and **step 6**'s features paragraph in the README for the
+   lead; the decision table's row was updated in the first commit.

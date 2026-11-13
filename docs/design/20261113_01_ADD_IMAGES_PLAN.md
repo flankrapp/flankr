@@ -1,7 +1,7 @@
 ---
 title: Images through the message card's +, and the + at the left of the input row
 date: 2026-11-13
-status: Draft
+status: In implementation
 covers:
   - "The message card's input row shows a **+** at its far left on a phone,
     beside the microphone and keyboard glyphs it already has at its right;
@@ -382,3 +382,34 @@ Attach image….
    chooser directly and a hold open the menu; this plan makes the tap open
    the menu on both cards (decision 3). Agree, or keep tap-for-chooser on
    the message card?
+
+## Amendment — 2026-11-13 01:31 EST: approved by the owner, and the open questions settled
+
+The owner, on 2026-11-13, verbatim and in full: "approve the image plan
+and build it". That is this plan's approval. The owner gave no answers to
+section 5's open questions, so the plan is built on its own stated
+assumptions and recommendations; each question is settled as follows,
+and the decisions they name stand as written:
+
+1. **Which card:** the typed message card's input row only (decisions
+   1-3). No + goes on the voice card's header.
+2. **The camera entry:** `CameraPermission::IfGranted`, as decisions 6
+   and 7 recommend: the menu never asks for CAMERA itself, and the
+   chooser's camera entry is there once the QR scan has been granted it.
+3. **Clipboard images:** none. The menu has no Paste image, and nothing
+   is planned in libmorph or libmobile for it (decision 22 stays a note).
+4. **Unconverted photos:** as decisions 8 and 9 say: a HEIC photo is
+   refused with "flankr takes PNG, JPEG, WebP and GIF images.", and a
+   JPEG goes up as it is, with its orientation tag.
+5. **Thumbnails:** PNG tiles only; JPEG, WebP and GIF tiles show their
+   type label (decision 11).
+6. **The tap on +:** a tap opens the add menu on both cards (decision 3).
+
+This amendment replaces nothing in the body; it closes section 5.
+
+## Amendment — 2026-11-13 01:31 EST: implementation started; this document is now immutable
+
+Implementation started with step 1 (the + on the message card, and
+`images` from the daemon) in the commit that sets `status: In
+implementation`. From now on this document changes only on the owner's
+explicit instruction; departures go to `CHANGES.md`.

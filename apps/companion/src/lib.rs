@@ -63,6 +63,7 @@
 //! everything in the data directory but the voice models.
 
 pub mod agent;
+pub mod attach;
 #[cfg(all(test, not(target_os = "android")))]
 mod bottom_bar_tests;
 #[cfg(all(test, not(target_os = "android")))]
@@ -529,6 +530,36 @@ pub struct App {
     preview: preview::Preview,
     image_quad: Option<preview::gpu::ImageQuad>,
     blob: Option<libflankr_proto::companion::BlobInfo>,
+    /// The images attached to messages, every session's, as the client's
+    /// last `Event::Attachments` gave them (the add images plan,
+    /// 20261113_01).
+    attachments: Vec<flankr_companion::Attachment>,
+    /// Attach image… chosen: the chooser opens on the touch's context
+    /// (the add images plan, decision 6); then the request in flight, and
+    /// where its images go.
+    media_wanted: Option<attach::Target>,
+    media_pending: Option<(libmorph::media::MediaRequestId, attach::Target)>,
+    /// Why picked images were not attached, under the message card
+    /// (decision 8), until the next pick or the message goes.
+    attach_note: Option<String>,
+    /// Images sent to the client and not yet numbered: their type, size,
+    /// PNG thumbnail and where they go, matched to the next new numbers
+    /// in `Event::Attachments` (decisions 11, 12 and 14).
+    pending_images: Vec<attach::Pending>,
+    /// The PNG thumbnails of attached images, by session and number.
+    thumbs: HashMap<(String, u8), std::sync::Arc<prompt::Thumb>>,
+    /// Uploads' progress, by transfer id: written over size.
+    upload_progress: HashMap<u32, f32>,
+    /// The draft as the app last set it with a token, and the cursor
+    /// after it, until the client's dictation shows it: tokens of images
+    /// numbered together go in one after another.
+    token_draft: Option<(String, usize)>,
+    /// The terminal's Attach image… (decision 14): the images picked for
+    /// it, numbered as they come, pasted once all are uploaded; and the
+    /// notice over the terminal while they go, or for a moment after a
+    /// refusal.
+    term_batch: Option<attach::TermBatch>,
+    term_notice: Option<(String, Instant)>,
     /// The title bars' ⋮ menu (step 7), and a touch that came down on a
     /// title icon or the ⋮ (the plan's 22:03 EDT amendment).
     menu: Menu,
@@ -906,6 +937,22 @@ impl App {
                 );
                 self.blob = blob;
             }
+            // The attached images (the add images plan, decisions 10-12).
+            Event::Attachments(list) => {
+                log::info!("attachments: {}", list.len());
+                self.attachments_changed(list);
+            }
+            // An image's upload going (decision 11); the preview's are its.
+            Event::TransferProgress { id, done, size } => {
+                if self.attachments.iter().any(|a| a.transfer == id) {
+                    let share = if size == 0 {
+                        1.0
+                    } else {
+                        done as f32 / size as f32
+                    };
+                    self.upload_progress.insert(id, share);
+                }
+            }
             Event::Connected { server } => {
                 self.blob = None;
                 log::info!("link: connected to {server}");
@@ -1219,8 +1266,16 @@ impl App {
                 if d.active != self.dictation.is_some() {
                     log::info!("dictation: {}", if d.active { "on" } else { "off" });
                 }
+                if self
+                    .token_draft
+                    .as_ref()
+                    .is_some_and(|(t, _)| !d.active || *t == d.text)
+                {
+                    self.token_draft = None;
+                }
                 if !d.active {
                     self.keyboard.close();
+                    self.attach_note = None;
                     self.message_sent();
                     self.set_listening(false);
                 } else if d.general_agent {
@@ -2010,10 +2065,11 @@ impl App {
     }
 
     /// A typed card's +, tapped or held (plan 20261028_06, decision 8 and
-    /// the 23:39 EDT amendment): its menu opens anchored to it. Gemini's
-    /// holds Paste text only, until the general agent takes images; the
-    /// message card's adds Attach image… (that + shows only while the
-    /// daemon offers `images`, which it does not yet).
+    /// the 23:39 EDT amendment; the add images plan, decision 3): its menu
+    /// opens anchored to it. Gemini's holds Paste text only, as the
+    /// general agent takes no images; the message card's adds Attach
+    /// image…, dim with its reason without the daemon's `images` or with
+    /// four attached.
     fn open_attach_menu(&mut self, kind: PromptKind) {
         self.attach_wanted = Some(kind);
     }
@@ -2045,8 +2101,9 @@ impl App {
     }
 
     /// The terminal's + menu, anchored to the +: Paste text, enabled while
-    /// the clipboard holds text (`has_text`); Attach image… with the
-    /// daemon's `images` once the app can pick one.
+    /// the clipboard holds text (`has_text`); Attach image…, enabled or
+    /// dim as on the message card (the add images plan, decisions 4 and
+    /// 14).
     fn show_terminal_attach_menu(&mut self, has_text: bool) {
         let Some(anchor) = self
             .agent
@@ -2060,8 +2117,8 @@ impl App {
         self.agent_menu = false;
         self.attach_menu = None;
         self.term_attach_menu = true;
-        let images = self.input_tools().images;
-        self.menu.open(anchor, menu::attach_items(images, has_text));
+        let image = self.image_item();
+        self.menu.open(anchor, menu::attach_items(has_text, image));
     }
 
     /// flankr's UI is hidden by ⛶ over the agent view's terminal.
@@ -2091,24 +2148,274 @@ impl App {
         let Some(anchor) = anchor else {
             return;
         };
-        let images = kind == PromptKind::Message && self.input_tools().images;
+        let image = match kind {
+            PromptKind::Message => self.image_item(),
+            PromptKind::GeneralAgent => menu::ImageItem::Absent,
+        };
         self.popup = None;
         self.volume_menu = false;
         self.agent_menu = false;
         self.attach_menu = Some(kind);
-        self.menu.open(anchor, menu::attach_items(images, has_text));
+        self.menu.open(anchor, menu::attach_items(has_text, image));
+    }
+
+    /// The images attached for the open agent view's session, in number
+    /// order.
+    fn session_attachments(&self) -> Vec<&flankr_companion::Attachment> {
+        let Some(pane) = &self.agent_pane else {
+            return Vec::new();
+        };
+        self.attachments
+            .iter()
+            .filter(|a| &a.session == pane)
+            .collect()
+    }
+
+    /// The + menu's Attach image… on the message card and the terminal
+    /// (the add images plan, decision 4): enabled while the daemon offers
+    /// `images` and fewer than four are attached for the session.
+    fn image_item(&self) -> menu::ImageItem {
+        menu::ImageItem::of(self.input_tools().images, self.session_attachments().len())
+    }
+
+    /// Attach image… chosen for `target`: the chooser opens on the
+    /// touch's context, for the open agent view's session; with none open
+    /// the client's own line says why, and no chooser opens.
+    fn want_media(&mut self, target: attach::Target) {
+        if self.agent_pane.is_none() {
+            log::info!("attach image: no session open");
+            self.note = Some(("Open a session to attach an image.".into(), Role::Warn));
+            return;
+        }
+        self.attach_note = None;
+        self.media_wanted = Some(target);
+    }
+
+    /// The chooser asked for, now that the context is at hand.
+    fn serve_media(&mut self, ctx: &mut MorphContext) {
+        let Some(target) = self.media_wanted.take() else {
+            return;
+        };
+        let attached = self.session_attachments().len();
+        let id = ctx.media_request(&attach::request(attached));
+        log::info!(
+            "attach: chooser {} for {target:?}, {} free",
+            id.id(),
+            menu::IMAGES_MAX.saturating_sub(attached)
+        );
+        self.media_pending = Some((id, target));
+    }
+
+    /// The chooser answered (decision 8): each image taken goes to the
+    /// client in order; the first refusal's notice shows under the card.
+    fn media_answered(&mut self, response: &libmorph::media::MediaResponse) {
+        use libmorph::media::MediaError;
+        let target = match (response.request, self.media_pending) {
+            (Some(id), Some((pending, target))) if id == pending => target,
+            _ => {
+                log::info!("attach: an answer to no request of this run, dropped");
+                return;
+            }
+        };
+        self.media_pending = None;
+        let reply = match &response.result {
+            Ok(reply) => reply,
+            Err(MediaError::PermissionDenied { .. }) => {
+                log::info!("attach: camera refused");
+                self.attach_note = Some(crate::settings::copy::ATTACH_CAMERA_OFF.text.into());
+                return;
+            }
+            Err(e) => {
+                log::info!("attach: no images: {e}");
+                return;
+            }
+        };
+        let sorted = attach::sort(reply.items.iter().map(|i| i.data.clone()));
+        log::info!(
+            "attach: {} image(s), {} refused",
+            sorted.images.len(),
+            sorted.refused.len()
+        );
+        match target {
+            attach::Target::Message => self.attach_note = sorted.notice().map(str::to_string),
+            attach::Target::Terminal => {
+                self.term_notice = sorted
+                    .notice()
+                    .map(|line| (line.to_string(), Instant::now() + attach::NOTICE_FOR));
+                if !sorted.images.is_empty()
+                    && let Some(pane) = self.agent_pane.clone()
+                {
+                    self.term_batch = Some(attach::TermBatch::new(pane, sorted.images.len()));
+                }
+            }
+        }
+        for (bytes, mime) in sorted.images {
+            self.pending_images
+                .push(attach::Pending::of(&bytes, mime, target));
+            self.send(Input::AttachImage {
+                bytes,
+                mime: mime.to_string(),
+            });
+        }
+        self.serve_term_batch();
+    }
+
+    /// The terminal's images (decision 14): once every one is uploaded,
+    /// their paths are pasted (`terminal.paste`); one failed, they all
+    /// go, with its line over the terminal for a moment.
+    fn serve_term_batch(&mut self) {
+        let Some(batch) = &self.term_batch else {
+            return;
+        };
+        if self.agent_pane.as_ref() != Some(&batch.pane) {
+            log::info!("terminal attach: the view closed; its images dropped");
+            let numbers = batch.numbers.clone();
+            self.term_batch = None;
+            for n in numbers {
+                self.send(Input::DetachImage(n));
+            }
+            return;
+        }
+        match batch.state(&self.attachments) {
+            attach::BatchState::Uploading => {}
+            attach::BatchState::Ready(numbers) => {
+                log::info!("terminal attach: pasting {} image(s)", numbers.len());
+                self.term_batch = None;
+                self.send(Input::TerminalPasteImages(numbers));
+            }
+            attach::BatchState::Failed(line) => {
+                log::info!("terminal attach: an upload failed");
+                let numbers = batch.numbers.clone();
+                self.term_batch = None;
+                self.term_notice = Some((line, Instant::now() + attach::NOTICE_FOR));
+                for n in numbers {
+                    self.send(Input::DetachImage(n));
+                }
+            }
+        }
+    }
+
+    /// The line over the terminal: its images uploading, or a refusal for
+    /// a moment.
+    fn terminal_upload_notice(&mut self) -> Option<String> {
+        if let Some(batch) = &self.term_batch {
+            return Some(batch.line(&self.attachments));
+        }
+        if self
+            .term_notice
+            .as_ref()
+            .is_some_and(|(_, until)| Instant::now() >= *until)
+        {
+            self.term_notice = None;
+        }
+        self.term_notice.as_ref().map(|(line, _)| line.clone())
+    }
+
+    /// The client's attachments changed (decisions 10-12): new numbers
+    /// take their pending thumbnails, and a message's get their tokens at
+    /// the typed card's cursor; the progress and thumbnails of images
+    /// gone go too.
+    fn attachments_changed(&mut self, list: Vec<flankr_companion::Attachment>) {
+        let mut new: Vec<flankr_companion::Attachment> = list
+            .iter()
+            .filter(|a| {
+                !self
+                    .attachments
+                    .iter()
+                    .any(|o| o.n == a.n && o.session == a.session)
+            })
+            .cloned()
+            .collect();
+        new.sort_by_key(|a| a.n);
+        self.attachments = list;
+        let live = &self.attachments;
+        self.thumbs
+            .retain(|(session, n), _| live.iter().any(|a| a.n == *n && &a.session == session));
+        self.upload_progress
+            .retain(|id, _| live.iter().any(|a| a.transfer == *id));
+        for a in new {
+            let Some(at) = self
+                .pending_images
+                .iter()
+                .position(|p| p.mime == a.mime && p.size == a.size)
+            else {
+                continue;
+            };
+            let pending = self.pending_images.remove(at);
+            if let Some(thumb) = pending.thumb {
+                self.thumbs.insert((a.session.clone(), a.n), thumb);
+            }
+            match pending.target {
+                attach::Target::Message => self.insert_token(a.n),
+                attach::Target::Terminal => {
+                    if let Some(batch) = &mut self.term_batch {
+                        batch.numbers.push(a.n);
+                    }
+                }
+            }
+        }
+        self.serve_term_batch();
+    }
+
+    /// Image `n`'s token at the typed message card's cursor, through the
+    /// keyboard route's commit path as Paste text (decision 12).
+    fn insert_token(&mut self, n: u8) {
+        let card = self.prompts().card(PromptKind::Message);
+        if !card.input().is_some_and(|i| i.keyboard()) {
+            log::info!("attach: image {n} attached with no typed message open");
+            return;
+        }
+        let (text, at) = match &self.token_draft {
+            Some((text, at)) => (text.clone(), *at),
+            None => {
+                let text = card.input_text();
+                let at = card
+                    .text_area()
+                    .map_or(text.len(), |ta| ta.cursor().min(text.len()));
+                (text, at)
+            }
+        };
+        let (next, cursor) = attach::with_token(&text, at, n);
+        log::info!("attach: image {n}'s token in the draft");
+        self.token_draft = Some((next.clone(), cursor));
+        self.send(Input::SetText(next));
+        self.keyboard.restart();
+    }
+
+    /// The open session's attached images as the message card's tiles.
+    fn tiles(&self) -> Vec<prompt::Tile> {
+        let terminal = self.term_batch.as_ref().map(|b| b.numbers.as_slice());
+        self.session_attachments()
+            .into_iter()
+            .filter(|a| !terminal.is_some_and(|t| t.contains(&a.n)))
+            .map(|a| prompt::Tile {
+                n: a.n,
+                label: prompt::Tile::label_of(&a.mime),
+                thumb: self.thumbs.get(&(a.session.clone(), a.n)).cloned(),
+                progress: self
+                    .upload_progress
+                    .get(&a.transfer)
+                    .copied()
+                    .unwrap_or(0.0),
+                ready: a.ready,
+                failed: a.failed.is_some(),
+            })
+            .collect()
     }
 
     /// Typing's tools for the screens, now (plan 20261028_06, decisions 8,
     /// 9 and 11): the toggles on a phone only; Gemini's + everywhere (the
     /// owner, 2026-10-29: "Show Gemini's + on desktop"); the message
-    /// card's + only on a phone with the daemon's `images` (the binary
-    /// files plan, not yet offered).
+    /// card's + on a phone, and `images` as the daemon offers them on this
+    /// connection (the add images plan, decisions 2 and 5).
     fn input_tools(&self) -> prompt::InputTools {
         let k = &self.keyboard;
         prompt::InputTools {
             mobile: cfg!(target_os = "android"),
-            images: false,
+            images: self
+                .blob
+                .as_ref()
+                .is_some_and(|b| b.serves(libflankr_blob::NS_IMAGES)),
             keyboard_up: matches!(k.focused(), Some(FocusedPrompt::Card { .. }))
                 && !k.dismissed()
                 && !k.physical(),
@@ -2224,10 +2531,14 @@ impl App {
             // Read on the touch's context, right after this.
             Choice::PasteText if self.term_attach_menu => self.term_paste_wanted = true,
             Choice::PasteText => self.paste_wanted = self.attach_menu,
-            // The media chooser (the binary files plan; libmorph's media
-            // request): not built yet, and the item shows only with the
-            // daemon's `images`.
-            Choice::AttachImage => log::info!("attach image: not built yet"),
+            // The terminal's: its paths pasted once uploaded (decision
+            // 14).
+            Choice::AttachImage if self.term_attach_menu => {
+                self.want_media(attach::Target::Terminal)
+            }
+            // The chooser, opened on the touch's context right after
+            // this (the add images plan, decision 6).
+            Choice::AttachImage => self.want_media(attach::Target::Message),
             Choice::ShowChanges => self.open_preview(preview::Target::Git("diff".into())),
             Choice::Settings => {
                 if self.settings_screen.is_none() {
@@ -2404,7 +2715,13 @@ impl App {
         });
         let session = pane.and_then(|p| self.sessions.get(p));
         MessagePrompt {
-            input: prompt_input(d),
+            input: {
+                let mut input = prompt_input(d);
+                if let Some(note) = &self.attach_note {
+                    input.notes.push((note.clone(), theme().get(Role::Warn)));
+                }
+                input
+            },
             target,
             label: self.choice_other.clone(),
             sent: session.map(|s| s.sent.clone()).unwrap_or_default(),
@@ -3182,6 +3499,15 @@ impl App {
             .flatten()
             .map(|d| d.text.clone());
         let Some(text) = other else {
+            // An image the text names still uploading or failed: the
+            // client refuses the send, and the card says why (decision
+            // 13).
+            if let Some(d) = self.dictation.as_ref().filter(|d| !d.general_agent)
+                && let Some(why) = attach::send_refusal(&d.text, &self.session_attachments())
+            {
+                log::info!("attach: send refused, an image not uploaded");
+                self.attach_note = Some(why);
+            }
             self.send(Input::Submit);
             return;
         };
@@ -3247,14 +3573,15 @@ impl App {
                     ));
                 }
             }
-            // A typed card's +: a tap opens Gemini's menu directly (the
-            // 23:39 EDT amendment: nothing to attach yet); the message
-            // card's, shown only with the daemon's `images`, would open the
-            // media chooser (the binary files plan), not built yet.
-            AgentHit::PromptAttach(kind) => match kind {
-                PromptKind::GeneralAgent => self.open_attach_menu(kind),
-                PromptKind::Message => log::info!("attach: the media chooser is not built yet"),
-            },
+            // A typed card's +: a tap opens its menu, on both cards (the
+            // 23:39 EDT amendment; the add images plan, decision 3).
+            AgentHit::PromptAttach(kind) => self.open_attach_menu(kind),
+            // An attached image's ✕: it goes, with its token (the add
+            // images plan, decision 12).
+            AgentHit::PromptDetach(_, n) => {
+                log::info!("attach: image {n} removed");
+                self.send(Input::DetachImage(n));
+            }
             // The keyboard toggle in a typed card's row (plan 20261028_06,
             // decision 8): up, it hides the soft keyboard as its own
             // dismissal does (the card and its text stay); down, it
@@ -4498,6 +4825,8 @@ impl App {
         });
         // Typing's tools and the volume glyph (plan 20261028_06).
         let tools = self.input_tools();
+        let tiles = self.tiles();
+        let upload_notice = self.terminal_upload_notice();
         let volume = self.volume();
         // The prompt cards' inputs (plan 20261027_03): a message to a
         // session, and a typed prompt to Gemini.
@@ -4572,6 +4901,8 @@ impl App {
             }
             agent.set_keys_row(down.is_none());
             agent.set_input_tools(tools);
+            agent.set_tiles(tiles);
+            agent.set_upload_notice(upload_notice);
             agent.set_volume(volume);
             agent.set_layout(layout);
             agent.set_general_agent_listening(ga_listening);
@@ -5051,6 +5382,16 @@ impl MorphApp for App {
             preview: preview::Preview::new(Some(std::sync::Arc::clone(&faces))),
             image_quad: None,
             blob: None,
+            attachments: Vec::new(),
+            media_wanted: None,
+            media_pending: None,
+            attach_note: None,
+            pending_images: Vec::new(),
+            thumbs: HashMap::new(),
+            upload_progress: HashMap::new(),
+            token_draft: None,
+            term_batch: None,
+            term_notice: None,
             menu: Menu::new(),
             title_touch: None,
             popup: None,
@@ -5235,6 +5576,7 @@ impl MorphApp for App {
             self.hold_fired(hit);
         }
         self.serve_clipboard(ctx);
+        self.serve_media(ctx);
         // The volume menu follows the options and speaking while open; it
         // is no longer the volume menu once closed.
         if !self.menu.is_open() {
@@ -5371,6 +5713,7 @@ impl MorphApp for App {
     fn on_touch(&mut self, ctx: &mut MorphContext, touch: Touch) {
         self.touch(touch);
         self.serve_clipboard(ctx);
+        self.serve_media(ctx);
         // Links tapped in the settings' copy and the agent view.
         let mut links = std::mem::take(&mut self.links);
         if let Some(screen) = &mut self.settings_screen {
@@ -5408,6 +5751,13 @@ impl MorphApp for App {
             viewfinder.clear();
         }
         self.run_camera(ctx);
+    }
+
+    /// The chooser's answer (libmorph's media request; the add images
+    /// plan, decision 8).
+    fn on_media(&mut self, _ctx: &mut MorphContext, response: &libmorph::media::MediaResponse) {
+        self.media_answered(response);
+        self.screen.invalidate();
     }
 
     fn on_text_input(&mut self, _ctx: &mut MorphContext, event: &libmorph::TextInputEvent) {
@@ -5452,6 +5802,8 @@ impl MorphApp for App {
         }
         match event {
             libmorph::TextInputEvent::Changed(text) => {
+                // Typed over: the next token goes at the card's cursor.
+                self.token_draft = None;
                 self.send(Input::SetText(text.clone()));
             }
             libmorph::TextInputEvent::Action(_) => self.submit_prompt(),
