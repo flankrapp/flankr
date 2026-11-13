@@ -4669,3 +4669,28 @@ Departures (Rule 1.7):
    not read HEAD; herdr's `worktree.create` is sent without `base`, and
    herdr starts the branch from the checkout's HEAD, which is what 2.8
    item 3 asks for.
+
+## 2026-11-12 23:22 EST — Active plans home view: approved by the owner's instruction to build it; implementation starting; libflankr_proto 0.5.14, daemon 0.7.13, flankr-companion 0.8.7, app 0.7.22
+
+Plan: the active plans home view plan (20261112_03), with its 21:58,
+22:03, 22:12, 22:21 and 22:18 EST amendments. The owner's instruction of
+2026-11-12 22:25 EST to build it in this worktree after the plan policy
+agent plan is its approval; the owner's change of 22:25 and 22:28 EST
+(Build creates an active task; the view is titled Active tasks; its
+right-side glyph is the task's autocontinue) goes into the plan as one
+amendment in the commit that starts implementing it.
+
+Steps, in the plan's order as its 21:58 amendment, item 4, extends them,
+one crate per commit, patch bumps only:
+
+0a. libflankr_proto 0.5.14: `AgentInfo::worktree` and
+    `ConfirmRequested::at`, appended and optional.
+0b. Daemon: each agent's worktree from herdr's `worktree.list` (local
+    herdr), and `at` on `confirm.requested`.
+1. Daemon: the plugin's `overview` call and notification, the
+   `plan_match` prompt (the 22:03 amendment's item 1), coalesced to one
+   notice per 500 ms; daemon 0.7.13 and its `UPDATES.md` entry.
+2. flankr-companion 0.8.7: `PolicyOverview` and its join.
+3. App: the Settings row Home view, saved as `home_view`.
+4. App: the Active tasks list, without events.
+5. App: events in place, Build on the plans screen; app 0.7.22.
