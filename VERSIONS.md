@@ -1476,3 +1476,15 @@ Strictly additive (a variant on the `#[non_exhaustive]` `Input`; plan
 
 - **Added:** `Input::ListAgents`: `agents.list` now, unless one is on its
   way or the client is offline (the Active tasks view's pull to refresh).
+
+## flankr-companion 0.8.14 — 2026-11-13 (the commit tagged `flankr-companion-v0.8.14`)
+
+No public API change (plan 20261022_03, the 2026-11-13 01:50 EST
+amendment, living section L3; 0.8.13 is reserved for another plan):
+
+- **Fixed:** the live question card answered from the view leaves the
+  `AgentView` at once, also when the session gave no pending question to
+  match it: on a tapped answer (`Input::Respond`, `Input::Suggested`), a
+  message sent to the viewed agent, and `Input::RespondTo` for the viewed
+  pane. It comes back if the send is refused, and a later question in the
+  same words shows once the first is no longer live.

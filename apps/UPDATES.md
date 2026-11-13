@@ -423,3 +423,9 @@ These changes came before the app had version numbers.
 - In the + menus, Attach image… is greyed out, with the reason under it, when the computer's flankr can't take images or four images are already attached.
 - A picked file that isn't one of the four types (an iPhone HEIC photo, for one) or is over 20 MB is left out, with the reason shown.
 - Tapping send while an image is still uploading, or after one failed, says so under the card ("Image 2 is still uploading.") and doesn't send yet.
+
+## 0.7.26 — 2026-11-13
+
+**Fixed**
+- Answering a question card (its Yes or No, approve or implement, one of the agent's answers, a typed or spoken reply, or Yes or No in Active tasks) now takes the card away at once; it no longer stays pinned after you answer.
+- Dragging away a question card you have already answered only puts it away: it no longer sends No to the agent. A question you have not answered is still answered No when dragged away, as before.

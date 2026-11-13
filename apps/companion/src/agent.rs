@@ -2719,6 +2719,10 @@ pub struct AgentScreen {
     /// Cards dragged away, by packed serial, while the view is open
     /// (items 3 and 4).
     gone: HashMap<u64, Gone>,
+    /// Question cards an answer was sent for from the app, by packed
+    /// serial, while the view is open: dragged away, one only goes, and is
+    /// not answered again (owner report, 2026-11-13 01:42 EST).
+    answered: HashSet<u64>,
     /// The dim lines of cards answered by a drag, by the card's packed
     /// serial (item 4).
     notes: HashMap<u64, &'static str>,
@@ -4007,6 +4011,25 @@ impl AgentScreen {
         self.pin_dx
     }
 
+    /// An answer to the pinned live question card was sent (a suggestion,
+    /// its Yes or No, one of the daemon's answers, a typed reply, or the
+    /// Active tasks list's Yes or No for this agent): dragged away now, it
+    /// only goes, and nothing more is sent for it. The client takes the
+    /// card out of the view at once ([`flankr_companion`]'s view); this
+    /// holds if it shows again before the session resolves it.
+    pub fn answered_pinned(&mut self) {
+        let Some(serial) = self.pinned else {
+            return;
+        };
+        if self
+            .pinned_card()
+            .is_some_and(|c| c.live && c.kind == CardKind::Question && c.choices.is_none())
+        {
+            log::info!("agent view: the pinned question card answered");
+            self.answered.insert(serial.to_u64());
+        }
+    }
+
     /// Whether the pinned card at `(x, y)` can be dragged away: shown in
     /// full, live, and not a card a drag cannot answer: a card a subagent's
     /// view would answer, whose answers are inactive, or a choice question
@@ -4047,6 +4070,12 @@ impl AgentScreen {
         let key = serial.to_u64();
         let dismissal = match card.kind {
             CardKind::Finished => Dismissal::Shrunk(serial),
+            // Already answered from the app: it only goes (owner report,
+            // 2026-11-13 01:42 EST: "th3 card wasnt dismissed after
+            // aporoving", and the drag then answered it No).
+            CardKind::Question if card.choices.is_none() && self.answered.contains(&key) => {
+                Dismissal::Removed(serial)
+            }
             CardKind::Question if card.choices.is_some() => {
                 if self.choice.sending() || self.cancelling.is_some() {
                     return None;
@@ -12643,6 +12672,49 @@ mod tests {
         let mut a = screen(conversation(4), vec![other], Some(0));
         assert_eq!(drag_away(&mut a), Some(Dismissal::Shrunk(pinned_serial(n))));
         assert!(flow_notes(&a).is_empty());
+    }
+
+    #[test]
+    fn a_question_answered_from_the_app_dragged_away_only_goes() {
+        // Owner report, 2026-11-13 01:42 EST.
+        let n = conversation(4).len();
+        let mut a = screen(
+            conversation(4),
+            vec![card(CardKind::Question, n, true)],
+            Some(0),
+        );
+        a.answered_pinned();
+        assert_eq!(
+            drag_away(&mut a),
+            Some(Dismissal::Removed(pinned_serial(n)))
+        );
+        assert!(flow_notes(&a).is_empty());
+        assert!(a.frame().pin.is_none());
+        // With the daemon's No among its answers: still nothing sent.
+        let asked = AgentCard {
+            answers: vec![
+                answer("Yes", "approve", Some("yes"), None),
+                answer("No", "deny", Some("no"), None),
+            ],
+            ..card(CardKind::Question, n, true)
+        };
+        let mut a = screen(conversation(4), vec![asked], Some(0));
+        a.answered_pinned();
+        assert_eq!(
+            drag_away(&mut a),
+            Some(Dismissal::Removed(pinned_serial(n)))
+        );
+        // A plan question answered: it goes, not one line.
+        let plan = AgentCard {
+            about_plan: true,
+            ..card(CardKind::Question, n, true)
+        };
+        let mut a = screen(conversation(4), vec![plan], Some(0));
+        a.answered_pinned();
+        assert_eq!(
+            drag_away(&mut a),
+            Some(Dismissal::Removed(pinned_serial(n)))
+        );
     }
 
     #[test]
