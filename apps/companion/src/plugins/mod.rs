@@ -195,6 +195,9 @@ pub trait DevicePlugin {
     fn take_decisions(&mut self) -> Vec<flankr_companion::policy::PolicyDecision> {
         Vec::new()
     }
+    /// The plans whose Build stands (their task exists, or its call is
+    /// on its way): Build is inactive for them.
+    fn set_building(&mut self, _paths: &std::collections::HashSet<String>) {}
 }
 
 /// Whether the daemon's plugin `version` is in a device half's `range`
@@ -358,6 +361,14 @@ impl Plugins {
             .iter()
             .filter(|h| self.active(h.ns()))
             .find_map(|h| h.tasks())
+    }
+
+    /// Tells every half which plans' Build stands.
+    pub fn set_building(&mut self, paths: &std::collections::HashSet<String>) {
+        for h in &mut self.halves {
+            h.set_building(paths);
+        }
+        self.dirty = true;
     }
 
     /// The decisions that came since last asked.

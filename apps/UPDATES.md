@@ -392,3 +392,12 @@ These changes came before the app had version numbers.
 - A plan you chose Build on is an active task, with an Auto on / Auto off switch at the right of its header that turns autocontinue on and off.
 - Build on a plan, in the plans list's plan page: it makes the plan an active task and sends the agent whose view you came from "approve and build the <date> plan, <title>".
 - With Plan policy off, Active tasks says to turn it on in Settings → Plugins and lists every agent under Not on a plan.
+
+## 0.7.23 — 2026-11-13
+
+**Changed**
+- Build now asks the agent to set the plan's status to In implementation first: it sends "approve and build the <date> plan, <title>, setting its status to In implementation first". A very long title is shortened at a word so the message still fits.
+
+**Fixed**
+- Build is sent once per plan. While the plan is an active task, its plan page shows Building in place of Build, and tapping it again sends nothing. Removing the task in Active tasks makes Build available again.
+- A plan title with a version number, quotes or other punctuation no longer makes Build's message fail to send.

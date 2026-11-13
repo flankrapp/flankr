@@ -549,7 +549,7 @@ dependencies = [
 
 [[package]]
 name = "companion"
-version = "0.7.22"
+version = "0.7.23"
 dependencies = [
  "android_logger",
  "base64 0.22.1",
@@ -1133,7 +1133,7 @@ dependencies = [
 
 [[package]]
 name = "flankr-companion"
-version = "0.8.9"
+version = "0.8.11"
 dependencies = [
  "base64 0.22.1",
  "flankr-speech",

@@ -387,6 +387,10 @@ pub struct App {
     cache: u64,
     /// The clock touches and flings are timed by.
     started: Instant,
+    /// Builds asked of the policy plugin, by call id: the pane and the
+    /// message to send once the answer says the task is new (plan
+    /// 20261112_03, the 2026-11-13 00:09 EST amendment, item 2).
+    pending_builds: std::collections::HashMap<u64, (String, String, String)>,
     /// When the last frame was updated, for a fling's step.
     last_update: Instant,
     /// Links tapped in the agent view, opened once the touch is handled.
@@ -1145,6 +1149,7 @@ impl App {
                 }
             }
             Event::PluginResult(r) => {
+                self.build_answered(&r);
                 self.plugin_calls(|p| p.result(r));
                 self.tasks_shown();
             }
@@ -1585,6 +1590,7 @@ impl App {
         };
         tasks.set_overview(data, grouping);
         self.overview.invalidate();
+        self.building_shown();
     }
 
     /// Build on a plan (plan 20261112_03, the 22:21 and 23:23 EST
@@ -1593,6 +1599,10 @@ impl App {
     /// and build the <date> plan, <title>" through `agents.send`, the tap
     /// its approval.
     fn build_plan(&mut self, b: plugins::Build) {
+        if self.building().contains(&b.path) {
+            log::info!("build: {} has its task already; nothing sent", b.path);
+            return;
+        }
         let Some(pane_id) = self.agent_pane.clone() else {
             self.note = Some((
                 settings::copy::TASKS_BUILD_NO_AGENT.text.to_string(),
@@ -1601,15 +1611,29 @@ impl App {
             self.screen.invalidate();
             return;
         };
-        let Some(text) = flankr_companion::policy::build_message(&b.date, &b.title) else {
+        let Some(text) = flankr_companion::policy::build_request(&b.date, &b.title) else {
             log::warn!("build: {} has no date or title to name it by", b.path);
             return;
         };
         log::info!("build: {} on {pane_id}", b.path);
         let ns = plugins::policy::NS;
-        let params = serde_json::json!({ "path": b.path, "pane_id": pane_id });
+        if !self.plugins.active(ns) {
+            // No policy to arm it: the owner's message only.
+            self.send(Input::SendMessage {
+                pane_id,
+                text,
+                label: "build".to_string(),
+            });
+            return;
+        }
+        // The message goes once the plugin says the task is new.
+        let params = serde_json::json!({ "path": b.path, "pane_id": pane_id, "once": true });
         let calls = self.plugins.call_on(ns, "build", params);
         for (ns, call) in calls {
+            if let Some(id) = call.id {
+                self.pending_builds
+                    .insert(id, (pane_id.clone(), text.clone(), b.path.clone()));
+            }
             self.send(Input::PluginCall {
                 ns,
                 id: call.id,
@@ -1618,18 +1642,66 @@ impl App {
                 session: Some(pane_id.clone()),
             });
         }
-        self.send(Input::SendMessage {
-            pane_id,
-            text,
-            label: "build".to_string(),
-        });
+        self.building_shown();
+    }
+
+    /// The policy's answer to a Build: a new task sends the build
+    /// message; a task it had already, or an error, sends nothing.
+    fn build_answered(&mut self, r: &libflankr_proto::companion::PluginResult) {
+        if r.ns != plugins::policy::NS {
+            return;
+        }
+        let Some((pane_id, text, path)) = self.pending_builds.remove(&r.id) else {
+            return;
+        };
+        match (&r.result, &r.error) {
+            (Some(row), None) if row.get("existing") == Some(&serde_json::json!(true)) => {
+                log::info!("build: {path} had its task already; nothing sent");
+            }
+            (Some(_), None) => {
+                log::info!("build: {path}: sending the build message to {pane_id}");
+                self.send(Input::SendMessage {
+                    pane_id,
+                    text,
+                    label: "build".to_string(),
+                });
+            }
+            (_, Some(e)) => {
+                log::warn!("build: {path}: {}", e.message);
+                self.note = Some((format!("Build: {}", e.message), Role::Warn));
+                self.screen.invalidate();
+            }
+            (None, None) => {}
+        }
+        self.building_shown();
+    }
+
+    /// The plans whose Build stands: a task in the policy's overview, or
+    /// a build call on its way.
+    fn building(&self) -> std::collections::HashSet<String> {
+        let mut paths: std::collections::HashSet<String> = self
+            .pending_builds
+            .values()
+            .map(|(_, _, p)| p.clone())
+            .collect();
+        if let Some(o) = self.plugins.tasks() {
+            paths.extend(o.plans.iter().filter(|p| p.task).map(|p| p.path.clone()));
+        }
+        paths
+    }
+
+    /// Tells the plan pages which Builds stand.
+    fn building_shown(&mut self) {
+        let paths = self.building();
+        self.plugins.set_building(&paths);
     }
 
     /// Asks the policy plugin for `overview`, while the Active tasks view
     /// is the home view and the plugin is on.
     fn ask_tasks(&mut self) {
         let ns = plugins::policy::NS;
-        if self.settings.home_view == settings::HomeView::Plans && self.plugins.active(ns) {
+        // Asked whichever the home view: Build needs to know the tasks.
+        if self.plugins.active(ns) {
             self.plugin_calls(|p| p.call_on(ns, "overview", serde_json::json!({})));
         }
     }
@@ -4914,6 +4986,7 @@ impl MorphApp for App {
             models,
             cache: 0,
             started: Instant::now(),
+            pending_builds: Default::default(),
             last_update: Instant::now(),
             links: Vec::new(),
             build_info: settings::build_info::build_info(ctx),
