@@ -931,6 +931,29 @@ amendment).
 
 - text: Not on a plan
 
+Active tasks grouped by project (docs/design/20261112_03_ACTIVE_PLANS_HOME_VIEW_PLAN.md,
+the 2026-11-13 01:52 EST amendment): a project with no folder name, an
+In implementation plan no agent works on, and a plan's open questions
+(plan 20261113_02).
+
+# [Copy] tasks_this_project
+
+- text: This project
+
+# [Copy] tasks_idle
+
+- text: idle
+
+# [Copy] tasks_open_question
+
+- text: 1 open question
+
+# [Copy] tasks_open_questions
+
+- [#] n: how many
+- text: |
+    {{ [#] n }} open questions
+
 # [Copy] tasks_not_armed
 
 - text: not armed

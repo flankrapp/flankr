@@ -2,27 +2,37 @@
 //! 2.3 to 2.5, with its amendments): the home screen's list of plans, in
 //! place of the card grid while *Home view* is *Active tasks*.
 //!
-//! - **A plan's header**, 2 lines, tap to fold: its title and waiting
-//!   marks (amber, confirmations; blue, questions), and, for a task (a
-//!   plan Build was chosen on), the right-side glyph that turns its
-//!   autocontinue on and off; then, dim, its status, step, agents,
-//!   subagents and the policy's last word, or *not armed* in amber.
-//! - **An agent line** per linked pane, 2 lines: its name and worktree;
-//!   its turn, running subagents and the policy line; one line per
-//!   running subagent. A tap opens its agent view.
-//! - **Its events** under it, oldest first, at most [`EVENTS_MAX`]: its
+//! Grouped by project (the plan's 2026-11-13 01:52 EST amendment):
+//!
+//! - **A project's line**, its folder's name; projects by most recent
+//!   activity, the order kept while a finger was down in the last
+//!   [`RESORT_AFTER`]; tap to fold.
+//! - **A plan's row** per plan of the project, 2 lines: its title and
+//!   waiting marks (amber, confirmations; blue, questions), and, for a
+//!   task (a plan Build was chosen on), the right-side glyph that turns
+//!   its autocontinue on and off; then, dim, its stage (*Draft*, *step N
+//!   of M* while built, *In implementation · idle*, *Implemented*), its
+//!   agents as short labels ("claude · w7"), the policy's last word (or
+//!   *not armed* in amber for a task), and *N open questions*. A tap
+//!   opens the agent view of its agent; a plan with none folds.
+//! - **Its subagents** under a plan being built, one line each; no agent
+//!   row.
+//! - **Its events** under them, oldest first, at most [`EVENTS_MAX`] per
+//!   agent: its
 //!   open question (Yes / No), its confirmations (Approve / Deny), and the
 //!   policy's decisions (a waiting `continue`: Approve / Deny; `ask`:
 //!   Continue and Open; `stop`: Open). Closed events older than
 //!   [`CLOSED_KEPT`] go.
-//! - **Not on a plan** last; and with the plugin off or missing, one line
-//!   at the top and every agent there.
+//! - **Not on a plan** last, with an agent line per pane (its name and
+//!   worktree; its turn, running subagents and policy line) and its
+//!   events; and with the plugin off or missing, one line at the top and
+//!   every agent there.
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use flankr_companion::policy::{
-    PlanGroup, PolicyAgentLink, PolicyDecision, PolicyOverview, PolicyPlanGroup,
+    PlanGroup, PolicyAgentLink, PolicyDecision, PolicyOverview, PolicyPlanGroup, ProjectGroup,
 };
 use libcontrols::{DrawContext, Rect};
 use libflankr_proto::common::{AgentInfo, Turn};
@@ -39,10 +49,16 @@ pub const EVENTS_MAX: usize = 6;
 /// How long a closed event stays.
 pub const CLOSED_KEPT: Duration = Duration::from_secs(30 * 60);
 
+/// How long no finger has to be down before the projects are sorted
+/// again by activity (the 21:58 EST amendment, item 3).
+pub const RESORT_AFTER: Duration = Duration::from_secs(2);
+
 /// Heights and sizes, in points (2.3 item 5).
+const PROJECT_H: f32 = 30.0;
 const HEADER_H: f32 = 40.0;
 const AGENT_H: f32 = 44.0;
 const CHILD_H: f32 = 16.0;
+const SUBAGENT_H: f32 = 22.0;
 const EVENT_H: f32 = 52.0;
 const BUTTON_H: f32 = 36.0;
 const BUTTON_W: f32 = 96.0;
@@ -214,6 +230,10 @@ pub struct PlanList {
     pull: f32,
     /// A refresh asked, and how long ago.
     refreshing: Option<Duration>,
+    /// The projects' order as last sorted, by root, and how long since a
+    /// finger was down.
+    order: Vec<String>,
+    since_touch: Duration,
 }
 
 impl Default for PlanList {
@@ -246,6 +266,8 @@ impl PlanList {
             gesture: None,
             pull: 0.0,
             refreshing: None,
+            order: Vec::new(),
+            since_touch: RESORT_AFTER,
         }
     }
 
@@ -402,9 +424,17 @@ impl PlanList {
     /// The groups to draw: the plugin's joined to the agents, or one
     /// **Not on a plan** group.
     fn groups(&self) -> Vec<PlanGroup> {
+        self.projects(&self.order)
+            .into_iter()
+            .flat_map(|p| p.plans)
+            .collect()
+    }
+
+    /// The groups by project, the projects in `order` first.
+    fn projects(&self, order: &[String]) -> Vec<ProjectGroup> {
         match (&self.overview, self.grouping) {
-            (Some(o), Grouping::ByPlan) => o.join(&self.agents),
-            _ => PolicyOverview::default().join(&self.agents),
+            (Some(o), Grouping::ByPlan) => o.by_project(&self.agents, order),
+            _ => PolicyOverview::default().by_project(&self.agents, order),
         }
     }
 
@@ -464,8 +494,21 @@ impl PlanList {
             });
             y += h;
         }
-        let groups = self.groups();
-        let linked = groups.iter().filter(|g| g.plan.is_some()).count();
+        // Sorted again by activity once no finger has been down for
+        // RESORT_AFTER; else in the order kept.
+        if self.since_touch >= RESORT_AFTER || self.order.is_empty() {
+            self.order = self
+                .projects(&[])
+                .iter()
+                .map(|p| p.key().to_string())
+                .collect();
+        }
+        let projects = self.projects(&self.order);
+        let linked = projects
+            .iter()
+            .flat_map(|p| p.plans.iter())
+            .filter(|g| g.plan.is_some())
+            .count();
         if self.grouping == Grouping::ByPlan && linked == 0 {
             let h = 28.0 * s;
             items.push(Item {
@@ -485,40 +528,70 @@ impl PlanList {
         // A task swiped away stays hidden until a new event row or a
         // state change (the 2026-11-13 01:07 EST amendment, item 3).
         let mut back: Vec<String> = Vec::new();
-        for g in &groups {
-            if g.plan.is_none() && g.agents.is_empty() {
-                continue;
-            }
-            if let Some(p) = &g.plan
-                && let Some((sig, keys)) = self.hidden_tasks.get(&p.path)
-            {
-                let now_keys = self.event_keys(g);
-                if *sig == task_state(p, g) && now_keys.is_subset(keys) {
-                    hidden += 1;
-                    continue;
-                }
-                back.push(p.path.clone());
-            }
-            let item = self.header(g, y, w);
-            y += item.rect.h;
-            items.push(item);
-            let key = g.plan.as_ref().map_or(String::new(), |p| p.path.clone());
-            if self.folded.contains(&key) {
-                continue;
-            }
-            for (agent, link) in &g.agents {
-                let item = self.agent_line(agent, link.as_ref(), y, w);
+        for project in &projects {
+            let key = format!("project:{}", project.key());
+            if let Some(pr) = &project.project {
+                let item = self.project_line(pr, &key, y, w);
                 y += item.rect.h;
                 items.push(item);
-                for item in self.event_rows(agent, y, w) {
-                    if let Some(Hide::Event(k)) = &item.key
-                        && self.hidden_events.contains(k)
-                    {
+                if self.folded.contains(&key) {
+                    continue;
+                }
+            }
+            for g in &project.plans {
+                if g.plan.is_none() && g.agents.is_empty() {
+                    continue;
+                }
+                if let Some(p) = &g.plan
+                    && let Some((sig, keys)) = self.hidden_tasks.get(&p.path)
+                {
+                    let now_keys = self.event_keys(g);
+                    if *sig == task_state(p, g) && now_keys.is_subset(keys) {
                         hidden += 1;
                         continue;
                     }
-                    y += item.rect.h;
-                    items.push(item);
+                    back.push(p.path.clone());
+                }
+                let item = self.header(g, y, w);
+                y += item.rect.h;
+                items.push(item);
+                let key = g.plan.as_ref().map_or(String::new(), |p| p.path.clone());
+                if self.folded.contains(&key) {
+                    continue;
+                }
+                let mut rows = Vec::new();
+                if g.plan.is_some() {
+                    // A plan's subagents, then its agents' events: no
+                    // agent row (the 01:52 EST amendment, items 3 and 5).
+                    let item = self.subagent_lines(g, y, w);
+                    if item.rect.h > 0.0 {
+                        y += item.rect.h;
+                        items.push(item);
+                    }
+                    for (agent, _) in &g.agents {
+                        rows.push((None, agent));
+                    }
+                } else {
+                    for (agent, link) in &g.agents {
+                        rows.push((Some(link.as_ref()), agent));
+                    }
+                }
+                for (line, agent) in rows {
+                    if let Some(link) = line {
+                        let item = self.agent_line(agent, link, y, w);
+                        y += item.rect.h;
+                        items.push(item);
+                    }
+                    for item in self.event_rows(agent, y, w) {
+                        if let Some(Hide::Event(k)) = &item.key
+                            && self.hidden_events.contains(k)
+                        {
+                            hidden += 1;
+                            continue;
+                        }
+                        y += item.rect.h;
+                        items.push(item);
+                    }
                 }
             }
         }
@@ -666,7 +739,14 @@ impl PlanList {
             ));
             hits.push((r, ListHit::Autocontinue { path, on: !on }));
         }
-        hits.push((rect, ListHit::Fold(key)));
+        // A plan's row opens its agent's view (the 01:52 EST amendment,
+        // item 3); one with no agent, and Not on a plan, fold.
+        let open = g
+            .plan
+            .as_ref()
+            .and(g.agents.first())
+            .map(|(a, _)| ListHit::Agent(a.pane_id.clone()));
+        hits.push((rect, open.unwrap_or(ListHit::Fold(key))));
         let hide = g.plan.as_ref().map(|p| Hide::Task(p.path.clone()));
         Item {
             rect,
@@ -674,6 +754,71 @@ impl PlanList {
             fills,
             hits,
             key: hide,
+        }
+    }
+
+    /// A project's line: its folder's name; a tap folds it.
+    fn project_line(
+        &self,
+        p: &flankr_companion::policy::PolicyProject,
+        key: &str,
+        y: f32,
+        w: f32,
+    ) -> Item {
+        let s = self.s;
+        let h = PROJECT_H * s;
+        let rect = Rect::new(0.0, y, w, h);
+        let name = if p.name.is_empty() {
+            copy::TASKS_THIS_PROJECT.text.to_string()
+        } else {
+            p.name.clone()
+        };
+        let mark = if self.folded.contains(key) {
+            "\u{25b8}"
+        } else {
+            "\u{25be}"
+        };
+        Item {
+            rect,
+            texts: vec![(
+                ellipsis(&format!("{mark} {name}"), w - 2.0 * PAD * s, LINE_PT * s),
+                [PAD * s, y + (h - line_h(LINE_PT * s)) * 0.5],
+                LINE_PT * s,
+                theme().accent,
+            )],
+            fills: vec![(Rect::new(0.0, y, w, h), theme().card, 0.0)],
+            hits: vec![(rect, ListHit::Fold(key.to_string()))],
+            key: None,
+        }
+    }
+
+    /// A plan's running subagents, one line each, under its row.
+    fn subagent_lines(&self, g: &PlanGroup, y: f32, w: f32) -> Item {
+        let s = self.s;
+        let x = (PAD + INDENT) * s;
+        let mut texts = Vec::new();
+        let mut at = y;
+        for (a, _) in &g.agents {
+            for c in a.children.iter().filter(|c| !c.finished) {
+                texts.push((
+                    ellipsis(
+                        &format!("\u{21b3} {}", c.short),
+                        w - x - PAD * s,
+                        LINE_PT * s,
+                    ),
+                    [x, at + 2.0 * s],
+                    LINE_PT * s,
+                    theme().fg,
+                ));
+                at += SUBAGENT_H * s;
+            }
+        }
+        Item {
+            rect: Rect::new(0.0, y, w, at - y),
+            texts,
+            fills: Vec::new(),
+            hits: Vec::new(),
+            key: None,
         }
     }
 
@@ -1000,6 +1145,7 @@ impl PlanList {
         now: Duration,
     ) -> Option<ListHit> {
         let s = self.s;
+        self.since_touch = Duration::ZERO;
         if phase == TouchPhase::Started {
             self.gesture = Some(Gesture {
                 id,
@@ -1089,8 +1235,23 @@ impl PlanList {
     }
 
     pub fn tick(&mut self, dt: Duration) -> bool {
-        // A refresh's line goes after `REFRESH_MAX` without an answer.
+        // The projects sorted again once no finger has been down for a
+        // while, if their order moved.
+        let was = self.since_touch;
+        self.since_touch += dt;
         let mut cleared = false;
+        if was < RESORT_AFTER && self.since_touch >= RESORT_AFTER {
+            let order: Vec<String> = self
+                .projects(&[])
+                .iter()
+                .map(|p| p.key().to_string())
+                .collect();
+            if order != self.order {
+                self.relayout();
+                cleared = true;
+            }
+        }
+        // A refresh's line goes after `REFRESH_MAX` without an answer.
         if let Some(t) = self.refreshing.as_mut() {
             *t += dt;
             if *t >= REFRESH_MAX {
@@ -1216,29 +1377,29 @@ fn turn_word(a: &AgentInfo) -> String {
     }
 }
 
-/// A header's dim line (2.3 item 2): status · step N of M · n agents ·
-/// m subagents · policy: <decision> <time>, or *not armed*.
+/// A plan row's dim line (the 2026-11-13 01:52 EST amendment, items 2,
+/// 3 and 6): its stage (*step N of M* while an agent builds it, *In
+/// implementation · idle* with none, else its status), its agents as
+/// short labels, the policy's last word (or *not armed* for a task not
+/// armed), and *N open questions*.
 pub fn header_line(p: &PolicyPlanGroup, g: &PlanGroup) -> String {
     let mut parts: Vec<String> = Vec::new();
-    if let Some(st) = &p.status {
-        parts.push(st.clone());
-    }
-    match (p.current_step, p.steps_total) {
-        (Some(n), Some(t)) => parts.push(format!("step {n} of {t}")),
-        (None, Some(t)) => parts.push(format!("{t} steps")),
+    let status = p.status.clone().unwrap_or_default();
+    let building = !g.agents.is_empty();
+    let implementing = status.starts_with("In implementation");
+    match (building, implementing, p.current_step, p.steps_total) {
+        (true, true, Some(n), Some(t)) => parts.push(format!("step {n} of {t}")),
+        (false, true, _, _) => {
+            parts.push(status.clone());
+            parts.push(copy::TASKS_IDLE.text.to_string());
+        }
+        _ if !status.is_empty() => parts.push(status.clone()),
         _ => {}
     }
-    let n = g.agents.len();
-    parts.push(format!("{n} agent{}", if n == 1 { "" } else { "s" }));
-    let m: u32 = g
-        .agents
-        .iter()
-        .filter_map(|(a, _)| a.subagents_running)
-        .sum();
-    if m > 0 {
-        parts.push(format!("{m} subagents"));
+    for (a, link) in &g.agents {
+        parts.push(agent_label(a, link.as_ref()));
     }
-    if !p.armed {
+    if p.task && !p.armed {
         parts.push(copy::TASKS_NOT_ARMED.text.to_string());
     } else {
         let newest = g
@@ -1254,11 +1415,43 @@ pub fn header_line(p: &PolicyPlanGroup, g: &PlanGroup) -> String {
             parts.push(w);
         }
     }
+    match p.open_questions.unwrap_or(0) {
+        0 => {}
+        1 => parts.push(copy::TASKS_OPEN_QUESTION.text.to_string()),
+        n => parts.push(
+            copy::TASKS_OPEN_QUESTIONS
+                .fill(None, &[("n", &n.to_string())])
+                .trim()
+                .to_string(),
+        ),
+    }
     parts.join(" \u{b7} ")
 }
 
+/// An agent as a plan row names it: its kind and its worktree's label
+/// or branch, "claude · w7".
+fn agent_label(a: &AgentInfo, link: Option<&PolicyAgentLink>) -> String {
+    let tree = link
+        .and_then(|l| l.worktree.as_ref())
+        .and_then(|wt| wt.label.clone().or(wt.branch.clone()))
+        .or_else(|| {
+            a.worktree
+                .as_ref()
+                .and_then(|wt| wt.label.clone().or(wt.branch.clone()))
+        });
+    let kind = a.agent.to_lowercase();
+    match tree {
+        Some(t) => format!("{kind} \u{b7} {t}"),
+        None => kind,
+    }
+}
+
 fn header_colour(p: &PolicyPlanGroup) -> [f32; 4] {
-    if p.armed { theme().dim } else { theme().accent }
+    if p.task && !p.armed {
+        theme().accent
+    } else {
+        theme().dim
+    }
 }
 
 /// `text` cut with an ellipsis to fit `w` at `px` (an estimate of the
@@ -1289,6 +1482,7 @@ mod tests {
         serde_json::from_value(json!({
             "plans": [
                 {"path": "docs/design/20261112_02_A_PLAN.md", "title": "Plan policy agent",
+                 "project": {"root": "/r/flankr", "name": "flankr"},
                  "status": "In implementation", "armed": true, "task": true, "autocontinue": true,
                  "steps_total": 9, "current_step": 3,
                  "agents": [{"pane_id": "p1", "linked_by": "pinned",
@@ -1297,6 +1491,7 @@ mod tests {
                                                "reason": "Done.", "confirm_id": 7,
                                                "summary_serial": 9, "at": "2026-11-12T21:30:00-05:00"}}]},
                 {"path": "docs/design/20261112_03_B_PLAN.md", "title": "Active plans",
+                 "project": {"root": "/r/flankr", "name": "flankr"}, "open_questions": 3,
                  "status": "Draft", "armed": false, "task": false, "steps_total": 5,
                  "agents": [{"pane_id": "p2", "linked_by": "gemini"}]}
             ],
@@ -1309,7 +1504,14 @@ mod tests {
         let mut l = PlanList::new();
         l.set_viewport(Rect::new(0.0, 100.0, 1080.0, 1600.0), 2.0);
         l.set_agents(&[
-            agent("p1", json!({"subagents_running": 2, "focused": true})),
+            agent(
+                "p1",
+                json!({"subagents_running": 1, "focused": true, "idle_ms": 1000,
+                "children": [
+                    {"id": "a1", "short": "overview screen", "description": "x"},
+                    {"id": "a2", "short": "done one", "description": "y", "finished": true}
+                ]}),
+            ),
             agent(
                 "p2",
                 json!({"turn": {"state": "asking", "question": "Shall I go on?"}}),
@@ -1323,22 +1525,43 @@ mod tests {
 
     #[test]
     fn headers_say_the_plan_at_a_glance() {
+        // The 2026-11-13 01:52 EST amendment: projects, then each plan's
+        // row in its stage, its subagents, and no agent row.
         let l = list();
         let t = l.texts();
-        assert!(t.contains(&"Plan policy agent".to_string()), "{t:?}");
-        assert!(t.contains(&"In implementation \u{b7} step 3 of 9 \u{b7} 1 agent \u{b7} 2 subagents \u{b7} policy: continue 21:30".to_string()), "{t:?}");
+        assert_eq!(t[0], "\u{25be} flankr", "{t:?}");
+        let a = t.iter().position(|x| x == "Plan policy agent").unwrap();
+        let b = t.iter().position(|x| x == "Active plans").unwrap();
         assert!(
-            t.contains(&"Draft \u{b7} 5 steps \u{b7} 1 agent \u{b7} not armed".to_string()),
+            a < b,
+            "the plan an agent moved in most recently first: {t:?}"
+        );
+        assert!(
+            t.contains(
+                &"step 3 of 9 \u{b7} claude \u{b7} plan/20261112_02 \u{b7} policy: continue 21:30"
+                    .to_string()
+            ),
             "{t:?}"
         );
         assert!(
-            t.iter()
-                .any(|x| x.starts_with("Claude p1 \u{b7} plan/20261112_02")),
+            t.contains(&"Draft \u{b7} claude \u{b7} 3 open questions".to_string()),
             "{t:?}"
+        );
+        assert!(t.contains(&"\u{21b3} overview screen".to_string()), "{t:?}");
+        assert!(!t.iter().any(|x| x.contains("done one")), "finished");
+        assert!(
+            !t.iter().any(|x| x.starts_with("Claude p1")),
+            "no agent row under a plan: {t:?}"
         );
         assert!(t.contains(&"Not on a plan".to_string()));
         assert!(t.contains(&"Claude p3".to_string()));
         assert!(!t.iter().any(|x| x.contains("p4")), "no shell");
+        // The plan's row opens its agent's view.
+        assert!(
+            l.hits()
+                .iter()
+                .any(|(_, h)| *h == ListHit::Agent("p1".into()))
+        );
         // The task's glyph, autocontinue on: a tap turns it off.
         assert!(l.hits().iter().any(|(_, h)| *h
             == ListHit::Autocontinue {
@@ -1349,7 +1572,7 @@ mod tests {
         assert!(!l.hits().iter().any(
             |(_, h)| matches!(h, ListHit::Autocontinue { path, .. } if path.contains("_03_"))
         ));
-        // The question's mark and its Yes.
+        // The question's mark and its Yes, under the plan's row.
         assert!(l.hits().iter().any(|(_, h)| *h
             == ListHit::Answer {
                 pane_id: "p2".into(),
@@ -1358,15 +1581,64 @@ mod tests {
     }
 
     #[test]
-    fn taps_fold_open_and_answer() {
+    fn idle_and_drafts_without_agents_are_one_row() {
+        let mut o = overview();
+        o.plans[1].agents.clear();
+        o.plans[0].agents.clear();
+        o.plans[0].task = false;
+        o.plans[0].current_step = None;
         let mut l = list();
-        let agent_rect = l
+        l.set_overview(Some(o), Grouping::ByPlan);
+        let t = l.texts();
+        assert!(
+            t.contains(&"In implementation \u{b7} idle".to_string()),
+            "{t:?}"
+        );
+        assert!(
+            t.contains(&"Draft \u{b7} 3 open questions".to_string()),
+            "{t:?}"
+        );
+        assert!(!t.iter().any(|x| x.starts_with('\u{21b3}')), "no children");
+        // A row with no agent folds.
+        assert!(
+            l.hits()
+                .iter()
+                .any(|(_, h)| *h == ListHit::Fold("docs/design/20261112_02_A_PLAN.md".into()))
+        );
+    }
+
+    #[test]
+    fn projects_are_sorted_again_only_after_two_seconds_without_a_touch() {
+        let mut o = overview();
+        o.plans[1].project = Some(flankr_companion::policy::PolicyProject {
+            root: "/r/other".into(),
+            name: "other".into(),
+        });
+        let mut l = list();
+        l.set_overview(Some(o), Grouping::ByPlan);
+        let first = |l: &PlanList| l.texts()[0].clone();
+        assert_eq!(first(&l), "\u{25be} flankr", "p1 moved most recently");
+        // A finger down; then p2 moves more recently.
+        l.touch(9, TouchPhase::Started, 5.0, 2000.0, Duration::ZERO);
+        l.touch(9, TouchPhase::Cancelled, 5.0, 2000.0, Duration::ZERO);
+        let mut agents = l.agents.clone();
+        agents[1].idle_ms = Some(10);
+        l.set_agents(&agents);
+        assert_eq!(first(&l), "\u{25be} flankr", "kept under the finger");
+        l.tick(RESORT_AFTER);
+        assert_eq!(first(&l), "\u{25be} other");
+    }
+
+    #[test]
+    fn taps_open_the_agent_and_fold_the_project() {
+        let mut l = list();
+        let row = l
             .hits()
             .into_iter()
             .find(|(_, h)| *h == ListHit::Agent("p1".into()))
             .unwrap()
             .0;
-        let c = agent_rect.center();
+        let c = [row.x + 20.0, row.y + 10.0];
         assert_eq!(
             l.touch(1, TouchPhase::Started, c[0], c[1], Duration::ZERO),
             None
@@ -1378,22 +1650,18 @@ mod tests {
         let fold = l
             .hits()
             .into_iter()
-            .find(|(_, h)| *h == ListHit::Fold("docs/design/20261112_02_A_PLAN.md".into()))
+            .find(|(_, h)| *h == ListHit::Fold("project:/r/flankr".into()))
             .unwrap()
             .0;
         let c = [fold.x + 20.0, fold.y + 10.0];
         l.touch(2, TouchPhase::Started, c[0], c[1], Duration::ZERO);
         l.touch(2, TouchPhase::Ended, c[0], c[1], Duration::from_millis(50));
         assert!(
-            !l.hits()
-                .iter()
-                .any(|(_, h)| *h == ListHit::Agent("p1".into())),
+            !l.texts().contains(&"Plan policy agent".to_string()),
             "folded"
         );
-        assert!(
-            l.texts().contains(&"Plan policy agent".to_string()),
-            "its header stays"
-        );
+        assert!(l.texts().contains(&"\u{25b8} flankr".to_string()));
+        assert!(l.texts().contains(&"Not on a plan".to_string()));
     }
 
     #[test]
@@ -1597,7 +1865,7 @@ mod tests {
     fn a_swiped_task_comes_back_on_a_new_event_or_a_state_change() {
         let mut l = list();
         let path = "docs/design/20261112_02_A_PLAN.md".to_string();
-        let r = rect_of(&l, &ListHit::Fold(path.clone()));
+        let r = rect_of(&l, &ListHit::Agent("p1".into()));
         let start = [r.x + 30.0, r.y + 10.0];
         assert_eq!(drag(&mut l, 1, start, [start[0] - 400.0, start[1]]), None);
         assert!(
@@ -1617,7 +1885,7 @@ mod tests {
         l.confirm_opened("p1", 8, "continue", "plugin:policy", None);
         assert!(l.texts().contains(&"Plan policy agent".to_string()));
         // Hidden again; a state change (its step) brings it back.
-        let r = rect_of(&l, &ListHit::Fold(path.clone()));
+        let r = rect_of(&l, &ListHit::Agent("p1".into()));
         drag(
             &mut l,
             2,
