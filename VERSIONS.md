@@ -1526,3 +1526,24 @@ Plan 20261112_03, the 2026-11-13 01:52 EST amendment. Strictly additive
   `ProjectGroup` (`project`, `plans`, `key`, `idle_ms`): the Active tasks
   view's groups, one per project, a kept order first, then by most recent
   activity, **Not on a plan** last.
+
+## dev.flankr.plugins.policy 0.1.4 — 2026-11-13 (the commit tagged `dev.flankr.plugins.policy-v0.1.4`)
+
+Plan 20261112_03, the 2026-11-13 11:58 EST amendment. A patch, as the
+owner keeps the current series; it changes which plan a pane is linked
+to and which rows `overview` lists.
+
+- **Added:** `linked_by` `goal`: the pane's Claude Code goal names the
+  plan. It comes before the pane's armed task (`pinned`), for
+  `overview` and for the policy's own matching.
+- **Changed:** a link found on an `Implemented`, `Superseded`,
+  `Retired` or `Consolidated` plan follows its `(by <plan>)`, else the
+  newest plan whose `consolidates:` lists it; one that leads to no open
+  plan is not made.
+- **Changed:** `overview` lists no `Superseded`, `Retired` or
+  `Consolidated` plan, even with a task; an `Implemented` plan shows
+  only while it has a task, with no agents. A pane linked to a plan
+  that has since closed is in `unlinked`.
+- **Changed:** `current_step` also takes the step the agent's reply
+  names ("starting step N", "step N done" and the like), kept at the
+  highest seen.

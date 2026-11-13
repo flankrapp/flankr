@@ -51,6 +51,21 @@ impl PlanSeen {
         }
     }
 
+    /// Whether it is closed (the 2026-11-13 11:58 EST amendment, item 2):
+    /// no pane shows under it.
+    fn closed(&self) -> bool {
+        super::plans::is_closed(&self.status)
+    }
+
+    /// Whether it shows in the view while it has a task: any plan but a
+    /// Superseded, Retired or Consolidated one; an Implemented plan does,
+    /// so its finished task can be removed (the 11:58 EST amendment,
+    /// item 2).
+    fn shows_with_task(&self) -> bool {
+        let (base, _) = crate::plugins::planning::reader::split_status(&self.status);
+        base == "Implemented" || !self.closed()
+    }
+
     /// Whether it shows in the view with no pane and no task: a Draft or
     /// In implementation plan (the 2026-11-13 01:52 EST amendment, item 2).
     fn in_a_stage(&self) -> bool {
@@ -73,8 +88,8 @@ fn project_of(root: &str) -> Value {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Link {
     pub path: String,
-    /// `pinned`, `reply_path`, `summary_title`, `worktree_branch` or
-    /// `gemini`: an open set.
+    /// `goal`, `pinned`, `reply_path`, `summary_title`, `worktree_branch`
+    /// or `gemini`: an open set.
     pub linked_by: &'static str,
     pub worktree: Option<String>,
 }
@@ -148,8 +163,15 @@ pub fn build(i: &Inputs) -> Value {
     let mut groups: BTreeMap<&str, Vec<Value>> = BTreeMap::new();
     let mut unlinked = Vec::new();
     let known = |pane: &str| i.panes.is_empty() || i.panes.iter().any(|p| p.pane_id == pane);
+    // A link to a plan that has since closed places no pane (the
+    // 2026-11-13 11:58 EST amendment, item 2).
+    let open_link = |pane: &str| {
+        i.links
+            .get(pane)
+            .is_some_and(|l| !i.plans.get(&l.path).is_some_and(PlanSeen::closed))
+    };
     for (pane, link) in i.links {
-        if !known(pane) {
+        if !known(pane) || !open_link(pane) {
             continue;
         }
         let listed = i.panes.iter().find(|p| &p.pane_id == pane);
@@ -170,7 +192,9 @@ pub fn build(i: &Inputs) -> Value {
     // a stage, Draft or In implementation (the 2026-11-13 01:52 EST
     // amendment, items 2 and 4).
     for t in i.tasks {
-        groups.entry(t.path.as_str()).or_default();
+        if i.plans.get(&t.path).is_none_or(PlanSeen::shows_with_task) {
+            groups.entry(t.path.as_str()).or_default();
+        }
     }
     for (path, seen) in i.plans {
         if seen.in_a_stage() {
@@ -178,7 +202,7 @@ pub fn build(i: &Inputs) -> Value {
         }
     }
     for p in i.panes {
-        if p.agent != crate::config::SHELL_AGENT && !i.links.contains_key(&p.pane_id) {
+        if p.agent != crate::config::SHELL_AGENT && !open_link(&p.pane_id) {
             unlinked.push(json!(p.pane_id));
         }
     }

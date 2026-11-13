@@ -175,6 +175,16 @@ impl LineIndex {
         }
     }
 
+    /// Every file of the session, oldest first: `path` alone for a
+    /// session in one file.
+    pub fn files(&self, path: &Path) -> Vec<PathBuf> {
+        if self.parts.is_empty() {
+            vec![path.to_path_buf()]
+        } else {
+            self.parts.iter().map(|p| p.path.clone()).collect()
+        }
+    }
+
     /// The files of a continued session before the one being scanned,
     /// with the lengths they were indexed at.
     pub fn earlier(&self) -> &[Part] {
@@ -1316,6 +1326,20 @@ impl Tailer {
             .approvals
             .iter()
             .any(|a| a.confirm_id == confirm_id)
+    }
+
+    /// The agent whose session this is (`claude`, `codex`, `agy`…).
+    pub fn agent(&self) -> &str {
+        &self.agent
+    }
+
+    /// The session's files, oldest first (the plan 20261112_03's
+    /// 2026-11-13 11:58 EST amendment reads a goal from each).
+    pub fn files(&self) -> Vec<PathBuf> {
+        match &self.state.lock().unwrap().backend {
+            TailBackend::Line(index) => index.files(&self.path),
+            TailBackend::Agy { .. } => vec![self.path.clone()],
+        }
     }
 
     /// The pending question as the tailer last found it.
