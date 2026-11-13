@@ -616,6 +616,9 @@ fn a_background_remotes_question_and_approval_show_with_its_name_and_are_answere
         probe::inject(
             READY + 1,
             bg(Event::Confirm {
+                at: None,
+                pane_id: String::new(),
+                requested_by: String::new(),
                 confirm_id: 41,
                 text: "Approve?".into(),
                 label: None,
@@ -639,6 +642,9 @@ fn a_background_remotes_question_and_approval_show_with_its_name_and_are_answere
         probe::inject(
             READY + 1,
             bg(Event::Confirm {
+                at: None,
+                pane_id: String::new(),
+                requested_by: String::new(),
                 confirm_id: 41,
                 text: "Approve?".into(),
                 label: None,

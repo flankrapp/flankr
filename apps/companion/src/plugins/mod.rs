@@ -68,6 +68,7 @@ pub struct Call {
 pub struct PluginOut {
     next_id: u64,
     calls: Vec<Call>,
+    builds: Vec<Build>,
     opens: Vec<ViewKind>,
     close: bool,
     redraw: bool,
@@ -113,10 +114,27 @@ impl PluginOut {
         self.close = true;
     }
 
+    /// The owner chose Build on a plan (plan 20261112_03, the 23:23 EST
+    /// amendment, item 2): the app arms it with the policy plugin and
+    /// sends the agent the build message.
+    pub fn build(&mut self, build: Build) {
+        self.builds.push(build);
+    }
+
     /// Its views changed: they are drawn again.
     pub fn redraw(&mut self) {
         self.redraw = true;
     }
+}
+
+/// A plan the owner chose Build on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Build {
+    /// `docs/design/<base>.md`.
+    pub path: String,
+    /// The front matter's `date`, `YYYY-MM-DD`.
+    pub date: String,
+    pub title: String,
 }
 
 /// A plugin's device half (decision 3.1, item 4). Coordinates given to
@@ -167,6 +185,15 @@ pub trait DevicePlugin {
     /// for `confirm_id` (2.7 item 3).
     fn requester(&self, _confirm_id: u64) -> Option<&'static str> {
         None
+    }
+    /// The Active tasks view's data, as last answered or told (plan
+    /// 20261112_03, 2.2): the policy plugin's only.
+    fn tasks(&self) -> Option<flankr_companion::policy::PolicyOverview> {
+        None
+    }
+    /// The decisions that came since last asked, oldest first.
+    fn take_decisions(&mut self) -> Vec<flankr_companion::policy::PolicyDecision> {
+        Vec::new()
     }
 }
 
@@ -282,6 +309,8 @@ pub struct Plugins {
     /// The pinned cards, oldest first: `(ns, key)`.
     cards: Vec<(String, String)>,
     dirty: bool,
+    /// Builds asked for, for the app to carry out.
+    builds: Vec<Build>,
 }
 
 impl Plugins {
@@ -293,6 +322,7 @@ impl Plugins {
             modal: None,
             cards: Vec::new(),
             dirty: false,
+            builds: Vec::new(),
         }
     }
 
@@ -311,6 +341,31 @@ impl Plugins {
             .iter()
             .filter(|h| self.active(h.ns()))
             .find_map(|h| h.card_line(pane_id))
+    }
+
+    /// A call to `ns`'s daemon half from the app itself (the Active tasks
+    /// view's glyph and Build), as if its half had asked.
+    pub fn call_on(&mut self, ns: &str, method: &str, params: Value) -> Vec<Outgoing> {
+        let method = method.to_string();
+        self.with_half(ns, move |_, out| {
+            out.call(&method, params);
+        })
+    }
+
+    /// The Active tasks view's data, while its plugin is active.
+    pub fn tasks(&self) -> Option<flankr_companion::policy::PolicyOverview> {
+        self.halves
+            .iter()
+            .filter(|h| self.active(h.ns()))
+            .find_map(|h| h.tasks())
+    }
+
+    /// The decisions that came since last asked.
+    pub fn take_decisions(&mut self) -> Vec<flankr_companion::policy::PolicyDecision> {
+        self.halves
+            .iter_mut()
+            .flat_map(|h| h.take_decisions())
+            .collect()
     }
 
     /// A confirmation ended: every half is told.
@@ -444,8 +499,14 @@ impl Plugins {
         self.apply(ns, out)
     }
 
+    /// The builds asked for since last taken.
+    pub fn take_builds(&mut self) -> Vec<Build> {
+        std::mem::take(&mut self.builds)
+    }
+
     fn apply(&mut self, ns: &str, out: PluginOut) -> Vec<Outgoing> {
         self.next_id = out.next_id;
+        self.builds.extend(out.builds.iter().cloned());
         if out.close && self.modal.as_deref() == Some(ns) {
             self.close_modal();
         }

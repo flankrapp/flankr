@@ -945,6 +945,9 @@ mod tests {
         // An approval needs you too, and shows its command.
         m.apply(
             &Event::Confirm {
+                at: None,
+                pane_id: String::new(),
+                requested_by: String::new(),
                 confirm_id: 7,
                 text: String::new(),
                 label: None,

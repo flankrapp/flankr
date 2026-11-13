@@ -34,6 +34,7 @@ pub mod agent_card;
 pub mod card_grid;
 pub mod gear;
 pub mod panel_shader;
+pub mod plan_list;
 
 use std::time::Duration;
 
@@ -70,6 +71,8 @@ pub enum OverviewHit {
     Tap,
     /// The ≡ button: open the drawer.
     Menu,
+    /// A tap in the Active tasks list (plan 20261112_03, 2.3 and 2.4).
+    Tasks(plan_list::ListHit),
     /// A pinned plugin card (plan 20261028_04, decision 3.7): its index,
     /// where it was tapped on the screen, and whether it was held for
     /// [`crate::plugins::card::HOLD`] (Unpin) rather than tapped.
@@ -97,6 +100,8 @@ enum Target {
     Prompt,
     /// The ≡ button.
     Menu,
+    /// The Active tasks list.
+    Tasks,
     /// A control, or nothing.
     Other,
 }
@@ -158,6 +163,11 @@ pub struct Overview {
     /// A Gemini turn runs: the centre button spins (plan 20261024_03, the
     /// 2026-10-30 22:08 EDT amendment, item 2).
     general_agent_busy: bool,
+    /// *Home view*: the card grid, or the Active tasks list (plan
+    /// 20261112_03, the 21:58 EST amendment, item 1).
+    home: crate::settings::HomeView,
+    /// The Active tasks list, in the card grid's place.
+    pub tasks: plan_list::PlanList,
 }
 
 impl Default for Overview {
@@ -196,7 +206,25 @@ impl Overview {
             shader_panels: false,
             general_agent_listening: false,
             general_agent_busy: false,
+            home: crate::settings::HomeView::Agents,
+            tasks: plan_list::PlanList::new(),
         }
+    }
+
+    /// Which view the home screen shows.
+    pub fn set_home_view(&mut self, home: crate::settings::HomeView) {
+        if home != self.home {
+            self.home = home;
+            self.dirty = true;
+        }
+    }
+
+    pub fn home_view(&self) -> crate::settings::HomeView {
+        self.home
+    }
+
+    fn showing_tasks(&self) -> bool {
+        self.home == crate::settings::HomeView::Plans
     }
 
     /// No list (a switch to a remote with none kept): no cards and no
@@ -215,6 +243,7 @@ impl Overview {
             return;
         }
         self.loaded = true;
+        self.tasks.set_agents(&agents);
         self.agents = agents;
         self.pending = pending.to_vec();
         if self.grid.set_agents(&self.agents, &self.pending) {
@@ -513,6 +542,8 @@ impl Overview {
         let cards_bottom = above.max(top);
         self.grid
             .set_viewport(Rect::new(0.0, top, l.w, cards_bottom - top), s);
+        self.tasks
+            .set_viewport(Rect::new(0.0, top, l.w, cards_bottom - top), s);
 
         self.hits = self
             .buttons
@@ -575,6 +606,8 @@ impl Overview {
                 Target::Menu
             } else if self.prompts.claims(x, y) {
                 Target::Prompt
+            } else if self.showing_tasks() && self.tasks.viewport().contains([x, y]) {
+                Target::Tasks
             } else if self.grid.viewport().contains([x, y]) {
                 Target::Grid
             } else {
@@ -609,9 +642,16 @@ impl Overview {
                 }
             };
         }
+        if target == Target::Tasks {
+            let hit = self.tasks.touch(id, phase, x, y, now);
+            if self.tasks.take_dirty() {
+                self.dirty = true;
+            }
+            return hit.map(OverviewHit::Tasks);
+        }
         let touched = match target {
             Target::Grid => self.grid.touch(id, phase, x, y, now),
-            Target::Prompt | Target::Menu | Target::Other => match phase {
+            Target::Tasks | Target::Prompt | Target::Menu | Target::Other => match phase {
                 TouchPhase::Ended => Touched::Tap,
                 _ => Touched::Nothing,
             },
@@ -636,7 +676,7 @@ impl Overview {
                         .map(|p| OverviewHit::Agent(p.to_string())),
                 },
                 Target::Menu => self.menu.contains(x, y).then_some(OverviewHit::Menu),
-                Target::Prompt => None,
+                Target::Prompt | Target::Tasks => None,
                 Target::Other => match self.control_at(x, y) {
                     // Turned off in the settings: no tap.
                     Some(hit) if !settings::allows_on_overview(hit) => None,
@@ -650,7 +690,7 @@ impl Overview {
     /// Carries the cards' fling, and the overlay's slide and fling, on.
     /// Returns whether anything moved.
     pub fn tick(&mut self, dt: Duration) -> bool {
-        let moved = self.grid.tick(dt) | self.prompts.tick(dt);
+        let moved = self.grid.tick(dt) | self.prompts.tick(dt) | self.tasks.tick(dt);
         if moved {
             self.dirty = true;
         }
@@ -670,6 +710,9 @@ impl Overview {
         ctx: &DrawContext,
         term: Option<&Terminal>,
     ) -> bool {
+        if self.tasks.take_dirty() && self.showing_tasks() {
+            self.dirty = true;
+        }
         if !self.dirty {
             return false;
         }
@@ -694,7 +737,11 @@ impl Overview {
             ctx.draw_text(list, &h.text, [x, h.y], px, h.color);
         }
         self.menu.draw(list, s, theme().muted);
-        self.grid.draw(list, ctx, self.shader_panels);
+        if self.showing_tasks() {
+            self.tasks.draw(list, ctx);
+        } else {
+            self.grid.draw(list, ctx, self.shader_panels);
+        }
         self.prompts.draw_pinned(list, ctx, term);
         let recording = self.prompts.message_open();
         let volume = self.volume;
@@ -733,7 +780,11 @@ impl Overview {
 
     /// The panel instances for the custom GPU panel shader.
     pub fn panel_instances(&self) -> Vec<PanelInstance> {
-        let mut out = self.grid.panel_instances();
+        let mut out = if self.showing_tasks() {
+            Vec::new()
+        } else {
+            self.grid.panel_instances()
+        };
         for p in &self.panels {
             if let Some(f) = p.fills.first() {
                 out.push(PanelInstance {

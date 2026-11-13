@@ -51,6 +51,10 @@ pub struct Policy {
     decisions: HashMap<String, PolicyDecision>,
     /// The continues it asked for, and how each stands.
     confirms: HashMap<u64, Confirmation>,
+    /// `overview` as last answered or told (plan 20261112_03).
+    overview: Option<flankr_companion::policy::PolicyOverview>,
+    /// The decisions since the app last took them.
+    fresh: Vec<PolicyDecision>,
 }
 
 impl Policy {
@@ -59,6 +63,9 @@ impl Policy {
     }
 
     fn take(&mut self, decision: PolicyDecision) {
+        if self.decisions.get(&decision.pane_id) != Some(&decision) {
+            self.fresh.push(decision.clone());
+        }
         if let Some(id) = decision.confirm_id {
             self.confirms.entry(id).or_insert(Confirmation::Waiting);
         }
@@ -186,7 +193,11 @@ impl DevicePlugin for Policy {
     fn message(&mut self, msg: PluginMessage, out: &mut PluginOut) {
         match msg {
             PluginMessage::Result { result: Ok(v), .. } => {
-                if let Ok(state) = serde_json::from_value::<PolicyState>(v.clone())
+                if v.get("plans").is_some() && v.get("unlinked").is_some() {
+                    if let Ok(o) = serde_json::from_value(v.clone()) {
+                        self.overview = Some(o);
+                    }
+                } else if let Ok(state) = serde_json::from_value::<PolicyState>(v.clone())
                     && v.get("sessions").is_some()
                 {
                     self.take_state(state);
@@ -206,6 +217,7 @@ impl DevicePlugin for Policy {
                 match PolicyNotice::of(&note) {
                     Some(PolicyNotice::Decision(d)) => self.take(d),
                     Some(PolicyNotice::State(s)) => self.take_state(s),
+                    Some(PolicyNotice::Overview(o)) => self.overview = Some(o),
                     // The plans' rows are the Active tasks view's.
                     Some(_) | None => {}
                 }
@@ -288,6 +300,14 @@ impl DevicePlugin for Policy {
     fn requester(&self, confirm_id: u64) -> Option<&'static str> {
         self.asked_for(confirm_id)
             .then_some(copy::POLICY_REQUESTER.text)
+    }
+
+    fn tasks(&self) -> Option<flankr_companion::policy::PolicyOverview> {
+        self.overview.clone()
+    }
+
+    fn take_decisions(&mut self) -> Vec<PolicyDecision> {
+        std::mem::take(&mut self.fresh)
     }
 }
 

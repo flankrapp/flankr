@@ -853,3 +853,74 @@ EST amendment: tasks are managed in the Active tasks view).
 # [Copy] policy_blocked
 
 - text: held by a question
+
+The Active tasks view (plan 20261112_03, 2.3 to 2.5, with its 23:23 EST
+amendment).
+
+# [Copy] tasks_turn_on
+
+- text: Turn on Plan policy in Settings → Plugins to group by plan
+
+# [Copy] tasks_older_flankr
+
+- text: This flankr cannot group by plan
+
+# [Copy] tasks_none
+
+- text: No plan is being worked on
+
+# [Copy] tasks_not_on_a_plan
+
+- text: Not on a plan
+
+# [Copy] tasks_not_armed
+
+- text: not armed
+
+# [Copy] tasks_auto_on
+
+- text: Auto on
+
+# [Copy] tasks_auto_off
+
+- text: Auto off
+
+# [Copy] tasks_approval
+
+- text: Approval
+
+# [Copy] tasks_asking
+
+- text: Asking
+
+# [Copy] tasks_approve
+
+- text: Approve
+
+# [Copy] tasks_deny
+
+- text: Deny
+
+# [Copy] tasks_yes
+
+- text: Yes
+
+# [Copy] tasks_no
+
+- text: No
+
+# [Copy] tasks_continue
+
+- text: Continue
+
+# [Copy] tasks_open
+
+- text: Open
+
+# [Copy] tasks_build
+
+- text: Build
+
+# [Copy] tasks_build_no_agent
+
+- text: Open an agent's view first: Build asks that agent to build the plan.
