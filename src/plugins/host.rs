@@ -658,6 +658,83 @@ impl PluginHost {
         Some((table, state.read.clone(), on))
     }
 
+    /// Hands each Finished card's summary from `events` to every enabled
+    /// plugin's [`Plugin::on_card_summary`] (plan 20261112_02, 2.2), with a
+    /// context for the card's pane, as the plugin's own principal. A card
+    /// whose pane's folder is unknown is skipped. Needs a tokio runtime.
+    pub fn spawn_card_summaries(
+        self: &Arc<Self>,
+        mut events: tokio::sync::broadcast::Receiver<super::CardSummaryEvent>,
+    ) {
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            log::warn!("plugins: no runtime; Finished cards are not handed to plugins");
+            return;
+        };
+        let weak = Arc::downgrade(self);
+        handle.spawn(async move {
+            loop {
+                let event = match events.recv().await {
+                    Ok(event) => Arc::new(event),
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        log::warn!("plugins: missed {n} Finished card summaries");
+                        continue;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                };
+                let Some(host) = weak.upgrade() else {
+                    return;
+                };
+                host.card_summary(event);
+            }
+        });
+    }
+
+    fn card_summary(self: &Arc<Self>, event: Arc<super::CardSummaryEvent>) {
+        let Some(cwd) = event.pane.cwd.clone() else {
+            return;
+        };
+        for entry in &self.entries {
+            let Some((table, read, on)) = self.settings_of(entry) else {
+                continue;
+            };
+            let plugin = Arc::clone(&entry.plugin);
+            let ns = plugin.ns();
+            let weak = Arc::downgrade(self);
+            let notifier: ctx::Notifier = Arc::new(move |method: &str, params: Value| {
+                if let Some(host) = weak.upgrade() {
+                    host.broadcast(ns, method, params);
+                }
+            });
+            let parts = CtxParts {
+                ns,
+                principal: Principal {
+                    id: format!("plugin:{}", super::short_name(ns)),
+                    agents: None,
+                    can_approve: false,
+                },
+                pane: Some(event.pane.pane_id.clone()),
+                lookup: Arc::new(ctx::FixedLookup {
+                    pane_id: event.pane.pane_id.clone(),
+                    agent: event.pane.agent.clone(),
+                    folder: cwd.clone(),
+                }),
+                read,
+                plugin_read: entry.read.clone(),
+                commands: Commands {
+                    on,
+                    env: self.env.clone(),
+                },
+                config: table,
+                notifier: Some(notifier),
+            };
+            let event = Arc::clone(&event);
+            tokio::spawn(async move {
+                let ctx = PluginCtx::build(parts).await;
+                plugin.on_card_summary(&event, &ctx).await;
+            });
+        }
+    }
+
     /// The tools offered now, each with its entry: enabled plugins only,
     /// as their `agent_tools` allows.
     fn offered(&self) -> Vec<(&Entry, &ToolSpec)> {

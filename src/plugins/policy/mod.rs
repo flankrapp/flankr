@@ -11,13 +11,17 @@
 //! through `policy::check` and the confirmation broker, never directly.
 
 pub mod plans;
+pub mod rules;
 pub mod store;
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
 
+use crate::sessions::hub::CardSummaryEvent;
+use rules::{Decision, Verdict};
 use store::{Store, Task};
 
 use super::command::CommandSpec;
@@ -133,12 +137,39 @@ pub trait Services: Send + Sync {
     fn state_dir(&self) -> Option<PathBuf>;
     /// A `plugin.notify` of this plugin to every phone.
     fn notify_all(&self, method: &str, params: Value);
+    /// The question the agent in `pane_id` ended its turn with, in its
+    /// reply's words, if any.
+    fn pending_question(&self, _pane_id: &str) -> Option<String> {
+        None
+    }
+    /// The choice question open on `pane_id`, its first question's words,
+    /// if one is.
+    async fn open_choice(&self, _pane_id: &str) -> Option<String> {
+        None
+    }
+}
+
+/// One pane the policy has seen a card from: reusable by a later
+/// `overview` (plan 20261112_03).
+#[derive(Debug, Clone, Default)]
+struct Session {
+    agent: String,
+    project: String,
+    plan: Option<String>,
+    last_decision: Option<Value>,
+    /// The choice question that blocks the pane's task, while it is open
+    /// (the owner's ruling of 2026-11-12).
+    blocked: Option<String>,
+    /// The newest card's serial.
+    latest: u64,
 }
 
 /// What the plugin keeps while the daemon runs.
 #[derive(Debug, Default)]
 struct State {
     paused: bool,
+    /// By pane id.
+    sessions: BTreeMap<String, Session>,
 }
 
 /// The plan policy plugin.
@@ -182,10 +213,203 @@ impl PlanPolicy {
         self.state.lock().unwrap().paused
     }
 
-    /// `state {}`'s answer.
+    /// `state {}`'s answer, also the `state` notification.
     fn state_json(&self) -> Value {
         let state = self.state.lock().unwrap();
-        json!({ "paused": state.paused, "sessions": [] })
+        let sessions: Vec<Value> = state
+            .sessions
+            .iter()
+            .map(|(pane_id, s)| {
+                json!({
+                    "pane_id": pane_id,
+                    "agent": s.agent,
+                    "project": s.project,
+                    "plan": s.plan,
+                    "last_decision": s.last_decision,
+                    "blocked": s.blocked.is_some(),
+                    "question": s.blocked,
+                })
+            })
+            .collect();
+        json!({ "paused": state.paused, "sessions": sessions })
+    }
+
+    /// A plan's row with whether its task is blocked by a choice question.
+    fn row(&self, plan: &plans::PlanDoc, task: Option<&Task>) -> Value {
+        let mut row = plan.row(task);
+        let blocked = task.and_then(|t| t.pane_id.as_deref()).and_then(|p| {
+            let state = self.state.lock().unwrap();
+            state.sessions.get(p).and_then(|s| s.blocked.clone())
+        });
+        row["blocked"] = json!(blocked.is_some());
+        row["question"] = json!(blocked);
+        row
+    }
+
+    /// Notes a choice question blocking `pane_id`'s task, or none; tells
+    /// every phone when that changes.
+    fn set_blocked(&self, pane_id: &str, question: Option<String>) {
+        let changed = {
+            let mut state = self.state.lock().unwrap();
+            let session = state.sessions.entry(pane_id.to_string()).or_default();
+            let changed = session.blocked != question;
+            session.blocked = question;
+            changed
+        };
+        if changed {
+            self.notify("state", self.state_json());
+        }
+    }
+
+    /// Sends `decision` to every phone and logs it.
+    fn emit(&self, decision: &Decision) {
+        log::info!("{}", decision.log_line());
+        let value = decision.json();
+        {
+            let mut state = self.state.lock().unwrap();
+            let session = state.sessions.entry(decision.pane_id.clone()).or_default();
+            session.plan = decision.plan.clone();
+            session.last_decision = Some(value.clone());
+        }
+        self.notify("decision", value);
+    }
+
+    /// Changes `plan`'s task with `change`, and tells every phone.
+    fn change_task(&self, root: &str, plan: &plans::PlanDoc, change: impl FnOnce(Task) -> Task) {
+        let Ok(store) = self.store() else {
+            return;
+        };
+        match store.update(root, &plan.path, |old| old.map(change)) {
+            Ok(task) => {
+                let row = self.row(plan, task.as_ref());
+                self.notify("approval", row);
+            }
+            Err(e) => log::warn!("[policy] {}: {e}", plan.path),
+        }
+    }
+
+    /// The decision for one Finished card, past the quiet time; `None`
+    /// when nothing is to be said.
+    async fn decide(
+        &self,
+        event: &CardSummaryEvent,
+        ctx: &PluginCtx,
+        settings: &Settings,
+    ) -> Option<Decision> {
+        let root = match root_of(ctx) {
+            Ok(root) => root,
+            Err(e) => {
+                log::info!(
+                    "[policy] pane={}: no project: {}",
+                    event.pane.pane_id,
+                    e.message
+                );
+                return None;
+            }
+        };
+        let tasks: Vec<Task> = self
+            .store()
+            .map(|s| s.load())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|t| t.project_root == root)
+            .collect();
+        let plans = plans::list(ctx).await.unwrap_or_default();
+        let Some((plan, _linked)) = rules::match_plan(event, &tasks, &plans) else {
+            return Some(Decision::new(
+                event,
+                Verdict::Stop,
+                "no_plan",
+                "No plan matched this card.",
+            ));
+        };
+        let plan = plan.clone();
+        let decided = |verdict, rule, reason: String| {
+            Some(Decision::new(event, verdict, rule, reason).on(&plan))
+        };
+        let Some(task) = tasks
+            .iter()
+            .find(|t| t.path == plan.path && t.armed)
+            .cloned()
+        else {
+            return decided(
+                Verdict::Stop,
+                "unapproved",
+                "Build has not been chosen on this plan.".to_string(),
+            );
+        };
+        if !plan.status_allows() {
+            if task.autocontinue {
+                self.change_task(&root, &plan, |t| Task {
+                    autocontinue: false,
+                    ..t
+                });
+            }
+            return decided(
+                Verdict::Stop,
+                "status",
+                format!(
+                    "The plan's status, {}, does not allow work.",
+                    if plan.status.is_empty() {
+                        "missing"
+                    } else {
+                        &plan.status
+                    }
+                ),
+            );
+        }
+        if !task.autocontinue {
+            return decided(
+                Verdict::Ask,
+                "autocontinue_off",
+                "Autocontinue is off for this task.".to_string(),
+            );
+        }
+        if task.hash != plan.hash {
+            // The 21:58 EST amendment: a change pauses the task for review.
+            let reason = rules::describe_change(&task, &plan);
+            self.change_task(&root, &plan, |t| Task {
+                autocontinue: false,
+                ..t
+            });
+            return decided(
+                Verdict::Ask,
+                "changed",
+                format!("{reason} Autocontinue is paused until you switch it on again."),
+            );
+        }
+        // The owner's ruling: a choice question blocks the task.
+        match self
+            .services
+            .as_ref()?
+            .open_choice(&event.pane.pane_id)
+            .await
+        {
+            Some(question) => {
+                self.set_blocked(&event.pane.pane_id, Some(question.clone()));
+                return decided(
+                    Verdict::Ask,
+                    "question",
+                    format!("The agent is asking a choice question: {question}"),
+                );
+            }
+            None => self.set_blocked(&event.pane.pane_id, None),
+        }
+        if task.continues_used >= settings.max_continues {
+            return decided(
+                Verdict::Ask,
+                "limit",
+                format!(
+                    "{} continues were sent for this task; the limit is {}.",
+                    task.continues_used, settings.max_continues
+                ),
+            );
+        }
+        decided(
+            Verdict::Ask,
+            "model",
+            "The card was not judged.".to_string(),
+        )
     }
 }
 
@@ -288,6 +512,7 @@ impl Plugin for PlanPolicy {
                     if paused { "paused" } else { "resumed" },
                     ctx.principal().id
                 );
+                self.notify("state", self.state_json());
                 Ok(json!({ "paused": paused }))
             }
             "plans" => {
@@ -296,7 +521,7 @@ impl Plugin for PlanPolicy {
                 let rows: Vec<Value> = plans::list(ctx)
                     .await?
                     .iter()
-                    .map(|p| p.row(store.find(&root, &p.path).as_ref()))
+                    .map(|p| self.row(p, store.find(&root, &p.path).as_ref()))
                     .collect();
                 Ok(json!({ "plans": rows }))
             }
@@ -305,6 +530,40 @@ impl Plugin for PlanPolicy {
                 self.task_call(method, &params, ctx).await
             }
             other => Err(PluginError::no_method(other)),
+        }
+    }
+
+    /// 2.4, after the quiet time of the 22:17 EST amendment, item 7.
+    async fn on_card_summary(&self, event: &CardSummaryEvent, ctx: &PluginCtx) {
+        let settings = Settings::of(ctx.config());
+        if self.paused() {
+            return;
+        }
+        // 2.1 item 2: an agent it may not drive gets no decision at all.
+        if !settings.drives(&event.pane.agent) {
+            return;
+        }
+        let pane_id = event.pane.pane_id.clone();
+        let serial = event.key.0;
+        {
+            let mut state = self.state.lock().unwrap();
+            let session = state.sessions.entry(pane_id.clone()).or_default();
+            session.latest = serial;
+            session.agent = event.pane.agent.clone();
+            session.project = event.project.clone();
+        }
+        if settings.quiet_secs > 0 {
+            tokio::time::sleep(std::time::Duration::from_secs(settings.quiet_secs)).await;
+        }
+        let newest = {
+            let state = self.state.lock().unwrap();
+            state.sessions.get(&pane_id).map(|s| s.latest) == Some(serial)
+        };
+        if !newest || self.paused() {
+            return;
+        }
+        if let Some(decision) = self.decide(event, ctx, &settings).await {
+            self.emit(&decision);
         }
     }
 }
@@ -348,6 +607,8 @@ impl PlanPolicy {
                             at: now.clone(),
                             started_at: old.and_then(|t| t.started_at),
                             continues_used: 0,
+                            status: Some(plan.status.clone()),
+                            amendments: Some(plan.amendments.len() as u32),
                         })
                     })
                     .map_err(failed)?
@@ -368,6 +629,8 @@ impl PlanPolicy {
                             autocontinue: true,
                             hash: plan.hash.clone(),
                             started_at: Some(now.clone()),
+                            status: Some(plan.status.clone()),
+                            amendments: Some(plan.amendments.len() as u32),
                             ..t
                         })
                     })
@@ -393,7 +656,7 @@ impl PlanPolicy {
                 ),
             }
         );
-        let row = plan.row(task.as_ref());
+        let row = self.row(&plan, task.as_ref());
         self.notify("approval", row.clone());
         Ok(row)
     }

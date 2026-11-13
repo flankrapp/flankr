@@ -228,6 +228,11 @@ impl Daemon {
             choice_answering: Default::default(),
         });
         policy.set(Arc::downgrade(&daemon));
+        // Each kept card summary goes on to the enabled plugins (plan
+        // 20261112_02, 2.2).
+        daemon
+            .plugins
+            .spawn_card_summaries(daemon.hub.card_summaries());
         // `[llm.uses.card_summaries]`: each new Finished card summarised
         // once, while card summaries are available.
         daemon

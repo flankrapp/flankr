@@ -21,6 +21,7 @@ pub mod planning;
 pub mod policy;
 pub mod registry;
 
+pub use crate::sessions::hub::CardSummaryEvent;
 pub use command::{ArgShape, CommandOutput, CommandSpec};
 pub use ctx::{HerdrLookup, PluginCtx, Project, ProjectLookup};
 pub use host::{
@@ -57,6 +58,10 @@ pub trait Plugin: Send + Sync + 'static {
     fn tools(&self) -> &[ToolSpec] {
         &[]
     }
+    /// A Finished card's summary, once kept (plan 20261112_02, 2.2): called
+    /// for each enabled plugin, in a task of its own, with a context for
+    /// the card's pane. Nothing by default.
+    async fn on_card_summary(&self, _event: &CardSummaryEvent, _ctx: &PluginCtx) {}
     /// Runs one of its [`tools`](Self::tools), by its own `name` (without
     /// the short-name prefix). `args` is the model's JSON.
     async fn run_tool(

@@ -37,6 +37,12 @@ pub struct Task {
     pub started_at: Option<String>,
     #[serde(default)]
     pub continues_used: u32,
+    /// The plan's status when its hash was taken.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// How many amendments it had then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amendments: Option<u32>,
 }
 
 fn yes() -> bool {
@@ -180,6 +186,8 @@ mod tests {
             at: "2026-11-12T22:00:00-05:00".into(),
             started_at: None,
             continues_used: 0,
+            status: None,
+            amendments: None,
         }
     }
 

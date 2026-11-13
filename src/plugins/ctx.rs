@@ -54,6 +54,28 @@ impl ProjectLookup for HerdrLookup {
     }
 }
 
+/// The lookup of one pane whose folder is already known: a Finished
+/// card's, for [`super::Plugin::on_card_summary`].
+pub struct FixedLookup {
+    pub pane_id: String,
+    pub agent: String,
+    pub folder: String,
+}
+
+#[async_trait::async_trait]
+impl ProjectLookup for FixedLookup {
+    async fn folder(&self, pane_id: Option<&str>) -> Result<AgentFolder, String> {
+        match pane_id {
+            Some(p) if crate::watch::pane_ids_match(p, &self.pane_id) => Ok(AgentFolder {
+                pane_id: self.pane_id.clone(),
+                agent: self.agent.clone(),
+                folder: self.folder.clone(),
+            }),
+            _ => Err(crate::project::NO_PROJECT.to_string()),
+        }
+    }
+}
+
 /// The focused project.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Project {

@@ -40,4 +40,44 @@ impl Services for DaemonPolicy {
             daemon.plugins.broadcast(NS, method, params);
         }
     }
+
+    /// The pending question of the tailed session in `pane_id`.
+    fn pending_question(&self, pane_id: &str) -> Option<String> {
+        let daemon = self.daemon()?;
+        daemon
+            .hub
+            .tailers()
+            .into_iter()
+            .find(|t| {
+                t.pane()
+                    .is_some_and(|p| crate::watch::pane_ids_match(&p.pane_id, pane_id))
+            })?
+            .pending_question()
+            .map(|q| q.text)
+    }
+
+    /// The choice question open on `pane_id`, as `agents.send` refuses
+    /// for (plan 20261029_01, decision 6); herdr local only.
+    async fn open_choice(&self, pane_id: &str) -> Option<String> {
+        let daemon = self.daemon()?;
+        if matches!(
+            daemon.client.transport(),
+            libherdr::transport::HerdrTransport::RemoteSsh { .. }
+        ) {
+            return None;
+        }
+        let snapshot = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            daemon.client.list_panes(),
+        )
+        .await
+        .ok()?
+        .ok()?;
+        let pane = crate::core::agents::agents(&snapshot)
+            .into_iter()
+            .find(|a| crate::watch::pane_ids_match(&a.pane_id, pane_id))?;
+        let open = daemon.sessions.open_choice(&pane)?;
+        let first = open.set.questions.first()?;
+        Some(first.text.clone())
+    }
 }

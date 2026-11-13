@@ -98,6 +98,10 @@ async fn state_and_pause() {
 pub(super) struct Fake {
     pub(super) state: Option<std::path::PathBuf>,
     pub(super) notes: std::sync::Mutex<Vec<(String, serde_json::Value)>>,
+    /// The open choice question, if any.
+    pub(super) choice: std::sync::Mutex<Option<String>>,
+    /// The reply's pending question, if any.
+    pub(super) question: std::sync::Mutex<Option<String>>,
 }
 
 impl Fake {
@@ -123,13 +127,19 @@ impl Services for Fake {
             .unwrap()
             .push((method.to_string(), params));
     }
+    fn pending_question(&self, _pane_id: &str) -> Option<String> {
+        self.question.lock().unwrap().clone()
+    }
+    async fn open_choice(&self, _pane_id: &str) -> Option<String> {
+        self.choice.lock().unwrap().clone()
+    }
 }
 
 pub(super) const PLAN_PATH: &str = "docs/design/20261112_02_A_PLAN.md";
 
 pub(super) fn plan_text(status: &str) -> String {
     format!(
-        "---\ntitle: A plan\ndate: 2026-11-12\nstatus: {status}\n---\n\n## 3. Steps\n\n1. **First.** Words.\n   **Done when:** one works.\n2. **Second.** Words.\n   **Done when:** two works.\n3. **Third.** Words.\n   **Done when:** three works.\n4. **Fourth.** Words.\n   **Done when:** four works.\n5. **Fifth.** Words.\n   **Done when:** five works.\n"
+        "---\ntitle: A sample plan\ndate: 2026-11-12\nstatus: {status}\n---\n\n## 3. Steps\n\n1. **First.** Words.\n   **Done when:** one works.\n2. **Second.** Words.\n   **Done when:** two works.\n3. **Third.** Words.\n   **Done when:** three works.\n4. **Fourth.** Words.\n   **Done when:** four works.\n5. **Fifth.** Words.\n   **Done when:** five works.\n"
     )
 }
 
@@ -322,4 +332,170 @@ async fn only_a_principal_that_may_approve_changes_tasks() {
             .code,
         NO_STORE
     );
+}
+
+/// The policy's settings for the tests: Claude driven, no quiet time.
+pub(super) fn on() -> toml::Table {
+    toml::from_str("agents = [\"claude\"]\nquiet_secs = 0\n").unwrap()
+}
+
+/// A Finished card's summary from `w1:p1`.
+pub(super) fn card(serial: u64, reply: &str, spoken: &str) -> CardSummaryEvent {
+    CardSummaryEvent {
+        pane: crate::sessions::hub::PaneOf {
+            pane_id: "w1:p1".into(),
+            agent: "claude".into(),
+            cwd: None,
+        },
+        shown: "Claude".into(),
+        project: "proj".into(),
+        key: (serial, 7),
+        summary: crate::sessions::hub::CardSummary {
+            points: vec![],
+            spoken: Some(spoken.into()),
+        },
+        reply: reply.into(),
+    }
+}
+
+impl Env {
+    /// The decisions sent so far: (decision, rule).
+    pub(super) fn decisions(&self) -> Vec<(String, String)> {
+        self.fake
+            .notes("decision")
+            .iter()
+            .map(|d| {
+                (
+                    d["decision"].as_str().unwrap().to_string(),
+                    d["rule"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect()
+    }
+
+    pub(super) fn pair(decision: &str, rule: &str) -> (String, String) {
+        (decision.to_string(), rule.to_string())
+    }
+}
+
+#[tokio::test]
+async fn the_hard_rules_in_order() {
+    let e = env();
+    let c = ctx_as(&e.root, owner(), on()).await;
+    let pair = Env::pair;
+    // No plan named, no task: nothing to work on.
+    e.policy
+        .on_card_summary(&card(1, "Done.", "Done."), &c)
+        .await;
+    assert_eq!(e.decisions(), [pair("stop", "no_plan")]);
+    // The plan named, not built: unapproved.
+    let named = format!("Step 1 of {PLAN_PATH} is done. Continue with step 2?");
+    e.policy
+        .on_card_summary(&card(2, &named, "Step one is done."), &c)
+        .await;
+    assert_eq!(e.decisions()[1], pair("stop", "unapproved"));
+    // Named by its title instead.
+    e.policy
+        .on_card_summary(&card(3, "Working on A sample plan now.", "x"), &c)
+        .await;
+    assert_eq!(e.decisions()[2], pair("stop", "unapproved"));
+    assert_eq!(e.fake.notes("decision")[2]["plan"], PLAN_PATH);
+    // Built: the pane's task is its plan, but autocontinue is off.
+    e.policy
+        .call("build", json!({"path": PLAN_PATH, "pane_id": "w1:p1"}), &c)
+        .await
+        .unwrap();
+    e.policy
+        .on_card_summary(&card(4, "Done.", "Done."), &c)
+        .await;
+    assert_eq!(e.decisions()[3], pair("ask", "autocontinue_off"));
+    e.policy
+        .call("task_enable", json!({"path": PLAN_PATH}), &c)
+        .await
+        .unwrap();
+    // A choice question blocks the task.
+    *e.fake.choice.lock().unwrap() = Some("Which way?".into());
+    e.policy
+        .on_card_summary(&card(5, "Done.", "Done."), &c)
+        .await;
+    assert_eq!(e.decisions()[4], pair("ask", "question"));
+    let state = e.policy.call("state", json!({}), &c).await.unwrap();
+    assert_eq!(state["sessions"][0]["blocked"], true);
+    assert_eq!(state["sessions"][0]["question"], "Which way?");
+    let plans = e.policy.call("plans", json!({}), &c).await.unwrap();
+    assert_eq!(plans["plans"][0]["blocked"], true);
+    // Answered: no longer blocked.
+    *e.fake.choice.lock().unwrap() = None;
+    e.policy
+        .on_card_summary(&card(6, "Done.", "Done."), &c)
+        .await;
+    let state = e.policy.call("state", json!({}), &c).await.unwrap();
+    assert_eq!(state["sessions"][0]["blocked"], false);
+    assert_eq!(e.decisions()[5], pair("ask", "model"), "past the rules");
+    // A changed plan pauses autocontinue, saying what changed.
+    std::fs::write(
+        e.root.join(PLAN_PATH),
+        format!(
+            "{}\n## Amendment — 2026-11-12 23:00 EST: a new step\n",
+            plan_text("Draft")
+        ),
+    )
+    .unwrap();
+    e.policy
+        .on_card_summary(&card(7, "Done.", "Done."), &c)
+        .await;
+    assert_eq!(e.decisions()[6], pair("ask", "changed"));
+    let reason = e.fake.notes("decision")[6]["reason"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(reason.contains("a new step"), "{reason}");
+    let rows = e.fake.notes("approval");
+    assert_eq!(rows.last().unwrap()["autocontinue"], false);
+    // A status that does not allow work stops it.
+    std::fs::write(e.root.join(PLAN_PATH), plan_text("Hold")).unwrap();
+    e.policy
+        .call("build", json!({"path": PLAN_PATH, "pane_id": "w1:p1"}), &c)
+        .await
+        .unwrap();
+    e.policy
+        .on_card_summary(&card(8, "Done.", "Done."), &c)
+        .await;
+    assert_eq!(e.decisions()[7], pair("stop", "status"));
+}
+
+#[tokio::test]
+async fn nothing_while_paused_for_other_agents_or_for_an_older_card() {
+    let e = env();
+    let c = ctx_as(&e.root, owner(), on()).await;
+    e.policy
+        .call("pause", json!({"paused": true}), &c)
+        .await
+        .unwrap();
+    e.policy
+        .on_card_summary(&card(1, "Done.", "Done."), &c)
+        .await;
+    assert!(e.decisions().is_empty(), "paused");
+    e.policy
+        .call("pause", json!({"paused": false}), &c)
+        .await
+        .unwrap();
+    // Not one of `agents`, as by default: no decision at all.
+    let off = ctx_as(&e.root, owner(), toml::Table::new()).await;
+    e.policy
+        .on_card_summary(&card(2, "Done.", "Done."), &off)
+        .await;
+    assert!(e.decisions().is_empty(), "drives no agent");
+    // Only the newest card of a pane is judged after the quiet time.
+    let quiet: toml::Table = toml::from_str("agents = [\"claude\"]\nquiet_secs = 1\n").unwrap();
+    let q = ctx_as(&e.root, owner(), quiet).await;
+    let older = card(3, "Done.", "Done.");
+    let newer = card(4, "Done.", "Done.");
+    tokio::join!(e.policy.on_card_summary(&older, &q), async {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        e.policy.on_card_summary(&newer, &q).await;
+    });
+    let sent = e.fake.notes("decision");
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert_eq!(sent[0]["summary_serial"], 4);
 }

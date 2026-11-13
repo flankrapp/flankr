@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use libflankr_proto::common::{CardKind, Section};
-use tokio::sync::{Notify, mpsc};
+use tokio::sync::{Notify, broadcast, mpsc};
 
 /// The most cards whose summaries are kept, the oldest asked dropped
 /// first.
@@ -53,6 +53,33 @@ pub struct SummaryJob {
     pub reply: String,
     /// The tailer to wake when the answer is kept.
     pub wake: Arc<Notify>,
+    /// The pane the session is in, as its subscriber named it, and the
+    /// agent herdr says runs there (lowercased): the summary is sent on as
+    /// a [`CardSummaryEvent`] when it is known.
+    pub pane: Option<PaneOf>,
+}
+
+/// The pane of a tailed session, as a subscription named it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaneOf {
+    pub pane_id: String,
+    /// Lowercased, as `[[agents]]` names it.
+    pub agent: String,
+    pub cwd: Option<String>,
+}
+
+/// A Finished card's summary, once kept, for the plugins that read them
+/// (plan 20261112_02, 2.2: `on_card_summary`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CardSummaryEvent {
+    pub pane: PaneOf,
+    /// The agent's shown name.
+    pub shown: String,
+    pub project: String,
+    pub key: CardKey,
+    pub summary: CardSummary,
+    /// The redacted reply the card was made from.
+    pub reply: String,
 }
 
 /// The summaries asked for and answered.
@@ -163,6 +190,7 @@ impl CardSummaries {
 pub fn spawn_worker(
     summarizer: Arc<dyn CardSummarizer>,
     store: Arc<CardSummaries>,
+    events: broadcast::Sender<CardSummaryEvent>,
 ) -> Option<mpsc::UnboundedSender<SummaryJob>> {
     let handle = tokio::runtime::Handle::try_current().ok()?;
     let (tx, mut rx) = mpsc::unbounded_channel::<SummaryJob>();
@@ -172,8 +200,18 @@ pub fn spawn_worker(
                 .summarize_card(&job.agent, &job.project, &job.reply)
                 .await;
             if let Some(summary) = answer {
-                store.put(job.key, summary);
+                store.put(job.key, summary.clone());
                 job.wake.notify_one();
+                if let Some(pane) = job.pane {
+                    let _ = events.send(CardSummaryEvent {
+                        pane,
+                        shown: job.agent,
+                        project: job.project,
+                        key: job.key,
+                        summary,
+                        reply: job.reply,
+                    });
+                }
             }
         }
     });
