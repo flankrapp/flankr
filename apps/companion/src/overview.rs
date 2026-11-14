@@ -738,7 +738,7 @@ impl Overview {
         }
         self.menu.draw(list, s, theme().muted);
         if self.showing_tasks() {
-            self.tasks.draw(list, ctx);
+            self.tasks.draw(list, ctx, term);
         } else {
             self.grid.draw(list, ctx, self.shader_panels);
         }

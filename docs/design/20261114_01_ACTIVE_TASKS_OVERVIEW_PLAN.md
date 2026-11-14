@@ -1,7 +1,7 @@
 ---
 title: Active tasks as the overview, with a glyph for each kind of row, a spinner while an agent is working, inactive agents folded away, and an arrow to the project's agent
 date: 2026-11-14
-status: Draft
+status: In implementation
 covers:
   - "A glyph at the left of every row in Active tasks for its kind: a plan
     from the planning plugin, a subagent, an autocontinue task, or an
@@ -242,3 +242,17 @@ entries, and is tried on the S23.
    (`src/sessions/goal.rs`). The pattern in 2.2 item 1 is Claude Code's.
    Another agent's pattern, or its goal, is added by an amendment when one
    is seen.
+
+## Amendment — 2026-11-14 15:42 EST: approved by the owner; implementation started, and this document is now immutable
+
+The owner, on 2026-11-14, verbatim and in full: "approve both, build and
+push to s23". That is this plan's approval. Its open questions get no
+answers with it, and stay as section 4 states them: the title's arrow
+opens the project's main agent's turns view (2.5), the inactive
+threshold is 10 minutes (2.3 item 2), and only Claude Code's timer and
+goal are read (2.2 item 1).
+
+Implementation started with step 1 (the glyphs and the chevrons) in the
+commit that sets `status: In implementation`. From now on this
+document changes only on the owner's explicit instruction; departures go
+to `CHANGES.md`. This amendment replaces nothing in the body.

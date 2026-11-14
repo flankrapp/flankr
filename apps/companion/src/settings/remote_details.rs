@@ -253,16 +253,24 @@ impl DrawControl for Disclosure {
         ctx.draw_text(list, &self.label, [self.rect.x, y], px, theme().fg);
         let cx = self.rect.x + self.rect.w - 12.0 * s;
         let cy = self.rect.y + self.rect.h * 0.5;
-        let h = 5.0 * s;
-        let t = 1.8 * s;
-        let c = theme().dim;
-        if self.open {
-            list.push_line([cx - h, cy - h * 0.5], [cx, cy + h * 0.5], t, c);
-            list.push_line([cx, cy + h * 0.5], [cx + h, cy - h * 0.5], t, c);
-        } else {
-            list.push_line([cx - h * 0.5, cy - h], [cx + h * 0.5, cy], t, c);
-            list.push_line([cx + h * 0.5, cy], [cx - h * 0.5, cy + h], t, c);
-        }
+        draw_chevron(list, [cx, cy], self.open, s, theme().dim);
+    }
+}
+
+/// The drawn chevron centred on `c`, at scale `s`: pointing down when
+/// `open`, else right, its arms 5 pt and 1.8 pt thick. The Fingerprint
+/// row's, and every collapsible's in Active tasks (the active tasks
+/// overview plan, 2.4).
+pub fn draw_chevron(list: &mut DrawList, c: [f32; 2], open: bool, s: f32, colour: [f32; 4]) {
+    let [cx, cy] = c;
+    let h = 5.0 * s;
+    let t = 1.8 * s;
+    if open {
+        list.push_line([cx - h, cy - h * 0.5], [cx, cy + h * 0.5], t, colour);
+        list.push_line([cx, cy + h * 0.5], [cx + h, cy - h * 0.5], t, colour);
+    } else {
+        list.push_line([cx - h * 0.5, cy - h], [cx + h * 0.5, cy], t, colour);
+        list.push_line([cx + h * 0.5, cy], [cx - h * 0.5, cy + h], t, colour);
     }
 }
 

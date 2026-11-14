@@ -39,9 +39,10 @@ use libflankr_proto::common::{AgentInfo, Turn};
 use libmorph::TouchPhase;
 use libmsdf::drawlist::DrawList;
 
-use crate::agent::{fill, line_h};
+use crate::agent::{Row, Terminal, draw_row, fill, line_h, term_h};
 use crate::controls::scroll::{Scroll, Touched};
 use crate::settings::copy;
+use crate::settings::remote_details::draw_chevron;
 use crate::theme::theme;
 
 /// The most event rows under one agent.
@@ -158,7 +159,7 @@ pub fn clock(ts: &str) -> Option<String> {
 }
 
 /// One thing laid out, in content coordinates.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 struct Item {
     rect: Rect,
     texts: Vec<(String, [f32; 2], f32, [f32; 4])>,
@@ -166,7 +167,58 @@ struct Item {
     hits: Vec<(Rect, ListHit)>,
     /// What a sideways swipe on it hides, if anything.
     key: Option<Hide>,
+    /// Its glyphs, from the terminal face's symbol page (2.1).
+    glyphs: Vec<Glyph>,
+    /// Its drawn chevrons (2.4): where each points from, open (down) or
+    /// closed (right), and its ink.
+    chevrons: Vec<([f32; 2], bool, [f32; 4])>,
 }
+
+/// A glyph of a row (the active tasks overview plan, 2.1): a kind's, at
+/// the left of the row, or a mark after one of its texts.
+#[derive(Clone, Debug, PartialEq)]
+struct Glyph {
+    text: String,
+    at: [f32; 2],
+    px: f32,
+    colour: [f32; 4],
+    /// Drawn after the row's text of this index, where the face puts its
+    /// end, rather than at `at[0]`.
+    after: Option<usize>,
+}
+
+/// The kinds of row (the active tasks overview plan, 2.1), each drawn
+/// with its glyph from the terminal face's symbol page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    /// A plan from the planning plugin: ☑.
+    Plan,
+    /// One of a pane's subagents: ⑂.
+    Subagent,
+    /// The policy's autocontinue on a plan's task: ↻.
+    Autocontinue,
+    /// An agent's own goal: ◎.
+    Goal,
+}
+
+impl Kind {
+    /// Its glyph.
+    pub fn glyph(self) -> &'static str {
+        match self {
+            Kind::Plan => crate::titlebar::PLANS_GLYPH,
+            Kind::Subagent => "\u{2442}",
+            Kind::Autocontinue => "\u{21bb}",
+            Kind::Goal => "\u{25ce}",
+        }
+    }
+}
+
+/// The column a kind's glyph takes at the left of a row, in points.
+const KIND_W: f32 = 20.0;
+/// The gap before a mark after a text, in points.
+const MARK_GAP: f32 = 6.0;
+/// The chevron's column at the left of a collapsible row, in points.
+const CHEVRON_W: f32 = 18.0;
 
 /// What a swipe hides (the 2026-11-13 01:07 EST amendment, items 2 and 3).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -470,6 +522,7 @@ impl PlanList {
                 fills: Vec::new(),
                 hits: Vec::new(),
                 key: None,
+                ..Default::default()
             });
             y += pull_h;
         }
@@ -491,6 +544,7 @@ impl PlanList {
                 fills: Vec::new(),
                 hits: vec![(Rect::new(0.0, y, w, h), ListHit::Settings)],
                 key: None,
+                ..Default::default()
             });
             y += h;
         }
@@ -522,6 +576,7 @@ impl PlanList {
                 fills: Vec::new(),
                 hits: Vec::new(),
                 key: None,
+                ..Default::default()
             });
             y += h;
         }
@@ -608,6 +663,7 @@ impl PlanList {
                 fills: Vec::new(),
                 hits: vec![(Rect::new(0.0, y, w, h), ListHit::ShowHidden)],
                 key: None,
+                ..Default::default()
             });
             y += h;
         }
@@ -682,8 +738,21 @@ impl PlanList {
             let r = Rect::new(w - (GLYPH_W + PAD) * s, y + 6.0 * s, GLYPH_W * s, 28.0 * s);
             (r, p.autocontinue, p.path.clone())
         });
-        let title_w =
-            w - 2.0 * PAD * s - glyph.as_ref().map_or(0.0, |(r, _, _)| r.w + 8.0 * s) - 48.0 * s;
+        // A plan's row starts with ☑, and its title ends in ↻ while its
+        // task's autocontinue is on and ◎ while an agent's goal names it
+        // (the active tasks overview plan, 2.1 item 1).
+        let marks = g
+            .plan
+            .as_ref()
+            .map(|p| plan_marks(p, g))
+            .unwrap_or_default();
+        let lead = if g.plan.is_some() { KIND_W * s } else { 0.0 };
+        let title_w = w
+            - 2.0 * PAD * s
+            - lead
+            - marks.len() as f32 * (TITLE_PT + MARK_GAP) * s
+            - glyph.as_ref().map_or(0.0, |(r, _, _)| r.w + 8.0 * s)
+            - 48.0 * s;
         let title = match &g.plan {
             Some(p) => p
                 .title
@@ -691,12 +760,35 @@ impl PlanList {
                 .unwrap_or_else(|| p.path.rsplit('/').next().unwrap_or("").to_string()),
             None => copy::TASKS_NOT_ON_A_PLAN.text.to_string(),
         };
+        let mut glyphs = Vec::new();
+        if g.plan.is_some() {
+            glyphs.push(Glyph {
+                text: Kind::Plan.glyph().to_string(),
+                at: [PAD * s, y + 4.0 * s],
+                px: TITLE_PT * s,
+                colour: theme().fg,
+                after: None,
+            });
+        }
         texts.push((
             ellipsis(&title, title_w, TITLE_PT * s),
-            [PAD * s, y + 4.0 * s],
+            [PAD * s + lead, y + 4.0 * s],
             TITLE_PT * s,
             theme().fg,
         ));
+        let mut after = String::new();
+        for k in marks {
+            glyphs.push(Glyph {
+                text: format!("{after}{}", k.glyph()),
+                at: [PAD * s + lead, y + 4.0 * s],
+                px: TITLE_PT * s,
+                colour: theme().fg,
+                after: Some(0),
+            });
+            // A second mark after the first, a cell on.
+            after.push(' ');
+            after.push(' ');
+        }
         // The waiting marks: amber confirmations, blue questions.
         let (confirms, questions) = self.waiting(g);
         let mut mx = w - PAD * s - glyph.as_ref().map_or(0.0, |(r, _, _)| r.w + 8.0 * s);
@@ -719,7 +811,7 @@ impl PlanList {
         if let Some(p) = &g.plan {
             texts.push((
                 header_line(p, g),
-                [PAD * s, y + 22.0 * s],
+                [PAD * s + lead, y + 22.0 * s],
                 DIM_PT * s,
                 header_colour(p),
             ));
@@ -754,6 +846,8 @@ impl PlanList {
             fills,
             hits,
             key: hide,
+            glyphs,
+            ..Default::default()
         }
     }
 
@@ -773,22 +867,21 @@ impl PlanList {
         } else {
             p.name.clone()
         };
-        let mark = if self.folded.contains(key) {
-            "\u{25b8}"
-        } else {
-            "\u{25be}"
-        };
+        // The drawn chevron, right while folded and down while open (2.4).
+        let open = !self.folded.contains(key);
         Item {
             rect,
             texts: vec![(
-                ellipsis(&format!("{mark} {name}"), w - 2.0 * PAD * s, LINE_PT * s),
-                [PAD * s, y + (h - line_h(LINE_PT * s)) * 0.5],
+                ellipsis(&name, w - 2.0 * PAD * s - CHEVRON_W * s, LINE_PT * s),
+                [(PAD + CHEVRON_W) * s, y + (h - line_h(LINE_PT * s)) * 0.5],
                 LINE_PT * s,
                 theme().accent,
             )],
             fills: vec![(Rect::new(0.0, y, w, h), theme().card, 0.0)],
             hits: vec![(rect, ListHit::Fold(key.to_string()))],
             key: None,
+            chevrons: vec![([PAD * s + 6.0 * s, y + h * 0.5], open, theme().accent)],
+            ..Default::default()
         }
     }
 
@@ -797,16 +890,21 @@ impl PlanList {
         let s = self.s;
         let x = (PAD + INDENT) * s;
         let mut texts = Vec::new();
+        let mut glyphs = Vec::new();
         let mut at = y;
         for (a, _) in &g.agents {
             for c in a.children.iter().filter(|c| !c.finished) {
+                // ⑂, then its words (2.1 item 3).
+                glyphs.push(Glyph {
+                    text: Kind::Subagent.glyph().to_string(),
+                    at: [x, at + 2.0 * s],
+                    px: LINE_PT * s,
+                    colour: theme().fg,
+                    after: None,
+                });
                 texts.push((
-                    ellipsis(
-                        &format!("\u{21b3} {}", c.short),
-                        w - x - PAD * s,
-                        LINE_PT * s,
-                    ),
-                    [x, at + 2.0 * s],
+                    ellipsis(&c.short, w - x - KIND_W * s - PAD * s, LINE_PT * s),
+                    [x + KIND_W * s, at + 2.0 * s],
                     LINE_PT * s,
                     theme().fg,
                 ));
@@ -819,6 +917,8 @@ impl PlanList {
             fills: Vec::new(),
             hits: Vec::new(),
             key: None,
+            glyphs,
+            ..Default::default()
         }
     }
 
@@ -911,6 +1011,7 @@ impl PlanList {
             fills,
             hits: vec![(rect, ListHit::Agent(a.pane_id.clone()))],
             key: None,
+            ..Default::default()
         }
     }
 
@@ -1105,6 +1206,7 @@ impl PlanList {
                 fills,
                 hits,
                 key: Some(Hide::Event(key)),
+                ..Default::default()
             });
             y += h;
         }
@@ -1267,7 +1369,10 @@ impl PlanList {
         moved
     }
 
-    pub fn draw(&self, list: &mut DrawList, ctx: &DrawContext) {
+    /// Draws the list; its glyphs in the terminal face when it is given
+    /// (2.1), else in the context's font.
+    pub fn draw(&self, list: &mut DrawList, ctx: &DrawContext, term: Option<&Terminal>) {
+        let s = self.s;
         let top = self.viewport.y - self.scroll.offset();
         let (vy, vh) = (self.viewport.y, self.viewport.h);
         for item in &self.items {
@@ -1285,6 +1390,35 @@ impl PlanList {
                 }
                 ctx.draw_text(list, text, [at[0], ty], *px, *colour);
             }
+            for g in &item.glyphs {
+                let ty = g.at[1] + top;
+                if ty < vy - line_h(g.px) * 0.5 || ty > vy + vh {
+                    continue;
+                }
+                let x = match g.after.and_then(|i| item.texts.get(i)) {
+                    Some((text, at, px, _)) => at[0] + ctx.text_advance(text, *px) + MARK_GAP * s,
+                    None => g.at[0],
+                };
+                let row = Row {
+                    text: g.text.clone(),
+                    x: 0.0,
+                    y: 0.0,
+                    px: g.px,
+                    color: g.colour,
+                    mono: true,
+                };
+                // The face's line sits as the text's does.
+                let dy = (line_h(g.px) - term_h(g.px)) * 0.5;
+                let dy = if term.is_some() { dy } else { 0.0 };
+                draw_row(list, ctx, term, &row, [x, ty + dy]);
+            }
+            for (at, open, colour) in &item.chevrons {
+                let c = [at[0], at[1] + top];
+                if c[1] < vy || c[1] > vy + vh {
+                    continue;
+                }
+                draw_chevron(list, c, *open, s, *colour);
+            }
         }
     }
 
@@ -1293,6 +1427,22 @@ impl PlanList {
         self.items
             .iter()
             .flat_map(|i| i.texts.iter().map(|t| t.0.clone()))
+            .collect()
+    }
+
+    /// The glyphs laid out, top to bottom (tests).
+    pub fn glyphs(&self) -> Vec<String> {
+        self.items
+            .iter()
+            .flat_map(|i| i.glyphs.iter().map(|g| g.text.trim().to_string()))
+            .collect()
+    }
+
+    /// The chevrons laid out, top to bottom: open (down) or not (tests).
+    pub fn chevrons(&self) -> Vec<bool> {
+        self.items
+            .iter()
+            .flat_map(|i| i.chevrons.iter().map(|c| c.1))
             .collect()
     }
 
@@ -1446,6 +1596,22 @@ fn agent_label(a: &AgentInfo, link: Option<&PolicyAgentLink>) -> String {
     }
 }
 
+/// The marks after a plan's title (2.1 item 1): ↻ while its task's
+/// autocontinue is on, ◎ while an agent's goal names it.
+fn plan_marks(p: &PolicyPlanGroup, g: &PlanGroup) -> Vec<Kind> {
+    let mut marks = Vec::new();
+    if p.task && p.autocontinue {
+        marks.push(Kind::Autocontinue);
+    }
+    if g.agents
+        .iter()
+        .any(|(_, l)| l.as_ref().is_some_and(|l| l.linked_by == "goal"))
+    {
+        marks.push(Kind::Goal);
+    }
+    marks
+}
+
 fn header_colour(p: &PolicyPlanGroup) -> [f32; 4] {
     if p.task && !p.armed {
         theme().accent
@@ -1529,7 +1695,8 @@ mod tests {
         // row in its stage, its subagents, and no agent row.
         let l = list();
         let t = l.texts();
-        assert_eq!(t[0], "\u{25be} flankr", "{t:?}");
+        assert_eq!(t[0], "flankr", "{t:?}");
+        assert!(l.chevrons()[0], "open: the chevron points down");
         let a = t.iter().position(|x| x == "Plan policy agent").unwrap();
         let b = t.iter().position(|x| x == "Active plans").unwrap();
         assert!(
@@ -1547,7 +1714,7 @@ mod tests {
             t.contains(&"Draft \u{b7} claude \u{b7} 3 open questions".to_string()),
             "{t:?}"
         );
-        assert!(t.contains(&"\u{21b3} overview screen".to_string()), "{t:?}");
+        assert!(t.contains(&"overview screen".to_string()), "{t:?}");
         assert!(!t.iter().any(|x| x.contains("done one")), "finished");
         assert!(
             !t.iter().any(|x| x.starts_with("Claude p1")),
@@ -1598,7 +1765,7 @@ mod tests {
             t.contains(&"Draft \u{b7} 3 open questions".to_string()),
             "{t:?}"
         );
-        assert!(!t.iter().any(|x| x.starts_with('\u{21b3}')), "no children");
+        assert!(!l.glyphs().contains(&"\u{2442}".to_string()), "no children");
         // A row with no agent folds.
         assert!(
             l.hits()
@@ -1617,16 +1784,16 @@ mod tests {
         let mut l = list();
         l.set_overview(Some(o), Grouping::ByPlan);
         let first = |l: &PlanList| l.texts()[0].clone();
-        assert_eq!(first(&l), "\u{25be} flankr", "p1 moved most recently");
+        assert_eq!(first(&l), "flankr", "p1 moved most recently");
         // A finger down; then p2 moves more recently.
         l.touch(9, TouchPhase::Started, 5.0, 2000.0, Duration::ZERO);
         l.touch(9, TouchPhase::Cancelled, 5.0, 2000.0, Duration::ZERO);
         let mut agents = l.agents.clone();
         agents[1].idle_ms = Some(10);
         l.set_agents(&agents);
-        assert_eq!(first(&l), "\u{25be} flankr", "kept under the finger");
+        assert_eq!(first(&l), "flankr", "kept under the finger");
         l.tick(RESORT_AFTER);
-        assert_eq!(first(&l), "\u{25be} other");
+        assert_eq!(first(&l), "other");
     }
 
     #[test]
@@ -1660,7 +1827,8 @@ mod tests {
             !l.texts().contains(&"Plan policy agent".to_string()),
             "folded"
         );
-        assert!(l.texts().contains(&"\u{25b8} flankr".to_string()));
+        assert!(l.texts().contains(&"flankr".to_string()));
+        assert!(!l.chevrons()[0], "folded: the chevron points right");
         assert!(l.texts().contains(&"Not on a plan".to_string()));
     }
 
@@ -1903,5 +2071,70 @@ mod tests {
                 path: path.clone(),
                 on: false
             }));
+    }
+
+    /// The active tasks overview plan, 2.1 and step 1: each kind's glyph
+    /// is on the terminal face's symbol page, so no missing-glyph box.
+    #[test]
+    fn every_kind_glyph_is_on_the_symbol_page() {
+        use libmsdf::font::{FontAtlas, NOTO_SANS_MONO_ATLAS, TERMINAL_SYMBOLS_ATLAS};
+        use libmsdf::font::{GlyphStyle, TerminalShaper, TerminalSource};
+        let text = FontAtlas::from_bytes(NOTO_SANS_MONO_ATLAS).expect("parses");
+        let page = FontAtlas::from_bytes(TERMINAL_SYMBOLS_ATLAS).expect("parses");
+        let shaper = TerminalShaper::new(&text, &page).expect("the atlases agree");
+        let kinds = [Kind::Plan, Kind::Subagent, Kind::Autocontinue, Kind::Goal];
+        assert_eq!(
+            kinds.map(Kind::glyph),
+            ["\u{2611}", "\u{2442}", "\u{21bb}", "\u{25ce}"]
+        );
+        for k in kinds {
+            let line = shaper.line(k.glyph(), GlyphStyle::Regular);
+            assert!(
+                line.segments
+                    .iter()
+                    .all(|g| g.source == TerminalSource::Symbols
+                        && g.run.glyphs.iter().all(|x| x.glyph_id != 0)),
+                "{k:?} is on the symbol page"
+            );
+        }
+    }
+
+    /// 2.1 items 1 and 3: ☑ leads each plan's row, ⑂ each subagent's; ↻
+    /// follows a task's title while its autocontinue is on, ◎ a plan an
+    /// agent's goal names; no ▸, ▾ or ↳ anywhere.
+    #[test]
+    fn each_row_starts_with_its_kind() {
+        let l = list();
+        let g = l.glyphs();
+        assert_eq!(
+            g,
+            vec!["\u{2611}", "\u{21bb}", "\u{2442}", "\u{2611}"],
+            "the task's ☑ and ↻, its subagent's ⑂, the draft's ☑"
+        );
+        let mut o = overview();
+        o.plans[0].autocontinue = false;
+        o.plans[1].agents[0].linked_by = "goal".into();
+        let mut l = list();
+        l.set_overview(Some(o.clone()), Grouping::ByPlan);
+        assert_eq!(
+            l.glyphs(),
+            vec!["\u{2611}", "\u{2442}", "\u{2611}", "\u{25ce}"],
+            "no ↻ with autocontinue off; ◎ for the goal's plan"
+        );
+        // Both marks when both hold.
+        o.plans[0].autocontinue = true;
+        o.plans[0].agents[0].linked_by = "goal".into();
+        l.set_overview(Some(o), Grouping::ByPlan);
+        assert_eq!(&l.glyphs()[..3], ["\u{2611}", "\u{21bb}", "\u{25ce}"]);
+        for t in l.texts() {
+            assert!(
+                !t.contains(['\u{25b8}', '\u{25be}', '\u{21b3}']),
+                "no character chevron or arrow: {t:?}"
+            );
+        }
+        // Drawn: the chevron's two arms are lines, the glyphs in the face.
+        let mut dl = DrawList::new();
+        l.draw(&mut dl, &DrawContext::default(), None);
+        assert!(!dl.instances.is_empty());
     }
 }

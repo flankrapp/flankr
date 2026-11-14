@@ -449,3 +449,12 @@ These changes came before the app had version numbers.
 
 **Changed**
 - In the plans list (the ☑ menu and All plans…), each plan's small date and number are now one "10/28 04": the date, then the plan's number for that day with its leading zero, as in its file name. Before, the number came first on its own ("4  10/28") and read like a position in the list. A plan without a number shows just its date.
+
+## 0.7.30 — 2026-11-14
+
+**Changed**
+- In Active tasks, each plan's row starts with ☑ and each subagent's line with ⑂ (in place of ↳), so you can tell them apart at a glance.
+- A plan's title ends in ↻ while its task's autocontinue is on, and in ◎ while an agent's own goal (Claude Code's goal) names that plan; both show when both hold.
+
+**Fixed**
+- A project's name in Active tasks no longer starts with a missing-glyph box: a drawn chevron points right while the project is folded and down while it is open.
