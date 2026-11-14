@@ -21,7 +21,7 @@ sessions, keys and turns) and [flankr-audio](../../crates/flankr-audio)
 
 The app's approvals and answers reach an agent as keyboard input that the
 daemon types into its terminal; see
-[Use at your own risk](../../README.md#use-at-your-own-risk) in the main
+[Understanding the Risks](../../README.md#understanding-the-risks) in the main
 README.
 
 ## Building and running
