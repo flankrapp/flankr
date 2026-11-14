@@ -759,3 +759,20 @@ plan that covers question cards.
 The report headed "2026-11-13 09:50 EST — Owner: an agent's yes/no
 questions don't stay as question cards" was typed with the wrong time;
 the clock said 09:47 EST when it was written.
+
+## 2026-11-14 13:58 EST — Owner: the plans dropdown's number reads as a list index
+
+Device: Galaxy S23 Ultra (app 0.7.27).
+
+**Report.** "the plans listed in the checkbox dropdown, the date is correct
+but the number reads as an order or list index, not the daily NN the small
+numbers should be MM/DD NN with leading 0 like the filename".
+
+**Seen** (the code). The ☑ popup's plan rows put the plan's NN in its own
+first column, before the date, with the leading zero dropped
+(`apps/companion/src/plugins/planning.rs`, `name_nn` parses it to a
+number): a plan named `20261028_04_…` shows as `4  10/28`.
+
+**In hand.** Handed to a subagent in the `yesno-cards` worktree: show it
+as one small `10/28 04`, the date then the two-digit NN as in the file
+name, recorded as an amendment to the plan that covers the plan table.
