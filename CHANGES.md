@@ -5000,3 +5000,26 @@ Plans: the active plans home view plan (20261112_03), its 2026-11-13
    long transcript reads the whole file once, off the async threads (a
    373 MB transcript took about 5 s in a debug build), and later reads
    only what was added.
+
+## 2026-11-14 15:42 EST — Active tasks as the overview: approved, starting
+
+Plan: the active tasks overview plan (20261114_01). The owner approved it
+on 2026-11-14 with the words "approve both, build and push to s23". Its
+open questions get no answers with that approval; it is built as it
+stands: the title's arrow opens the main agent's turns view, the
+inactive threshold is 10 minutes, and only Claude Code's timer and goal
+are read. Steps, in order, one crate per commit:
+
+1. companion: the kind glyphs, the marks after a plan's title, and the
+   drawn chevron on the project's title (app 0.7.30). The plan's status,
+   immutable marker and README row go in this commit.
+2. libflankr_proto 0.5.16: `working` and `last_activity` on
+   `AgentInfo` and `ChildInfo`; flankr-companion 0.8.16 passing them
+   through; flankr (daemon 0.7.17) reading the pane's timer, the open
+   tool call and the subagent rule, with its `UPDATES.md` entry.
+3. companion: the shared spinner on a working row (app 0.7.31).
+4. companion: the **N inactive** section (app 0.7.32).
+5. companion: the arrow to the project's main agent (app 0.7.33).
+
+App bumps may be shared where steps land together (FLANKR RULE 1.4). The
+device check on the S23 is left for the lead.
