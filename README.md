@@ -4,21 +4,25 @@
 bridge for the `herdr` terminal multiplexer. See [AGENTS.md](AGENTS.md) for
 the architecture and [PROMPT.md](PROMPT.md) for the runtime system prompt.
 
-## Use at your own risk
+## Understanding the Risks
 
-flankr sends your approvals and answers to an agent as keyboard input,
-typed into the agent's terminal pane through herdr. The daemon finds where
-that input goes heuristically, from the text on screen, so it can land in
-the wrong place. Approving or answering through flankr is the same as
-typing it yourself, and what the agent does next is yours to check. flankr
-is licensed under Apache-2.0 and provided "AS IS", without warranties or
-conditions of any kind; sections 7 and 8 of [LICENSE](LICENSE) set out the
-disclaimer of warranty and the limits on liability.
+flankr works by sending your approvals and answers to an agent as keyboard
+input, typed directly into the agent's terminal pane via herdr. To do this,
+the daemon uses a heuristic approach, identifying the correct input location
+based on the text currently on the screen. Because of this method, there is
+a possibility that the input might occasionally land in the wrong place.
 
-## Licence
+Please keep in mind that approving or answering through flankr is
+functionally equivalent to typing the input yourself. It remains your
+responsibility to verify the agent's subsequent actions.
 
-flankr is licensed under the Apache License, Version 2.0: see
-[LICENSE](LICENSE).
+## License and Disclaimer
+
+flankr is provided under the Apache License, Version 2.0 (see
+[LICENSE](LICENSE) for full details). It is provided "AS IS," without any
+warranties or conditions of any kind. For complete information regarding
+the disclaimer of warranty and limitations of liability, please refer to
+[sections 7 and 8 of the LICENSE](LICENSE).
 
 - [libherdr_term](crates/libherdr_term/README.md) compiles code generated
   from herdr's source, which is also Apache-2.0. Its README says exactly
