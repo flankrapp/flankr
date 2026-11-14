@@ -159,6 +159,77 @@ pub fn goal_of(
     }
 }
 
+/// The most files a [`GoalCache`] keeps scans of before it starts again.
+const CACHE_MAX: usize = 1024;
+
+/// Goals for `agents.list` (docs/design/20261114_01_ACTIVE_TASKS_OVERVIEW_PLAN.md,
+/// 2.1 item 2), never waited for: a session whose files have lines not
+/// yet read is read on from where it stopped on a thread of its own, and
+/// the goal known so far is given meanwhile (the first read of a long
+/// transcript takes seconds).
+#[derive(Debug, Default)]
+pub struct GoalCache {
+    inner: std::sync::Arc<std::sync::Mutex<CacheInner>>,
+}
+
+#[derive(Debug, Default)]
+struct CacheInner {
+    scans: std::collections::HashMap<PathBuf, GoalScan>,
+    /// Sessions being read now, by their newest file.
+    reading: std::collections::HashSet<PathBuf>,
+}
+
+impl GoalCache {
+    /// The goal of the session in `files` (oldest first) as read so far;
+    /// the files are read on in the background when they grew.
+    pub fn current(&self, files: &[PathBuf]) -> Option<String> {
+        let key = files.last()?.clone();
+        let mut inner = self.inner.lock().unwrap();
+        let behind = files.iter().any(|f| {
+            let len = std::fs::metadata(f).map_or(0, |m| m.len());
+            inner.scans.get(f).is_none_or(|s| s.offset != len)
+        });
+        if behind && inner.reading.insert(key.clone()) {
+            if inner.scans.len() > CACHE_MAX {
+                inner.scans.clear();
+            }
+            let mut scans: std::collections::HashMap<PathBuf, GoalScan> = files
+                .iter()
+                .filter_map(|f| Some((f.clone(), inner.scans.get(f)?.clone())))
+                .collect();
+            let files = files.to_vec();
+            let shared = std::sync::Arc::clone(&self.inner);
+            std::thread::spawn(move || {
+                goal_of(&files, &mut scans);
+                let mut inner = shared.lock().unwrap();
+                inner.scans.extend(scans);
+                inner.reading.remove(&key);
+            });
+        }
+        known(files, &inner.scans)
+    }
+
+    /// Whether any session is being read now (tests).
+    pub fn busy(&self) -> bool {
+        !self.inner.lock().unwrap().reading.is_empty()
+    }
+}
+
+/// The goal `scans` hold for `files`, read no further.
+fn known(
+    files: &[PathBuf],
+    scans: &std::collections::HashMap<PathBuf, GoalScan>,
+) -> Option<String> {
+    let newest = files
+        .iter()
+        .filter_map(|f| scans.get(f)?.last())
+        .next_back()?;
+    match newest {
+        GoalLine::Set(text) => Some(text.clone()),
+        GoalLine::Ended => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,6 +277,41 @@ mod tests {
         let side = r#"{"type":"user","isSidechain":true,"message":{"content":"Goal set: q"}}"#;
         assert_eq!(goal_line(side.as_bytes()), None, "a subagent's");
         assert_eq!(goal_line(b"{\"type\":\"user\"}"), None);
+    }
+
+    /// The active tasks overview plan, 2.1 item 2: the cache gives what
+    /// it has read and reads the rest in the background.
+    #[test]
+    fn the_cache_reads_in_the_background() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.jsonl");
+        std::fs::write(&path, format!("{SET}\n")).unwrap();
+        let cache = GoalCache::default();
+        let files = vec![path.clone()];
+        let settle = |cache: &GoalCache| {
+            for _ in 0..200 {
+                if !cache.busy() {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            panic!("never read");
+        };
+        let first = cache.current(&files);
+        settle(&cache);
+        let goal = Some("build the plan 20261101_01_WIDGET_PLAN".to_string());
+        assert!(first.is_none() || first == goal, "what it had read");
+        assert_eq!(cache.current(&files), goal);
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        writeln!(f, "{MET}").unwrap();
+        f.flush().unwrap();
+        cache.current(&files);
+        settle(&cache);
+        assert_eq!(cache.current(&files), None, "met");
+        assert_eq!(cache.current(&[]), None);
     }
 
     #[test]

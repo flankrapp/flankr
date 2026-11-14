@@ -694,6 +694,8 @@ pub(crate) fn children_at(at: &Located, now: SystemTime) -> Vec<Child> {
             kind: field("agentType").unwrap_or_default(),
             background: field("requestShape").as_deref() == Some("background"),
             finished: marked || !recent,
+            marked_finished: marked,
+            modified: Some(modified),
             started_by: field("toolUseId"),
             worktree: field("worktreeBranch"),
             started: first_entry_secs(&path),

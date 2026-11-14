@@ -26,6 +26,7 @@ pub mod proto_wire;
 pub mod redact;
 pub mod sections;
 pub mod turn;
+pub mod working;
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -604,6 +605,9 @@ pub struct Sessions {
     /// modification time and length and whether it was finished then: a
     /// list reads only the transcripts that changed.
     child_turns: Mutex<HashMap<PathBuf, ChildTurn>>,
+    /// Each Claude Code session's goal as read so far (the active tasks
+    /// overview plan, 2.1 item 2).
+    pub goals: goal::GoalCache,
     /// The newest file each pane was last found continued to, so each
     /// switch is logged once.
     followed: Mutex<HashMap<String, PathBuf>>,
@@ -611,7 +615,7 @@ pub struct Sessions {
 
 /// A subagent's turn as read from its transcript at a modification time
 /// and length, finished or not.
-type ChildTurn = (Option<SystemTime>, u64, bool, turn::Turn);
+type ChildTurn = (Option<SystemTime>, u64, bool, turn::Turn, bool);
 
 /// The most panes [`Sessions`] remembers a followed transcript for.
 const FOLLOWED_MAX: usize = 1024;
@@ -666,6 +670,7 @@ impl Sessions {
                 .join("sessions"),
             suggestions: Arc::new(SuggestionStore::shipped()),
             child_turns: Mutex::new(HashMap::new()),
+            goals: goal::GoalCache::default(),
             followed: Mutex::new(HashMap::new()),
         }
     }
@@ -743,6 +748,7 @@ impl Sessions {
         at: &Located,
     ) -> Vec<libflankr_proto::common::ChildInfo> {
         use libflankr_proto::common::{CHILDREN_MAX, ChildInfo, TURN_TEXT_MAX};
+        let now = SystemTime::now();
         let mut children = reader.children(at);
         // Stable: newest first within each.
         children.sort_by_key(|c| c.finished);
@@ -751,10 +757,21 @@ impl Sessions {
             .into_iter()
             .map(|c| {
                 let description = cut(&redact::redact(&c.description), TURN_TEXT_MAX);
+                let (turn, open_call) = match self.child_turn(reader, &c) {
+                    Some((t, open)) => (Some(t), open),
+                    None => (None, false),
+                };
+                // Working (the active tasks overview plan, 2.2 item 3):
+                // not marked finished, and a tool call open or a write
+                // within SUBAGENT_LIVE.
+                let working =
+                    !c.marked_finished && working::transcript_working(open_call, c.modified, now);
                 ChildInfo {
                     id: c.id.clone(),
                     short: children::short_name(&description, &c.kind),
-                    turn: self.child_turn(reader, &c),
+                    turn,
+                    working,
+                    last_activity: c.modified.map(working::rfc3339),
                     description,
                     kind: c.kind,
                     background: c.background,
@@ -766,16 +783,18 @@ impl Sessions {
             .collect()
     }
 
-    /// The turn of subagent `child`, read again only when its transcript
-    /// or its finishing changed since last read.
-    fn child_turn(&self, reader: &dyn SessionReader, child: &Child) -> Option<turn::Turn> {
+    /// The turn of subagent `child`, and whether its transcript ends in
+    /// an open tool call, read again only when its transcript or its
+    /// finishing changed since last read.
+    fn child_turn(&self, reader: &dyn SessionReader, child: &Child) -> Option<(turn::Turn, bool)> {
         let modified = reader.modified(&child.located);
         let len = std::fs::metadata(&child.located.path).ok()?.len();
         let key = (modified, len, child.finished);
-        if let Some((m, l, f, turn)) = self.child_turns.lock().unwrap().get(&child.located.path)
+        if let Some((m, l, f, turn, open)) =
+            self.child_turns.lock().unwrap().get(&child.located.path)
             && (*m, *l, *f) == key
         {
-            return Some(turn.clone());
+            return Some((turn.clone(), *open));
         }
         let read = reader
             .read_back(&child.located, &|items: &[Item]| {
@@ -785,15 +804,16 @@ impl Sessions {
             })
             .ok()?;
         let turn = turn::turn(&read.items, &child_status(child), child.located.quiet());
+        let open = working::open_tool_call(&read.items);
         let mut turns = self.child_turns.lock().unwrap();
         if turns.len() >= CHILD_TURNS_MAX {
             turns.clear();
         }
         turns.insert(
             child.located.path.clone(),
-            (modified, len, child.finished, turn.clone()),
+            (modified, len, child.finished, turn.clone(), open),
         );
-        Some(turn)
+        Some((turn, open))
     }
 
     /// The session of the agent in `pane`, if it has a reader and a file.
@@ -993,6 +1013,9 @@ pub struct Peeked {
     /// The status the session was read with: herdr's for the pane, a
     /// subagent's own ([`child_status`]).
     pub status: libherdr::protocol::AgentStatus,
+    /// The entries read end in a tool call with no result yet (the active
+    /// tasks overview plan, 2.2 item 2).
+    pub open_call: bool,
 }
 
 impl Peeked {
@@ -1066,6 +1089,7 @@ impl Sessions {
             .map(|i| i.pos);
         let skip = read.items.len().saturating_sub(n);
         Some(Peeked {
+            open_call: working::open_tool_call(&read.items),
             status: pane.status.clone(),
             located: read.located,
             entries: read.items[skip..].iter().map(Item::entry).collect(),
@@ -1241,6 +1265,60 @@ pub(crate) mod test_support {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    /// The active tasks overview plan, step 2's **Done when:** a subagent
+    /// with an open tool call is working after 60 s without a write; once
+    /// its result is in, or its meta says finished, it is not.
+    #[test]
+    fn a_subagent_with_an_open_tool_call_works_on_after_a_minute() {
+        let home = tempfile::tempdir().unwrap();
+        let sessions = Sessions::with_home(home.path());
+        let dir = home.path().join(".claude/projects/-work-x");
+        let sid = "00000000-0000-4000-8000-0000000000c1";
+        let subs = dir.join(sid).join("subagents");
+        std::fs::create_dir_all(&subs).unwrap();
+        let path = dir.join(format!("{sid}.jsonl"));
+        std::fs::write(&path, "{}\n").unwrap();
+        let call = serde_json::json!({"type": "assistant", "timestamp": "2026-01-02T00:00:01.000Z",
+            "isSidechain": true, "message": {"role": "assistant", "content": [
+                {"type": "text", "text": "Running the tests."},
+                {"type": "tool_use", "id": "c1", "name": "Bash", "input": {"command": "cargo test"}}]}});
+        let child = subs.join("agent-a1.jsonl");
+        let write = |lines: &[serde_json::Value], age: u64| {
+            let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
+            std::fs::write(&child, text).unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(&child)
+                .unwrap()
+                .set_modified(SystemTime::now() - Duration::from_secs(age))
+                .unwrap();
+        };
+        let at = Located {
+            path,
+            session_id: Some(sid.to_string()),
+            matched: Matched::Id,
+            earlier: Vec::new(),
+        };
+        write(std::slice::from_ref(&call), 120);
+        let info = sessions.children_info(&sessions.claude, &at);
+        assert_eq!(info.len(), 1);
+        assert!(info[0].finished, "unwritten for 2 minutes: finished by age");
+        assert!(info[0].working, "but its tool call is open");
+        assert!(info[0].last_activity.is_some());
+        // Its result in: not working.
+        let result = serde_json::json!({"type": "user", "timestamp": "2026-01-02T00:00:09.000Z",
+            "isSidechain": true, "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "c1", "content": "ok"}]}});
+        write(&[call.clone(), result], 120);
+        assert!(!sessions.children_info(&sessions.claude, &at)[0].working);
+        // Written within the minute: working.
+        write(std::slice::from_ref(&call), 0);
+        assert!(sessions.children_info(&sessions.claude, &at)[0].working);
+        // Marked finished: not, whatever else.
+        std::fs::write(subs.join("agent-a1.meta.json"), r#"{"finished": true}"#).unwrap();
+        assert!(!sessions.children_info(&sessions.claude, &at)[0].working);
+    }
 
     /// A home with one Claude Code session in `/work/example` whose last
     /// reply ends on `question`, and its pane, idle.

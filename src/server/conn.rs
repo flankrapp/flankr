@@ -804,6 +804,12 @@ struct Listed {
     subagents_running: Option<u32>,
     summary: Option<String>,
     children: Vec<common::ChildInfo>,
+    /// The transcript ends in a tool call with no result yet.
+    open_call: bool,
+    /// When the session (or a subagent's transcript) was last written.
+    written: Option<SystemTime>,
+    /// The session's goal, as read so far.
+    goal: Option<String>,
 }
 
 /// The session of the agent in `pane`, its turn (plan 20261023_04, A4),
@@ -833,7 +839,22 @@ fn agent_session(daemon: &Daemon, pane: &agents::AgentRef, now: SystemTime) -> L
                 .latest_spoken(&peeked.located.path, line)
         })
         .and_then(|spoken| crate::sessions::turn::summary_line(&spoken));
+    let written = activity
+        .idle_ms
+        .map(|ms| now - std::time::Duration::from_millis(ms));
+    // Claude Code's goal (the active tasks overview plan, 2.1 item 2).
+    let goal = (pane.agent == "claude")
+        .then(|| {
+            let mut files = peeked.located.earlier.clone();
+            files.push(peeked.located.path.clone());
+            daemon.sessions.goals.current(&files)
+        })
+        .flatten()
+        .map(|g| crate::sessions::cut(&crate::sessions::redact::redact(&g), common::TURN_TEXT_MAX));
     Listed {
+        open_call: peeked.open_call,
+        written,
+        goal,
         session: Some(common::AgentSessionInfo {
             session_id: peeked.located.session_id,
             matched: peeked.located.matched.into(),
@@ -845,6 +866,88 @@ fn agent_session(daemon: &Daemon, pane: &agents::AgentRef, now: SystemTime) -> L
         summary,
         children,
     }
+}
+
+/// Each pane's timer verdict for `agents.list` (the active tasks overview
+/// plan, 2.2 item 1): the panes herdr says are working have their last
+/// [`TIMER_LINES`](crate::sessions::working::TIMER_LINES) visible lines
+/// read, at most once per
+/// [`READ_EVERY`](crate::sessions::working::READ_EVERY), all at once; a
+/// pane read sooner keeps its last verdict. The rest keep only when their
+/// timer last advanced.
+async fn read_timers(
+    daemon: &Daemon,
+    agents: &[crate::core::naming::NamedAgent],
+    now: SystemTime,
+) -> HashMap<String, (crate::sessions::working::Timer, Option<SystemTime>)> {
+    use crate::sessions::working::{TIMER_LINES, Timer, timer_secs};
+    use libherdr::protocol::{AgentStatus, ReadSource};
+    let timers = &daemon.timers;
+    let live: HashSet<String> = agents.iter().map(|n| n.agent.pane_id.clone()).collect();
+    timers.retain(&live);
+    let working: Vec<&str> = agents
+        .iter()
+        .filter(|n| n.agent.status == AgentStatus::Working && n.agent.agent != "shell")
+        .map(|n| n.agent.pane_id.as_str())
+        .collect();
+    let due: Vec<&str> = working
+        .iter()
+        .copied()
+        .filter(|p| timers.due(p, now))
+        .collect();
+    let reads = futures_util::future::join_all(due.iter().map(|pane| async move {
+        let read = daemon
+            .client
+            .inspect_pane_from(pane, TIMER_LINES, ReadSource::Visible)
+            .await;
+        (*pane, read)
+    }))
+    .await;
+    for (pane, read) in reads {
+        match read {
+            Ok(v) => {
+                let secs = agents::pane_text(&v).and_then(timer_secs);
+                timers.observe(pane, secs, now);
+            }
+            Err(e) => log::debug!("[working] pane={pane} read failed: {e}"),
+        }
+    }
+    let mut out = HashMap::new();
+    for n in agents {
+        let pane = n.agent.pane_id.as_str();
+        let verdict = if working.contains(&pane) {
+            timers.last(pane)
+        } else {
+            (Timer::Unknown, timers.idle(pane))
+        };
+        out.insert(pane.to_string(), verdict);
+    }
+    out
+}
+
+/// An agent's `working` and `last_activity` (the active tasks overview
+/// plan, 2.2 items 1, 2 and 4): working while herdr says so and its timer
+/// advanced, or with no timer while its transcript has a tool call open
+/// or was written within 60 s; last active when its timer last advanced
+/// or its session was last written, whichever is later.
+fn agent_working(
+    a: &agents::AgentRef,
+    listed: &Listed,
+    timer: Option<&(crate::sessions::working::Timer, Option<SystemTime>)>,
+    now: SystemTime,
+) -> (bool, Option<String>) {
+    use crate::sessions::working::{Timer, pane_working, rfc3339};
+    let (verdict, advanced) = timer.copied().unwrap_or((Timer::Unknown, None));
+    let herdr_working = a.status == libherdr::protocol::AgentStatus::Working;
+    let working = pane_working(
+        herdr_working,
+        verdict,
+        listed.open_call,
+        listed.written,
+        now,
+    );
+    let last = advanced.max(listed.written).map(rfc3339);
+    (working, last)
 }
 
 pub(super) async fn snapshot(conn: &Conn) -> Result<Value, ErrorObject> {
@@ -1004,12 +1107,15 @@ async fn call(
                 .filter_map(|n| n.agent.workspace_id.clone())
                 .collect();
             let trees = daemon.worktrees.of(&daemon.client, workspaces).await;
+            let timers = read_timers(daemon, &names.agents, now).await;
             let agents = names
                 .agents
                 .into_iter()
                 .map(|named| {
                     let a = named.agent;
                     let listed = agent_session(daemon, &a, now);
+                    let (working, last_activity) =
+                        agent_working(&a, &listed, timers.get(&a.pane_id), now);
                     let worktree = a
                         .workspace_id
                         .as_ref()
@@ -1044,6 +1150,9 @@ async fn call(
                         workspace_label: a.workspace_label,
                         workspace_number: a.workspace_number,
                         worktree,
+                        working,
+                        last_activity,
+                        goal: listed.goal,
                     }
                 })
                 .collect();
@@ -2061,5 +2170,65 @@ mod tests {
         assert!(peer_allowed(501, 501));
         assert!(!peer_allowed(502, 501));
         assert!(!peer_allowed(0, 501));
+    }
+
+    /// The active tasks overview plan, 2.2: what `agents.list` says of a
+    /// pane's working and when it last produced.
+    #[test]
+    fn an_agent_works_by_its_timer_else_its_transcript() {
+        use crate::sessions::working::Timer;
+        use libherdr::protocol::AgentStatus;
+        use std::time::Duration;
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000);
+        let pane = |status| agents::AgentRef {
+            pane_id: "w1:p1".into(),
+            agent: "claude".into(),
+            project: None,
+            cwd: None,
+            workspace_id: None,
+            tab_id: None,
+            tab_label: None,
+            tab_number: None,
+            workspace_label: None,
+            workspace_number: None,
+            status,
+            focused: false,
+            session: None,
+        };
+        let old = now - Duration::from_secs(600);
+        let quiet = Listed {
+            written: Some(old),
+            ..Listed::default()
+        };
+        let advanced = now - Duration::from_secs(2);
+        let busy = pane(AgentStatus::Working);
+        let (w, last) = agent_working(
+            &busy,
+            &quiet,
+            Some(&(Timer::Advancing, Some(advanced))),
+            now,
+        );
+        assert!(w, "the timer advanced");
+        assert_eq!(last, Some(crate::sessions::working::rfc3339(advanced)));
+        let (w, _) = agent_working(&busy, &quiet, Some(&(Timer::Stalled, Some(advanced))), now);
+        assert!(!w, "the timer stood still");
+        let (w, last) = agent_working(&busy, &quiet, None, now);
+        assert!(!w, "no timer, no open call, written 10 minutes ago");
+        assert_eq!(last, Some(crate::sessions::working::rfc3339(old)));
+        let open = Listed {
+            open_call: true,
+            ..Listed::default()
+        };
+        assert!(
+            agent_working(&busy, &open, None, now).0,
+            "an open tool call"
+        );
+        assert_eq!(
+            agent_working(&busy, &open, None, now).1,
+            None,
+            "nothing known"
+        );
+        let idle = pane(AgentStatus::Idle);
+        assert!(!agent_working(&idle, &open, Some(&(Timer::Advancing, None)), now).0);
     }
 }

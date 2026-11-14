@@ -309,3 +309,9 @@ These changes came before the program had version numbers.
 - With the Plan policy plugin on, a Claude Code goal that names a plan file (such as `build the plan 20261113_01_WIDGET_PLAN`) puts that agent's pane on that plan in the phone's Active tasks view, ahead of a task you chose Build on earlier for the same pane. That earlier task is kept, and shows as idle. Once the goal is met or cleared, the pane goes back to its task. The log says `linked_by=goal`.
 - A plan that is Implemented, Superseded, Retired or Consolidated is no longer shown as a plan being worked on: a pane on it moves to the plan that replaced it (its `(by …)` plan, or the plan whose `consolidates:` list names it). A Superseded, Retired or Consolidated plan is not listed at all; an Implemented one is listed only while it still has a task.
 - The step shown for a plan now also comes from what the agent says ("starting step 2", "step 3 is in", "step 2 done"), and stays until the agent names a later step.
+
+## 0.7.17 — 2026-11-14
+
+**Added**
+- The phone's agent list now says whether each agent is still producing, not only what herdr says. When the phone lists the agents, the daemon reads the last 12 visible lines of each pane herdr calls working (at most once every 2 seconds per pane) for the elapsed timer Claude Code draws, such as `(1m 23s ·`; the agent counts as working while that timer has moved on since the last read. With no timer in the pane, it counts as working while its transcript has a tool call with no result yet, or was written in the last minute. A subagent counts as working while it isn't marked finished and has a tool call open or was written in the last minute.
+- The list also gives when each agent and subagent last produced, and an agent's Claude Code goal, while one is set. A long transcript's goal is read in the background the first time, so the list never waits for it.

@@ -6,6 +6,8 @@
 //! same reader reads it and everything above the readers applies to it
 //! unchanged. Only Claude Code's reader finds children.
 
+use std::time::SystemTime;
+
 use super::Located;
 
 /// One session started from another (decision 1): Claude Code's
@@ -35,6 +37,11 @@ pub struct Child {
     /// amendment, item 5); the file's creation time when the first line
     /// has none.
     pub started: Option<u64>,
+    /// Its meta says `finished` (the active tasks overview plan, 2.2
+    /// item 3), whatever its transcript's age.
+    pub marked_finished: bool,
+    /// When its transcript was last written.
+    pub modified: Option<SystemTime>,
 }
 
 /// Words left out of a short name (the 17:47 EDT amendment, item 3):

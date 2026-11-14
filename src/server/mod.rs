@@ -117,6 +117,10 @@ pub struct Daemon {
     pub choice_answering: std::sync::Mutex<std::collections::HashSet<String>>,
     /// herdr's worktrees, for `agents.list` (plan 20261112_03).
     pub worktrees: worktrees::Worktrees,
+    /// The panes' elapsed timers as last read, for `agents.list`'s
+    /// `working` (docs/design/20261114_01_ACTIVE_TASKS_OVERVIEW_PLAN.md,
+    /// 2.2).
+    pub timers: crate::sessions::working::PaneTimers,
 }
 
 impl Daemon {
@@ -230,6 +234,7 @@ impl Daemon {
             blob,
             choice_answering: Default::default(),
             worktrees: Default::default(),
+            timers: Default::default(),
         });
         policy.set(Arc::downgrade(&daemon));
         // Each kept card summary goes on to the enabled plugins (plan
