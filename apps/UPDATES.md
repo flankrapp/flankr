@@ -465,3 +465,10 @@ These changes came before the app had version numbers.
 - In Active tasks, a row whose agent is still producing shows the drawer's spinner in place of its glyph: a plan being built, a subagent at work, an agent's goal, and an agent not on a plan. It means new turns are still coming in, not only that the agent is busy; a long tool call still counts while the agent's timer keeps running. Needs the daemon 0.7.17 or later; with an older one, the spinner follows what herdr says.
 - An agent's own goal that names no plan has its own ◎ row, with the goal's first line, under the project the agent works in (or under the agent in Not on a plan). Tap it to open that agent.
 - A subagent still working on a long tool call stays listed under its plan.
+
+## 0.7.32 — 2026-11-14
+
+**Changed**
+- In Active tasks, rows that have been quiet for more than 10 minutes fold away under an "N inactive" row at the end of each project (and of Not on a plan): plans no agent is working on, finished subagents, and agents whose turn ended. Tap it to open or close it; it starts closed each time the app starts.
+- A row never folds away while something waits on you: a question, an approval, or the plan policy asking. A row comes back out as soon as its agent starts working again or something waits on you.
+- Finished subagents are now listed too, inside "N inactive" once they've been quiet for 10 minutes. Needs the daemon 0.7.17 or later.

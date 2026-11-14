@@ -1013,3 +1013,9 @@ In implementation plan no agent works on, and a plan's open questions
 # [Copy] tasks_show
 
 - text: Show
+
+# [Copy] tasks_inactive
+
+- [#] n: how many
+- text: |
+    {{ [#] n }} inactive

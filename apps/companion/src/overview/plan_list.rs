@@ -46,6 +46,10 @@ use crate::settings::copy;
 use crate::settings::remote_details::draw_chevron;
 use crate::theme::theme;
 
+/// How long a row is quiet before it folds under **N inactive** (the
+/// active tasks overview plan, 2.3 item 2).
+pub const INACTIVE_AFTER: Duration = Duration::from_secs(10 * 60);
+
 /// The most event rows under one agent.
 pub const EVENTS_MAX: usize = 6;
 /// How long a closed event stays.
@@ -175,6 +179,28 @@ struct Item {
     chevrons: Vec<([f32; 2], bool, [f32; 4])>,
 }
 
+impl Item {
+    /// Moves it down by `dy`.
+    fn shift(&mut self, dy: f32) {
+        self.rect.y += dy;
+        for t in &mut self.texts {
+            t.1[1] += dy;
+        }
+        for f in &mut self.fills {
+            f.0.y += dy;
+        }
+        for h in &mut self.hits {
+            h.0.y += dy;
+        }
+        for g in &mut self.glyphs {
+            g.at[1] += dy;
+        }
+        for c in &mut self.chevrons {
+            c.0[1] += dy;
+        }
+    }
+}
+
 /// A glyph of a row (the active tasks overview plan, 2.1): a kind's, at
 /// the left of the row, or a mark after one of its texts.
 #[derive(Clone, Debug, PartialEq)]
@@ -290,6 +316,8 @@ pub struct PlanList {
     /// finger was down.
     order: Vec<String>,
     since_touch: Duration,
+    /// The wall clock in tests; the system's otherwise.
+    wall: Option<f64>,
     /// The spinner's clock, and the frame last drawn while one spins.
     clock: Duration,
     frame: Option<usize>,
@@ -327,6 +355,7 @@ impl PlanList {
             refreshing: None,
             order: Vec::new(),
             since_touch: RESORT_AFTER,
+            wall: None,
             clock: Duration::ZERO,
             frame: None,
         }
@@ -640,6 +669,14 @@ impl PlanList {
                     continue;
                 }
             }
+            // Each row and what goes under it, laid out from 0, and
+            // whether it is inactive (the active tasks overview plan, 2.3).
+            let mut units: Vec<(bool, Vec<Item>)> = Vec::new();
+            let mut unit = |inactive: bool, list: Vec<Item>| {
+                if !list.is_empty() {
+                    units.push((inactive, list));
+                }
+            };
             for g in &project.plans {
                 if g.plan.is_none() && g.agents.is_empty() {
                     continue;
@@ -654,64 +691,109 @@ impl PlanList {
                     }
                     back.push(p.path.clone());
                 }
-                let item = self.header(g, y, w);
-                y += item.rect.h;
-                items.push(item);
-                let key = g.plan.as_ref().map_or(String::new(), |p| p.path.clone());
-                if self.folded.contains(&key) {
-                    continue;
-                }
-                let mut rows = Vec::new();
+                let mut list = Vec::new();
+                let mut uy = 0.0;
+                let header = self.header(g, uy, w);
+                uy += header.rect.h;
+                list.push(header);
+                let fold = g.plan.as_ref().map_or(String::new(), |p| p.path.clone());
                 if g.plan.is_some() {
-                    // A plan's subagents, then its agents' events: no
-                    // agent row (the 01:52 EST amendment, items 3 and 5).
-                    let item = self.subagent_lines(g, y, w);
-                    if item.rect.h > 0.0 {
-                        y += item.rect.h;
-                        items.push(item);
-                    }
-                    for (agent, _) in &g.agents {
-                        rows.push((None, agent));
-                    }
-                } else {
-                    for (agent, link) in &g.agents {
-                        rows.push((Some(link.as_ref()), agent));
-                    }
-                }
-                for (line, agent) in rows {
-                    if let Some(link) = line {
-                        let item = self.agent_line(agent, link, y, w);
-                        y += item.rect.h;
-                        items.push(item);
-                        // Its goal under it, when no project took it.
-                        if let Some((a, goal)) =
-                            goals.iter().find(|(a, _)| a.pane_id == agent.pane_id)
-                            && !homed.contains(&a.pane_id)
-                        {
-                            let item = self.goal_line(a, goal, y, w);
-                            y += item.rect.h;
-                            items.push(item);
+                    let active = self.plan_active(g);
+                    if !self.folded.contains(&fold) {
+                        // A plan's subagents, then its agents' events: no
+                        // agent row (the 01:52 EST amendment, items 3 and
+                        // 5); an active plan's old subagents fold away.
+                        let item = self
+                            .subagent_lines(g, uy, w, |c| !active || child_active(c, self.wall()));
+                        if item.rect.h > 0.0 {
+                            uy += item.rect.h;
+                            list.push(item);
+                        }
+                        for (agent, _) in &g.agents {
+                            for item in self.event_rows(agent, uy, w) {
+                                if let Some(Hide::Event(k)) = &item.key
+                                    && self.hidden_events.contains(k)
+                                {
+                                    hidden += 1;
+                                    continue;
+                                }
+                                uy += item.rect.h;
+                                list.push(item);
+                            }
                         }
                     }
-                    for item in self.event_rows(agent, y, w) {
+                    unit(!active, list);
+                    if active && !self.folded.contains(&fold) {
+                        let old = self.subagent_lines(g, 0.0, w, |c| !child_active(c, self.wall()));
+                        if old.rect.h > 0.0 {
+                            unit(true, vec![old]);
+                        }
+                    }
+                    continue;
+                }
+                // Not on a plan: its line, then each agent as a row.
+                unit(false, list);
+                if self.folded.contains(&fold) {
+                    continue;
+                }
+                for (agent, link) in &g.agents {
+                    let mut list = Vec::new();
+                    let mut uy = 0.0;
+                    let item = self.agent_line(agent, link.as_ref(), uy, w);
+                    uy += item.rect.h;
+                    list.push(item);
+                    // Its goal under it, when no project took it.
+                    if let Some((a, goal)) = goals.iter().find(|(a, _)| a.pane_id == agent.pane_id)
+                        && !homed.contains(&a.pane_id)
+                    {
+                        let item = self.goal_line(a, goal, uy, w);
+                        uy += item.rect.h;
+                        list.push(item);
+                    }
+                    for item in self.event_rows(agent, uy, w) {
                         if let Some(Hide::Event(k)) = &item.key
                             && self.hidden_events.contains(k)
                         {
                             hidden += 1;
                             continue;
                         }
-                        y += item.rect.h;
-                        items.push(item);
+                        list.push(item);
                     }
+                    unit(!self.agent_active(agent, link.as_ref()), list);
                 }
             }
             // The project's goal rows, after its plans.
             if let Some(pr) = &project.project {
                 for (a, goal) in &goals {
                     if goal_home(a).as_deref() == Some(pr.root.as_str()) {
-                        let item = self.goal_line(a, goal, y, w);
-                        y += item.rect.h;
-                        items.push(item);
+                        let item = self.goal_line(a, goal, 0.0, w);
+                        unit(!self.agent_active(a, None), vec![item]);
+                    }
+                }
+            }
+            // The active rows, then the closed **N inactive** section.
+            let inactive = units.iter().filter(|(i, _)| *i).count();
+            for (_, list) in units.iter_mut().filter(|(i, _)| !*i) {
+                for mut item in list.drain(..) {
+                    item.shift(y);
+                    y += item.rect.h;
+                    items.push(item);
+                }
+            }
+            if inactive > 0 {
+                let ikey = format!("inactive:{}", project.key());
+                // Kept in `folded` while open: closed by default (2.3 item 4).
+                let open = self.folded.contains(&ikey);
+                let item = self.inactive_line(inactive, &ikey, open, y, w);
+                y += item.rect.h;
+                items.push(item);
+                if open {
+                    for (_, list) in units.iter_mut().filter(|(i, _)| *i) {
+                        for mut item in list.drain(..) {
+                            item.shift(y);
+                            y += item.rect.h;
+                            items.push(item);
+                        }
                     }
                 }
             }
@@ -955,14 +1037,20 @@ impl PlanList {
     }
 
     /// A plan's running subagents, one line each, under its row.
-    fn subagent_lines(&self, g: &PlanGroup, y: f32, w: f32) -> Item {
+    fn subagent_lines(
+        &self,
+        g: &PlanGroup,
+        y: f32,
+        w: f32,
+        keep: impl Fn(&ChildInfo) -> bool,
+    ) -> Item {
         let s = self.s;
         let x = (PAD + INDENT) * s;
         let mut texts = Vec::new();
         let mut glyphs = Vec::new();
         let mut at = y;
         for (a, _) in &g.agents {
-            for c in a.children.iter().filter(|c| !c.finished || child_works(c)) {
+            for c in a.children.iter().filter(|c| shown_child(c) && keep(c)) {
                 // ⑂, then its words (2.1 item 3); the spinner while it
                 // works (2.2 items 3 and 5).
                 glyphs.push(Glyph {
@@ -1042,6 +1130,81 @@ impl PlanList {
                     .then(|| (a.clone(), goal.lines().next().unwrap_or("").to_string()))
             })
             .collect()
+    }
+
+    /// The **N inactive** row (2.3): its chevron, right while closed;
+    /// a tap opens and closes it.
+    fn inactive_line(&self, n: usize, key: &str, open: bool, y: f32, w: f32) -> Item {
+        let s = self.s;
+        let h = 28.0 * s;
+        let rect = Rect::new(0.0, y, w, h);
+        Item {
+            rect,
+            texts: vec![(
+                copy::TASKS_INACTIVE
+                    .fill(None, &[("n", &n.to_string())])
+                    .trim()
+                    .to_string(),
+                [(PAD + CHEVRON_W) * s, y + (h - line_h(DIM_PT * s)) * 0.5],
+                DIM_PT * s,
+                theme().dim,
+            )],
+            hits: vec![(rect, ListHit::Fold(key.to_string()))],
+            chevrons: vec![([PAD * s + 6.0 * s, y + h * 0.5], open, theme().dim)],
+            ..Default::default()
+        }
+    }
+
+    /// The wall clock, in seconds since 1970, for `last_activity`'s age.
+    fn wall(&self) -> f64 {
+        self.wall.unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0.0, |d| d.as_secs_f64())
+        })
+    }
+
+    /// Sets the wall clock the ages are taken at (tests).
+    #[cfg(test)]
+    pub fn set_wall(&mut self, secs: f64) {
+        self.wall = Some(secs);
+        self.relayout();
+    }
+
+    /// Whether something of `a` waits on the owner (2.3 item 3): its
+    /// question, a confirmation open on its pane, or the policy's `ask`.
+    fn waits(&self, a: &AgentInfo, link: Option<&PolicyAgentLink>) -> bool {
+        question_of(a).is_some()
+            || self.confirm_panes.iter().any(|(id, p)| {
+                *p == a.pane_id && self.confirms.get(id).is_some_and(Option::is_none)
+            })
+            || link
+                .and_then(|l| l.last_decision.as_ref())
+                .is_some_and(|d| d.decision == "ask")
+            || self.events.get(&a.pane_id).is_some_and(|l| {
+                l.iter()
+                    .rev()
+                    .find_map(|e| match &e.kind {
+                        EventKind::Decision(d) => Some(d.decision == "ask"),
+                        _ => None,
+                    })
+                    .unwrap_or(false)
+            })
+    }
+
+    /// Whether `a`'s row is active (2.3 items 2 and 3): working, active
+    /// within [`INACTIVE_AFTER`], or waiting on the owner.
+    fn agent_active(&self, a: &AgentInfo, link: Option<&PolicyAgentLink>) -> bool {
+        agent_works(a)
+            || age_secs(a, self.wall()).is_some_and(|t| t <= INACTIVE_AFTER.as_secs_f64())
+            || self.waits(a, link)
+    }
+
+    /// Whether a plan's row is active: one of its agents' is.
+    fn plan_active(&self, g: &PlanGroup) -> bool {
+        g.agents
+            .iter()
+            .any(|(a, l)| self.agent_active(a, l.as_ref()))
     }
 
     fn waiting(&self, g: &PlanGroup) -> (usize, usize) {
@@ -1752,6 +1915,36 @@ pub fn agent_works(a: &AgentInfo) -> bool {
     a.working || (a.last_activity.is_none() && a.status == "working")
 }
 
+/// Seconds since `a` last produced, at `wall`: from its `last_activity`,
+/// else (an older daemon) its `idle_ms`; `None` when neither is known.
+fn age_secs(a: &AgentInfo, wall: f64) -> Option<f64> {
+    flankr_companion::policy::last_activity_secs(a)
+        .map(|t| (wall - t).max(0.0))
+        .or_else(|| a.idle_ms.map(|ms| ms as f64 / 1000.0))
+}
+
+/// Whether subagent `c` is listed at all: running, or, from a daemon that
+/// says when it last produced, finished (an older one's finished stay
+/// out, as before).
+fn shown_child(c: &ChildInfo) -> bool {
+    !c.finished || child_works(c) || c.last_activity.is_some()
+}
+
+/// Whether subagent `c`'s line is active at `wall` (2.3 item 2): working,
+/// or written within [`INACTIVE_AFTER`]; from an older daemon, not
+/// finished.
+fn child_active(c: &ChildInfo, wall: f64) -> bool {
+    child_works(c)
+        || match c
+            .last_activity
+            .as_deref()
+            .and_then(flankr_companion::cross::rfc3339_secs)
+        {
+            Some(t) => wall - t <= INACTIVE_AFTER.as_secs_f64(),
+            None => !c.finished,
+        }
+}
+
 /// Whether subagent `c` is still producing (2.2 item 3): the daemon's
 /// `working`; from an older daemon, not finished.
 pub fn child_works(c: &ChildInfo) -> bool {
@@ -1845,11 +2038,37 @@ mod tests {
                 "p2",
                 json!({"turn": {"state": "asking", "question": "Shall I go on?"}}),
             ),
-            agent("p3", json!({})),
+            agent("p3", json!({"idle_ms": 5000})),
             agent("p4", json!({"agent": "shell"})),
         ]);
         l.set_overview(Some(overview()), Grouping::ByPlan);
+        // A minute after the fixtures' last_activity.
+        l.set_wall(wall("2026-11-14T20:01:00Z"));
         l
+    }
+
+    fn wall(ts: &str) -> f64 {
+        flankr_companion::cross::rfc3339_secs(ts).unwrap()
+    }
+
+    /// Opens every **N inactive** section by a tap on it.
+    fn open_inactive(l: &mut PlanList) {
+        while let Some(r) = l
+            .hits()
+            .into_iter()
+            .find(|(_, h)| {
+                matches!(h, ListHit::Fold(k) if k.starts_with("inactive:"))
+                    && !l.folded.contains(match h {
+                        ListHit::Fold(k) => k,
+                        _ => unreachable!(),
+                    })
+            })
+            .map(|(r, _)| r)
+        {
+            let c = r.center();
+            l.touch(77, TouchPhase::Started, c[0], c[1], Duration::ZERO);
+            l.touch(77, TouchPhase::Ended, c[0], c[1], Duration::from_millis(40));
+        }
     }
 
     #[test]
@@ -1919,6 +2138,17 @@ mod tests {
         o.plans[0].current_step = None;
         let mut l = list();
         l.set_overview(Some(o), Grouping::ByPlan);
+        // Plans with no agent are inactive: folded until opened.
+        assert!(
+            l.texts().contains(&"2 inactive".to_string()),
+            "{:?}",
+            l.texts()
+        );
+        assert!(
+            !l.texts()
+                .contains(&"In implementation \u{b7} idle".to_string())
+        );
+        open_inactive(&mut l);
         let t = l.texts();
         assert!(
             t.contains(&"In implementation \u{b7} idle".to_string()),
@@ -2360,5 +2590,63 @@ mod tests {
                 .iter()
                 .any(|(_, h)| *h == ListHit::Agent("p3".into()))
         );
+    }
+
+    /// The active tasks overview plan, step 4: an agent idle for more
+    /// than 10 minutes moves into its group's closed **N inactive**
+    /// section; one with a question waiting never does; one that starts
+    /// working again leaves it at once.
+    #[test]
+    fn quiet_rows_fold_under_n_inactive() {
+        let mut l = list();
+        let mut agents = l.agents.clone();
+        // p3 (not on a plan) last produced 11 minutes ago.
+        agents[2].idle_ms = None;
+        agents[2].last_activity = Some("2026-11-14T19:50:00Z".into());
+        l.set_agents(&agents);
+        let t = l.texts();
+        assert!(!t.contains(&"Claude p3".to_string()), "{t:?}");
+        assert_eq!(t.last().map(String::as_str), Some("1 inactive"));
+        assert!(!*l.chevrons().last().unwrap(), "closed: pointing right");
+        // Opened by a tap; closed again by another.
+        open_inactive(&mut l);
+        assert!(l.texts().contains(&"Claude p3".to_string()));
+        assert!(*l.chevrons().last().unwrap(), "open: pointing down");
+        let r = rect_of(&l, &ListHit::Fold("inactive:".into())).center();
+        l.touch(5, TouchPhase::Started, r[0], r[1], Duration::ZERO);
+        l.touch(5, TouchPhase::Ended, r[0], r[1], Duration::from_millis(40));
+        assert!(!l.texts().contains(&"Claude p3".to_string()));
+        // 9 minutes: still active.
+        l.set_wall(wall("2026-11-14T19:59:00Z"));
+        assert!(l.texts().contains(&"Claude p3".to_string()));
+        l.set_wall(wall("2026-11-14T20:01:00Z"));
+        // Working again: out of the section at once.
+        agents[2].working = true;
+        l.set_agents(&agents);
+        assert!(l.texts().contains(&"Claude p3".to_string()));
+        assert!(!l.texts().iter().any(|t| t.ends_with("inactive")));
+        // A question waiting: never inactive, however old.
+        agents[2].working = false;
+        agents[2].turn = Some(Turn::Asking {
+            question: "Merge it?".into(),
+        });
+        l.set_agents(&agents);
+        assert!(
+            l.texts().contains(&"Claude p3".to_string()),
+            "{:?}",
+            l.texts()
+        );
+        // A plan whose agents went quiet folds too, its questions aside:
+        // p2 asks, so its plan stays; p1's plan goes once p1 is quiet.
+        agents[2].turn = None;
+        agents[0].idle_ms = None;
+        agents[0].last_activity = Some("2026-11-14T19:00:00Z".into());
+        l.set_agents(&agents);
+        let t = l.texts();
+        assert!(!t.contains(&"Plan policy agent".to_string()), "{t:?}");
+        assert!(t.contains(&"Active plans".to_string()), "p2 is asking");
+        // A confirmation open on p1's pane brings its plan back.
+        l.confirm_opened("p1", 30, "continue", "plugin:policy", None);
+        assert!(l.texts().contains(&"Plan policy agent".to_string()));
     }
 }
