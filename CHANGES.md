@@ -5023,3 +5023,46 @@ are read. Steps, in order, one crate per commit:
 
 App bumps may be shared where steps land together (FLANKR RULE 1.4). The
 device check on the S23 is left for the lead.
+
+## 2026-11-14 16:22 EST — Active tasks as the overview: departures
+
+Plan: the active tasks overview plan (20261114_01). Small departures
+needed to make it work (Rule 1.7):
+
+1. **Step 2, 2.2 item 1: no 2-second poll.** The daemon has no snapshot
+   poll every 2 s. The pane's timer is read when a phone lists the
+   agents (`agents.list`), for each pane herdr calls working, at most
+   once every 2 s per pane; a list sooner than that takes the last
+   read's verdict. Nothing reads panes while no phone is listing.
+2. **Step 2, 2.2 item 1: the first read.** A timer read with no earlier
+   read within the last minute to compare with (the first, or one after
+   a gap, which may be another turn's timer) is judged by the transcript
+   rule of item 2, not taken as stalled.
+3. **Steps 2 and 3, 2.1 item 2: the goal is sent.** The app had no way
+   to learn an agent's goal, so libflankr_proto 0.5.16 also appends
+   `AgentInfo::goal` (redacted, cut to the turn text's limit), read by
+   the daemon from Claude Code's transcript through a cache that reads a
+   grown file on its own thread and never makes the list wait. The goal
+   row landed in step 3 (app 0.7.31), once the goal was sent, not in
+   step 1. It goes under the project the agent's folder lies in, else
+   under the agent in Not on a plan.
+4. **Step 3, 2.2 item 5: agents not on a plan.** 2.1 gives no kind to an
+   agent's own line under Not on a plan, so it draws no kind glyph; while
+   it works, the spinner shows in its indent.
+5. **Steps 3 and 4: an older daemon.** With no `last_activity` (a daemon
+   before 0.7.17), a row spins while herdr says `working`, its age comes
+   from `idle_ms`, and finished subagents stay unlisted as before.
+6. **Step 1, 2.1 item 1: the Auto switch stays.** ↻ is drawn after the
+   title while autocontinue is on; the switch at the right that turns it
+   on and off is kept.
+7. **Step 4, 2.3: what folds.** An active plan's subagents quiet for 10
+   minutes go into the section as their own row; finished subagents are
+   listed once the daemon says when they last produced. The section's
+   open state is kept in the list's fold state, for the session only.
+8. **Step 5, 2.5 item 3: the main agent.** The project's top-level
+   agents are its plans' agents and every agent whose folder lies in the
+   project's root (a worktree inside it counts), shells left out; the
+   choice is `ProjectGroup::main_agent` in flankr-companion 0.8.16.
+
+The app's bumps were not consolidated: one patch per step, 0.7.30 to
+0.7.33, each tagged. The device check on the S23 is left for the lead.
