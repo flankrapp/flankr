@@ -251,6 +251,25 @@ pub struct AgentInfo {
     /// EST amendment, item 4).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree: Option<WorktreeInfo>,
+    /// The agent is still producing (docs/design/20261114_01_ACTIVE_TASKS_OVERVIEW_PLAN.md,
+    /// 2.2): while herdr says `working`, the elapsed timer it draws in its
+    /// pane advanced since the daemon's last read, or, with no timer, its
+    /// transcript has a tool call with no result yet or was written
+    /// within 60 s. `false`, and left off the wire, otherwise and from an
+    /// older daemon.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub working: bool,
+    /// When the agent last produced, RFC 3339 on the daemon's clock: the
+    /// last time its timer advanced or its transcript (or a subagent's)
+    /// was written (2.2 item 4). Absent when neither is known, and from an
+    /// older daemon.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_activity: Option<String>,
+    /// The agent's own goal as its session sets it (Claude Code's goal),
+    /// redacted, at most [`TURN_TEXT_MAX`] characters; absent while none
+    /// is set, for other agents, and from an older daemon (2.1 item 2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<String>,
 }
 
 /// A herdr worktree, as [`AgentInfo::worktree`] carries it: the fields
@@ -311,6 +330,16 @@ pub struct ChildInfo {
     /// transcript could not be read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn: Option<Turn>,
+    /// Still producing (docs/design/20261114_01_ACTIVE_TASKS_OVERVIEW_PLAN.md,
+    /// 2.2 item 3): its meta does not say finished, and its transcript has
+    /// a tool call with no result yet or was written within 60 s. `false`,
+    /// and left off the wire, otherwise and from an older daemon.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub working: bool,
+    /// When its transcript was last written, RFC 3339 on the daemon's
+    /// clock; absent when not known, and from an older daemon.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_activity: Option<String>,
 }
 
 /// Where an agent's turn stands, from its own session (plan 20261023_04,
@@ -2132,6 +2161,47 @@ mod tests {
         }
     }
 
+    /// The active tasks overview plan, 2.2 item 4 and 2.1 item 2:
+    /// `working`, `last_activity` and `goal` are appended, off the wire
+    /// when unset, absent from an older daemon's list, and ignored by an
+    /// older client (no field is denied).
+    #[test]
+    fn working_last_activity_and_goal_are_additive() {
+        let older = json!({
+            "pane_id": "p1", "agent": "claude", "status": "working", "focused": false,
+            "children": [{"id": "a", "short": "s", "description": "d"}]
+        });
+        let agent: AgentInfo = serde_json::from_value(older.clone()).unwrap();
+        assert!(!agent.working && !agent.children[0].working);
+        assert_eq!((&agent.last_activity, &agent.goal), (&None, &None));
+        let wire = serde_json::to_value(&agent).unwrap();
+        for k in ["working", "last_activity", "goal"] {
+            assert!(wire.get(k).is_none(), "{k} off the wire when unset");
+            assert!(wire["children"][0].get(k).is_none());
+        }
+        let mut now = agent.clone();
+        now.working = true;
+        now.last_activity = Some("2026-11-14T20:00:02Z".to_string());
+        now.goal = Some("finish the overview".to_string());
+        now.children[0].working = true;
+        now.children[0].last_activity = Some("2026-11-14T20:00:00Z".to_string());
+        let wire = serde_json::to_value(&now).unwrap();
+        assert_eq!(wire["working"], true);
+        assert_eq!(wire["last_activity"], "2026-11-14T20:00:02Z");
+        assert_eq!(wire["goal"], "finish the overview");
+        assert_eq!(wire["children"][0]["working"], true);
+        round_trip(now);
+        // An older client's struct, without the fields, reads it.
+        #[derive(Deserialize)]
+        #[allow(dead_code)]
+        struct Older {
+            pane_id: String,
+            status: String,
+        }
+        let o: Older = serde_json::from_value(wire).unwrap();
+        assert_eq!(o.pane_id, "p1");
+    }
+
     /// The subagents plan, step 2: `child` on the session methods,
     /// `AgentInfo::children` and `ChildInfo`.
     #[test]
@@ -2148,6 +2218,8 @@ mod tests {
             turn: Some(Turn::Stopped {
                 line: "Found them.".to_string(),
             }),
+            working: false,
+            last_activity: None,
         };
         round_trip(child.clone());
         assert_eq!(
@@ -2745,9 +2817,14 @@ mod tests {
                     turn: Some(Turn::Working {
                         line: "Bash cargo test".to_string(),
                     }),
+                    working: true,
+                    last_activity: Some("2026-11-14T20:00:00Z".to_string()),
                 }],
                 workspace_label: None,
                 workspace_number: None,
+                working: true,
+                last_activity: Some("2026-11-14T20:00:02Z".to_string()),
+                goal: Some("build the plan 20261114_01".to_string()),
             }],
             focus: Some(FocusInfo {
                 pane_id: "w2:pZ".to_string(),

@@ -1547,3 +1547,19 @@ to and which rows `overview` lists.
 - **Changed:** `current_step` also takes the step the agent's reply
   names ("starting step N", "step N done" and the like), kept at the
   highest seen.
+
+## libflankr_proto 0.5.16 — 2026-11-14 (the commit tagged `libflankr_proto-v0.5.16`)
+
+Plan 20261114_01 (active tasks overview), step 2. Strictly additive
+(fields appended, by the owner's ruling that appending is additive). A
+literal that names every field has to name the new ones.
+
+- **Added:** `common::AgentInfo::working: bool` (still producing: the
+  pane's timer advanced, or with no timer an open tool call or a write
+  within 60 s; off the wire when `false`), `last_activity:
+  Option<String>` (RFC 3339 on the daemon's clock, when the timer last
+  advanced or the transcript was written) and `goal: Option<String>`
+  (the agent's own goal, as Claude Code's session sets it), each absent
+  from an older daemon.
+- **Added:** `common::ChildInfo::working: bool` and `last_activity:
+  Option<String>`, the same for a subagent.
