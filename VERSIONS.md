@@ -1563,3 +1563,18 @@ literal that names every field has to name the new ones.
   from an older daemon.
 - **Added:** `common::ChildInfo::working: bool` and `last_activity:
   Option<String>`, the same for a subagent.
+
+## flankr-companion 0.8.16 — 2026-11-14 (the commit tagged `flankr-companion-v0.8.16`)
+
+Plan 20261114_01 (active tasks overview), step 2. Strictly additive (a
+method and two functions). It takes libflankr_proto 0.5.16, additive, and
+passes `AgentInfo`'s and `ChildInfo`'s new `working`, `last_activity`
+and `goal` through as they come.
+
+- **Added:** `policy::ProjectGroup::main_agent(agents)`: of the
+  project's plans' agents and every agent whose directory lies in its
+  root, no shells, the one with the newest `last_activity` (the least
+  `idle_ms` from an older daemon); `None` for **Not on a plan** or a
+  project with no agent.
+- **Added:** `policy::last_activity_secs(&AgentInfo)` and
+  `policy::in_project(&AgentInfo, root)`.

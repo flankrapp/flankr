@@ -276,6 +276,63 @@ impl ProjectGroup {
             .filter_map(|(a, _)| a.idle_ms)
             .min()
     }
+
+    /// The project's main agent (docs/design/20261114_01_ACTIVE_TASKS_OVERVIEW_PLAN.md,
+    /// 2.5 item 3): of its plans' agents and every agent of `agents`
+    /// whose directory lies in its root, shells left out, the one with
+    /// the newest `last_activity`, else (from an older daemon) the least
+    /// `idle_ms`. `None` for **Not on a plan** and for a project with no
+    /// agent. Added in 0.8.16.
+    pub fn main_agent<'a>(&'a self, agents: &'a [AgentInfo]) -> Option<&'a AgentInfo> {
+        let root = self.project.as_ref().map(|p| p.root.as_str())?;
+        let mut found: Vec<&AgentInfo> = Vec::new();
+        let linked = self
+            .plans
+            .iter()
+            .flat_map(|g| g.agents.iter().map(|(a, _)| a));
+        let here = agents
+            .iter()
+            .filter(|a| !root.is_empty() && in_project(a, root));
+        for a in linked.chain(here) {
+            if a.agent != "shell" && !found.iter().any(|f| f.pane_id == a.pane_id) {
+                found.push(a);
+            }
+        }
+        found.into_iter().min_by(
+            |a, b| match (last_activity_secs(a), last_activity_secs(b)) {
+                (Some(x), Some(y)) => y.total_cmp(&x),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => match (a.idle_ms, b.idle_ms) {
+                    (Some(x), Some(y)) => x.cmp(&y),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => std::cmp::Ordering::Equal,
+                },
+            },
+        )
+    }
+}
+
+/// When `a` last produced, in seconds since 1970: its `last_activity`
+/// (plan 20261114_01, 2.2 item 4), `None` when absent or unreadable.
+/// Added in 0.8.16.
+pub fn last_activity_secs(a: &AgentInfo) -> Option<f64> {
+    a.last_activity
+        .as_deref()
+        .and_then(crate::cross::rfc3339_secs)
+}
+
+/// Whether `a`'s directory is `root` or lies under it (a worktree inside
+/// the repository counts). Added in 0.8.16.
+pub fn in_project(a: &AgentInfo, root: &str) -> bool {
+    let root = root.trim_end_matches('/');
+    a.cwd.as_deref().is_some_and(|cwd| {
+        cwd == root
+            || cwd
+                .strip_prefix(root)
+                .is_some_and(|rest| rest.starts_with('/'))
+    })
 }
 
 /// `overview`'s result and notice (plan 20261112_03, 2.2 item 1).
@@ -625,6 +682,76 @@ mod tests {
             "pane_id": pane, "agent": kind, "status": "idle", "focused": false
         }))
         .unwrap()
+    }
+
+    /// Plan 20261114_01, 2.5 item 3: the project's main agent is its
+    /// newest by `last_activity`, from its plans or its folder; none for
+    /// Not on a plan or with no agent.
+    #[test]
+    fn a_projects_main_agent_is_its_newest() {
+        let at = |pane: &str, cwd: &str, last: Option<&str>, idle: Option<u64>| {
+            let mut a = agent(pane, "claude");
+            a.cwd = Some(cwd.to_string());
+            a.last_activity = last.map(str::to_string);
+            a.idle_ms = idle;
+            a
+        };
+        let project = Some(PolicyProject {
+            root: "/r/flankr".into(),
+            name: "flankr".into(),
+        });
+        let on_plan = at("p1", "/r/flankr", Some("2026-11-14T20:00:00Z"), Some(1));
+        let in_tree = at(
+            "p2",
+            "/r/flankr/.claude/worktrees/w7",
+            Some("2026-11-14T20:05:00Z"),
+            Some(900),
+        );
+        let elsewhere = at("p3", "/r/flankr-other", Some("2026-11-14T21:00:00Z"), None);
+        let mut shell = at("p4", "/r/flankr", Some("2026-11-14T22:00:00Z"), None);
+        shell.agent = "shell".into();
+        let g = ProjectGroup {
+            project: project.clone(),
+            plans: vec![PlanGroup {
+                plan: Some(PolicyPlanGroup::default()),
+                agents: vec![(on_plan.clone(), None)],
+            }],
+        };
+        let all = vec![on_plan.clone(), in_tree.clone(), elsewhere, shell];
+        assert_eq!(g.main_agent(&all).map(|a| a.pane_id.as_str()), Some("p2"));
+        assert_eq!(g.main_agent(&[]).map(|a| a.pane_id.as_str()), Some("p1"));
+        // From an older daemon, by idle_ms.
+        let old: Vec<AgentInfo> = all
+            .iter()
+            .cloned()
+            .map(|mut a| {
+                a.last_activity = None;
+                a
+            })
+            .collect();
+        let g_old = ProjectGroup {
+            project: project.clone(),
+            plans: vec![PlanGroup {
+                plan: Some(PolicyPlanGroup::default()),
+                agents: vec![(old[0].clone(), None)],
+            }],
+        };
+        assert_eq!(
+            g_old.main_agent(&old).map(|a| a.pane_id.as_str()),
+            Some("p1")
+        );
+        let none = ProjectGroup {
+            project,
+            plans: Vec::new(),
+        };
+        assert_eq!(none.main_agent(&[]), None);
+        let rest = ProjectGroup {
+            project: None,
+            plans: Vec::new(),
+        };
+        assert_eq!(rest.main_agent(&all), None);
+        assert!(in_project(&in_tree, "/r/flankr/"));
+        assert!(!in_project(&all[2], "/r/flankr"));
     }
 
     #[test]

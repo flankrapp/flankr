@@ -155,6 +155,9 @@ mod tests {
             children: Vec::new(),
             workspace_label: None,
             workspace_number: None,
+            working: false,
+            last_activity: None,
+            goal: None,
         }
     }
 
