@@ -4,8 +4,9 @@
 //! judgement on `[llm.uses.policy]`. Made before the daemon, and pointed
 //! at it once it exists.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{OnceLock, Weak};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use serde_json::Value;
 
@@ -13,11 +14,14 @@ use super::Daemon;
 use crate::llm::{Profile, Use};
 use crate::plugins::policy::{NS, Services};
 use crate::reasoning::Message;
+use crate::sessions::goal::{GoalScan, goal_of};
 
 /// The plan policy plugin's way into the daemon.
 #[derive(Default)]
 pub struct DaemonPolicy {
     daemon: OnceLock<Weak<Daemon>>,
+    /// Each Claude Code session file's goal, as read so far.
+    goals: Arc<Mutex<HashMap<PathBuf, GoalScan>>>,
 }
 
 impl DaemonPolicy {
@@ -57,6 +61,35 @@ impl Services for DaemonPolicy {
             })?
             .pending_question()
             .map(|q| q.text)
+    }
+
+    /// The goal of the Claude Code session tailed for `pane_id`: its
+    /// files read on from where they were last read, off the async
+    /// threads.
+    async fn goal(&self, pane_id: &str) -> Option<String> {
+        let daemon = self.daemon()?;
+        let tailer = daemon.hub.tailers().into_iter().find(|t| {
+            t.agent() == "claude"
+                && t.pane()
+                    .is_some_and(|p| crate::watch::pane_ids_match(&p.pane_id, pane_id))
+        })?;
+        let files = tailer.files();
+        let goals = self.goals.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut scans: HashMap<PathBuf, GoalScan> = {
+                let held = goals.lock().unwrap();
+                files
+                    .iter()
+                    .filter_map(|f| Some((f.clone(), held.get(f)?.clone())))
+                    .collect()
+            };
+            let goal = goal_of(&files, &mut scans);
+            goals.lock().unwrap().extend(scans);
+            goal
+        })
+        .await
+        .ok()
+        .flatten()
     }
 
     /// The choice question open on `pane_id`, as `agents.send` refuses

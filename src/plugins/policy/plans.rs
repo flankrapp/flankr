@@ -11,6 +11,16 @@ use super::store::{Task, plan_hash};
 /// The statuses a task may work under (2.3 item 3).
 pub const WORKING: [&str; 2] = ["Draft", "In implementation"];
 
+/// The closed statuses' bases (plan 20261112_03, the 2026-11-13 11:58 EST
+/// amendment, item 2): no pane is linked to a plan in one.
+pub const CLOSED: [&str; 4] = ["Implemented", "Superseded", "Retired", "Consolidated"];
+
+/// Whether `status` is closed.
+pub fn is_closed(status: &str) -> bool {
+    let (base, _) = reader::split_status(status);
+    CLOSED.contains(&base.as_str())
+}
+
 /// One numbered step.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Step {
@@ -34,6 +44,9 @@ pub struct PlanDoc {
     pub hash: String,
     /// The amendments' subjects, in order.
     pub amendments: Vec<String>,
+    /// The plans its front matter's `consolidates:` lists, each resolved
+    /// to a root-relative path.
+    pub consolidates: Vec<String>,
     /// The text read (at most 64 KiB).
     pub text: String,
 }
@@ -43,6 +56,17 @@ impl PlanDoc {
     pub fn status_allows(&self) -> bool {
         let (base, _) = reader::split_status(&self.status);
         WORKING.contains(&base.as_str())
+    }
+
+    /// Whether its status is closed (see [`CLOSED`]).
+    pub fn is_closed(&self) -> bool {
+        is_closed(&self.status)
+    }
+
+    /// The path its status's `(by <plan>)` names, root-relative.
+    pub fn closed_by(&self) -> Option<String> {
+        let (_, by) = reader::split_status(&self.status);
+        reader::resolve_ref(&by?)
     }
 
     /// The plan's row for `plans`, `approval` and `build`: with its task,
@@ -106,6 +130,20 @@ pub fn parse(path: &str, text: &str, bytes: &[u8]) -> PlanDoc {
         Some((f, _)) => (f.title.clone(), f.status.clone()),
         None => (None, None),
     };
+    let consolidates = match front
+        .as_ref()
+        .and_then(|(f, _)| f.extra.get("consolidates"))
+    {
+        Some(Value::String(one)) => vec![one.clone()],
+        Some(Value::Array(list)) => list
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect(),
+        _ => Vec::new(),
+    }
+    .iter()
+    .filter_map(|r| reader::resolve_ref(r))
+    .collect();
     let amendments = lines
         .iter()
         .filter_map(|l| reader::amendment_heading(l).map(|(_, subject)| subject))
@@ -118,6 +156,7 @@ pub fn parse(path: &str, text: &str, bytes: &[u8]) -> PlanDoc {
         steps: steps(text),
         hash: plan_hash(bytes),
         amendments,
+        consolidates,
         text: text.to_string(),
     }
 }
@@ -276,6 +315,34 @@ mod tests {
             let p = parse("docs/design/20261112_02_A_PLAN.md", &text, text.as_bytes());
             assert_eq!(p.status_allows(), ok, "{status}");
         }
+        for (status, closed) in [
+            ("Draft", false),
+            ("Hold", false),
+            ("In implementation", false),
+            ("Implemented", true),
+            ("Superseded (by x)", true),
+            ("Retired (by x)", true),
+            (
+                "Consolidated (by [the next](docs/design/20261113_01_NEXT_PLAN.md))",
+                true,
+            ),
+        ] {
+            assert_eq!(is_closed(status), closed, "{status}");
+        }
+        let text = "---\ntitle: t\nstatus: Consolidated (by [the next](docs/design/20261113_01_NEXT_PLAN.md))\nconsolidates:\n  - \"[one](docs/design/20261101_01_ONE_PLAN.md)\"\n  - 20261101_02_TWO_PLAN\n---\n";
+        let p = parse("docs/design/20261112_02_A_PLAN.md", text, text.as_bytes());
+        assert!(p.is_closed());
+        assert_eq!(
+            p.closed_by().as_deref(),
+            Some("docs/design/20261113_01_NEXT_PLAN.md")
+        );
+        assert_eq!(
+            p.consolidates,
+            [
+                "docs/design/20261101_01_ONE_PLAN.md",
+                "docs/design/20261101_02_TWO_PLAN.md"
+            ]
+        );
         assert_eq!(
             plan_path("docs/design/20261112_02_A_PLAN.md").as_deref(),
             Some("docs/design/20261112_02_A_PLAN.md")

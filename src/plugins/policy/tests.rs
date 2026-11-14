@@ -114,6 +114,8 @@ pub(super) struct Fake {
     pub(super) worktrees: std::sync::Mutex<Vec<(String, String)>>,
     /// The panes herdr shows.
     pub(super) panes: Vec<overview::AgentPane>,
+    /// The Claude Code goal set in every pane, if any.
+    pub(super) goal: std::sync::Mutex<Option<String>>,
 }
 
 /// What an approved confirmation sent: (pane, command).
@@ -165,6 +167,9 @@ impl Services for Fake {
     }
     async fn open_choice(&self, _pane_id: &str) -> Option<String> {
         self.choice.lock().unwrap().clone()
+    }
+    async fn goal(&self, _pane_id: &str) -> Option<String> {
+        self.goal.lock().unwrap().clone()
     }
     fn agents(&self) -> Vec<crate::config::AgentConfig> {
         self.agents.clone()
@@ -1124,4 +1129,257 @@ async fn build_once_keeps_a_task_it_already_has() {
         .await
         .unwrap();
     assert_eq!(rearmed["pane_id"], "w1:p3");
+}
+
+/// Plan 20261112_03, the 2026-11-13 01:52 EST amendment, items 2, 4 and
+/// 6: every plan in a stage shows, with its project and its open
+/// questions; an Implemented plan without a task does not.
+#[tokio::test]
+async fn overview_lists_the_projects_plans_in_their_stages() {
+    let e = env();
+    std::fs::write(
+        e.root.join("docs/design/20261113_01_ASKING_PLAN.md"),
+        "---\ntitle: Asking\nstatus: In implementation\n---\n\n## 4. Open questions\n\n1. **One.** A?\n2. **Two.** B? Recommend B.\n\n## Amendment \u{2014} 2026-11-13 01:00 EST: notes\n\nThis answers open question 2.\n",
+    )
+    .unwrap();
+    let c = ctx_as(&e.root, owner(), on()).await;
+    let o = e.policy.call("overview", json!({}), &c).await.unwrap();
+    let plans = o["plans"].as_array().unwrap();
+    let paths: Vec<&str> = plans.iter().map(|p| p["path"].as_str().unwrap()).collect();
+    assert_eq!(
+        paths,
+        ["docs/design/20261113_01_ASKING_PLAN.md", PLAN_PATH],
+        "newest first; the Implemented plan left out"
+    );
+    assert_eq!(plans[0]["open_questions"], 1);
+    assert_eq!(plans[1]["open_questions"], 0);
+    assert_eq!(plans[0]["agents"], json!([]));
+    assert_eq!(plans[0]["task"], false);
+    assert_eq!(plans[0]["project"]["name"], "proj");
+    assert_eq!(plans[0]["project"]["root"], e.root.display().to_string());
+}
+
+const WIDGET_PATH: &str = "docs/design/20261113_01_WIDGET_PLAN.md";
+const GATHER_PATH: &str = "docs/design/20261113_02_GATHER_PLAN.md";
+
+/// The overview's rows: each plan's path and its agents' (pane,
+/// linked_by).
+fn rows(o: &serde_json::Value) -> Vec<(String, Vec<(String, String)>)> {
+    o["plans"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| {
+            let agents = p["agents"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|a| {
+                    (
+                        a["pane_id"].as_str().unwrap().to_string(),
+                        a["linked_by"].as_str().unwrap().to_string(),
+                    )
+                })
+                .collect();
+            (p["path"].as_str().unwrap().to_string(), agents)
+        })
+        .collect()
+}
+
+fn row<'a>(o: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
+    o["plans"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["path"] == path)
+}
+
+/// Plan 20261112_03, the 2026-11-13 11:58 EST amendment, items 1 and 3:
+/// the pane's goal wins over its older task, and the step the agent
+/// names is the plan's current step.
+#[tokio::test]
+async fn a_goal_links_its_pane_ahead_of_an_older_task() {
+    let e = env_with(|state| Fake {
+        state: Some(state),
+        panes: vec![pane("w1:p1", "claude")],
+        ..Fake::default()
+    });
+    std::fs::write(
+        e.root.join(WIDGET_PATH),
+        plan_text("In implementation").replace("A sample plan", "The widget plan"),
+    )
+    .unwrap();
+    // Last night's task on the older plan, armed, autocontinue on.
+    let c = armed(&e).await;
+    let watch = ctx_as(&e.root, owner(), toml::Table::new()).await;
+    e.policy
+        .on_card_summary(&card(1, "Done.", "Done."), &watch)
+        .await;
+    let o = e.policy.call("overview", json!({}), &c).await.unwrap();
+    assert_eq!(
+        row(&o, PLAN_PATH).unwrap()["agents"][0]["linked_by"],
+        "pinned"
+    );
+    // A goal set on the newer plan moves the pane to it.
+    *e.fake.goal.lock().unwrap() = Some("build the plan 20261113_01_WIDGET_PLAN".into());
+    e.policy
+        .on_card_summary(&card(2, "Goal set. Starting step 1.", "x"), &watch)
+        .await;
+    e.policy
+        .on_card_summary(&card(3, "Step 2 is in. Now step 3.", "x"), &watch)
+        .await;
+    let o = e.policy.call("overview", json!({}), &c).await.unwrap();
+    let widget = row(&o, WIDGET_PATH).unwrap();
+    assert_eq!(widget["agents"][0]["pane_id"], "w1:p1", "{o}");
+    assert_eq!(widget["agents"][0]["linked_by"], "goal");
+    assert_eq!(widget["current_step"], 3);
+    assert_eq!(widget["steps_total"], 5);
+    // The older task stays, armed, idle: no agent under it.
+    let old = row(&o, PLAN_PATH).unwrap();
+    assert_eq!(old["task"], true);
+    assert_eq!(old["armed"], true);
+    assert_eq!(old["autocontinue"], true);
+    assert_eq!(old["agents"], json!([]));
+    // An earlier step named later does not move it back.
+    e.policy
+        .on_card_summary(&card(4, "Step 1 done, as noted.", "x"), &watch)
+        .await;
+    let o = e.policy.call("overview", json!({}), &c).await.unwrap();
+    assert_eq!(row(&o, WIDGET_PATH).unwrap()["current_step"], 3);
+    // The policy judges the goal's plan: no task on it, so nothing sent.
+    e.policy
+        .on_card_summary(&card(5, "Step 3 done. Continue?", "x"), &c)
+        .await;
+    let d = e.fake.notes("decision");
+    let last = d.last().unwrap();
+    assert_eq!(last["plan"], WIDGET_PATH);
+    assert_eq!(last["rule"], "unapproved");
+    // The goal met: the task's plan again.
+    *e.fake.goal.lock().unwrap() = None;
+    e.policy
+        .on_card_summary(&card(6, "Done.", "Done."), &watch)
+        .await;
+    let o = e.policy.call("overview", json!({}), &c).await.unwrap();
+    assert_eq!(
+        row(&o, PLAN_PATH).unwrap()["agents"][0]["linked_by"],
+        "pinned"
+    );
+    assert_eq!(row(&o, WIDGET_PATH).unwrap()["agents"], json!([]));
+    // A goal naming no plan of the project links nothing by itself.
+    *e.fake.goal.lock().unwrap() = Some("build the plan 20991231_01_NOWHERE_PLAN".into());
+    e.policy
+        .on_card_summary(&card(7, "Done.", "Done."), &watch)
+        .await;
+    let o = e.policy.call("overview", json!({}), &c).await.unwrap();
+    assert_eq!(
+        row(&o, PLAN_PATH).unwrap()["agents"][0]["linked_by"],
+        "pinned"
+    );
+}
+
+/// Plan 20261112_03, the 2026-11-13 11:58 EST amendment, item 2: a
+/// closed plan is followed on, and has no row; an Implemented plan's row
+/// shows only while it has a task, with no agent.
+#[tokio::test]
+async fn a_closed_plan_is_not_active() {
+    let e = env_with(|state| Fake {
+        state: Some(state),
+        panes: vec![pane("w1:p1", "claude"), pane("w1:p2", "claude")],
+        ..Fake::default()
+    });
+    std::fs::write(
+        e.root.join(WIDGET_PATH),
+        plan_text("Draft").replace("A sample plan", "The widget plan"),
+    )
+    .unwrap();
+    let c = ctx_as(&e.root, owner(), on()).await;
+    // Built while it was open, in w1:p2.
+    e.policy
+        .call(
+            "build",
+            json!({"path": WIDGET_PATH, "pane_id": "w1:p2"}),
+            &c,
+        )
+        .await
+        .unwrap();
+    // Then consolidated into the gathering plan.
+    std::fs::write(
+        e.root.join(WIDGET_PATH),
+        plan_text("Consolidated (by 20261113_02_GATHER_PLAN)")
+            .replace("A sample plan", "The widget plan"),
+    )
+    .unwrap();
+    std::fs::write(
+        e.root.join(GATHER_PATH),
+        plan_text("In implementation")
+            .replace("A sample plan", "The gathering plan")
+            .replace(
+                "---\n\n",
+                &format!("consolidates:\n  - {WIDGET_PATH}\n---\n\n"),
+            ),
+    )
+    .unwrap();
+    let watch = ctx_as(&e.root, owner(), toml::Table::new()).await;
+    // A goal on the consolidated plan follows to the gathering plan.
+    *e.fake.goal.lock().unwrap() = Some(format!("finish {WIDGET_PATH}"));
+    e.policy
+        .on_card_summary(&card_in("w1:p1", 1, "Starting step 2."), &watch)
+        .await;
+    // The task's pane follows too.
+    *e.fake.goal.lock().unwrap() = None;
+    e.policy
+        .on_card_summary(&card_in("w1:p2", 2, "Done."), &watch)
+        .await;
+    let o = e.policy.call("overview", json!({}), &c).await.unwrap();
+    let gather = row(&o, GATHER_PATH).expect("the gathering plan's row");
+    let by: Vec<(String, String)> = rows(&o)
+        .into_iter()
+        .find(|(p, _)| p == GATHER_PATH)
+        .unwrap()
+        .1;
+    assert_eq!(
+        by,
+        [
+            ("w1:p1".to_string(), "goal".to_string()),
+            ("w1:p2".to_string(), "pinned".to_string())
+        ]
+    );
+    assert_eq!(gather["current_step"], 2);
+    assert!(
+        row(&o, WIDGET_PATH).is_none(),
+        "no row, even with a task: {o}"
+    );
+    assert_eq!(
+        e.policy.store().unwrap().load()[0].path,
+        WIDGET_PATH,
+        "the task is kept"
+    );
+    // The gathering plan implemented, with nothing after it: its panes
+    // are on no plan; it has no row without a task.
+    std::fs::write(
+        e.root.join(GATHER_PATH),
+        plan_text("Implemented").replace("A sample plan", "The gathering plan"),
+    )
+    .unwrap();
+    let o = e.policy.call("overview", json!({}), &c).await.unwrap();
+    assert!(row(&o, GATHER_PATH).is_none(), "{o}");
+    assert_eq!(o["unlinked"], json!(["w1:p1", "w1:p2"]));
+    // An Implemented plan with a task shows, with no agent under it.
+    std::fs::write(e.root.join(GATHER_PATH), plan_text("Draft")).unwrap();
+    e.policy
+        .call(
+            "build",
+            json!({"path": GATHER_PATH, "pane_id": "w1:p1"}),
+            &c,
+        )
+        .await
+        .unwrap();
+    e.policy
+        .on_card_summary(&card_in("w1:p1", 3, "Done."), &watch)
+        .await;
+    std::fs::write(e.root.join(GATHER_PATH), plan_text("Implemented")).unwrap();
+    let o = e.policy.call("overview", json!({}), &c).await.unwrap();
+    let done = row(&o, GATHER_PATH).expect("an Implemented plan with a task");
+    assert_eq!(done["agents"], json!([]));
+    assert!(o["unlinked"].as_array().unwrap().contains(&json!("w1:p1")));
 }

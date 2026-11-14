@@ -17,6 +17,7 @@ pub mod choices;
 pub mod claude;
 pub mod codex;
 pub mod context;
+pub mod goal;
 pub mod hub;
 pub mod journal;
 pub mod links;

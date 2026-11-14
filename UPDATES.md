@@ -292,3 +292,20 @@ These changes came before the program had version numbers.
 **Added**
 - With the Plan policy plugin on, the daemon works out which plan each agent pane is on, for the phone's Active tasks view: the plan you chose Build on for that pane, else a plan path in its newest reply, else a plan's title, else the `plan/<date>_<nn>` branch of the worktree it is in, else one question to the `[llm.uses.policy]` model with the titles of the project's active plans. This only places the pane in the phone's list; it never makes the plugin send anything. The log says `[policy] pane=<pane> plan=<plan> linked_by=<how> worktree=<path or ->` when a pane's plan changes.
 - The phone's agent list now says which herdr worktree each agent is in, from herdr's own list of worktrees, on a herdr on this computer.
+
+## 0.7.14 — 2026-11-13
+
+**Added**
+- The planning plugin reads each plan's open questions: the items of its "Open questions" section, the recommendation each gives, and which amendment answered it. The general agent's `planning_plan_show` tool and the phone's plan list now see them, with a count of those still open for each plan.
+
+## 0.7.15 — 2026-11-13
+
+**Fixed**
+- An agent's reply that asks you to go ahead without a question mark ("Say go and I'll draft it", "Say the word and I'll carry on", "Shall I push it."), or that adds a one-line note after asking ("Still holding the test, unstarted."), is now its pending question: the phone shows it as a question card with Yes and No, the "<name> is asking" notice and the general agent see it, and the Plan policy judges it as a question. Before, such a reply was sent as a finished turn with no Yes or No. A plain "Let me know if anything breaks." is still not a question.
+
+## 0.7.16 — 2026-11-13
+
+**Changed**
+- With the Plan policy plugin on, a Claude Code goal that names a plan file (such as `build the plan 20261113_01_WIDGET_PLAN`) puts that agent's pane on that plan in the phone's Active tasks view, ahead of a task you chose Build on earlier for the same pane. That earlier task is kept, and shows as idle. Once the goal is met or cleared, the pane goes back to its task. The log says `linked_by=goal`.
+- A plan that is Implemented, Superseded, Retired or Consolidated is no longer shown as a plan being worked on: a pane on it moves to the plan that replaced it (its `(by …)` plan, or the plan whose `consolidates:` list names it). A Superseded, Retired or Consolidated plan is not listed at all; an Implemented one is listed only while it still has a task.
+- The step shown for a plan now also comes from what the agent says ("starting step 2", "step 3 is in", "step 2 done"), and stays until the agent names a later step.

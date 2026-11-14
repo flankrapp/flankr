@@ -224,7 +224,7 @@ async fn hello_lists_the_plugins_and_only_an_approver_switches_one_on() {
     assert_eq!(plugins[1]["name"], "Plan policy");
     assert_eq!(plugins[1]["enabled"], false);
     assert_eq!(plugins[0]["ns"], PLANNING);
-    assert_eq!(plugins[0]["version"], "0.1.2");
+    assert_eq!(plugins[0]["version"], "0.1.3");
     assert_eq!(plugins[0]["enabled"], false);
     assert_eq!(
         plugins[0]["menu"],

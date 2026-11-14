@@ -429,3 +429,23 @@ These changes came before the app had version numbers.
 **Fixed**
 - Answering a question card (its Yes or No, approve or implement, one of the agent's answers, a typed or spoken reply, or Yes or No in Active tasks) now takes the card away at once; it no longer stays pinned after you answer.
 - Dragging away a question card you have already answered only puts it away: it no longer sends No to the agent. A question you have not answered is still answered No when dragged away, as before.
+
+## 0.7.27 — 2026-11-13
+
+**Changed**
+- Active tasks is grouped by project: each repository's name, with its plans under it, the project worked on most recently first, and Not on a plan last. The order waits until your finger has been off the screen for two seconds before it changes. Tap a project's name to fold it.
+- Each plan is one row showing its stage: Draft, "step 3 of 9" while an agent builds it, "In implementation · idle" when none does, or Implemented while it is still a task. The row names the agent working on it in short ("claude · w7"), with the plan policy's last word and the Auto switch for a task.
+- An agent no longer has its own row under a plan. Tap the plan's row to open its agent, as the agent row did. A plan being built lists its running subagents under it, then its questions, approvals and policy decisions, with their buttons and swipe-to-hide as before. Plans no one is building show only their row.
+
+**Added**
+- A plan's row says how many of its open questions are still unanswered ("3 open questions").
+
+## 0.7.28 — 2026-11-13
+
+**Fixed**
+- When an agent asks you to go ahead without a question mark ("Say go and I'll draft it", "Say the word and I'll carry on"), or asks and then adds a one-line note ("Still holding the test, unstarted."), its reply now shows as a question card with Yes and No, pinned until you answer. Before, it showed as a finished turn, and only the spoken summary asked the question, with nothing to tap. Needs the daemon 0.7.15 or later.
+
+## 0.7.29 — 2026-11-14
+
+**Changed**
+- In the plans list (the ☑ menu and All plans…), each plan's small date and number are now one "10/28 04": the date, then the plan's number for that day with its leading zero, as in its file name. Before, the number came first on its own ("4  10/28") and read like a position in the list. A plan without a number shows just its date.

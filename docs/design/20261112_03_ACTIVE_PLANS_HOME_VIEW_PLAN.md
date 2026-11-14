@@ -718,3 +718,175 @@ amendment to the frozen plan. It adds to 2.3 and 2.4.
    never disarms, stops autocontinue or removes the task.
 4. **Getting them back.** While anything is hidden, a dim last line,
    *N hidden · Show*, shows everything again.
+
+## Amendment — 2026-11-13 01:52 EST: Active tasks grouped by project, a plan's subagents under it, and its open questions
+
+The owner, on 2026-11-13: "the order on the active tasks screen sh9uld be
+grouped by project, cl8ck8ng one of tge axtive tasks showing agent
+underneath it is the wrong nesting. either subagents represent the task in
+progress or multiple plans are in various stages of completion but not
+actively being built,open qurstions onyhe plan should also be indicated".
+The lead's reading below was put to the owner, who approved it on
+2026-11-13 with the words "approve the amendments". The owner's
+instruction is what allows this amendment to the frozen plan. It replaces
+2.3 items 1 to 4 (the plan-first grouping and the agent lines under a
+plan), the 21:58 EST amendment's item 2 (agents grouped under their
+project inside a plan's group), and the 23:23 EST amendment's item 5 as
+far as it places agents under a plan; the rest stands.
+
+1. **Projects at the top level.** The view is one group per project (the
+   repository a plan lives in, named by its folder), sorted by most
+   recent activity among its plans' agents and events, newest first,
+   with the 21:58 amendment's item 3 rule that a re-sort waits for 2 s
+   without a touch. **Not on a plan** stays last.
+2. **Under a project, its plans,** one row each, in their stages:
+   - *Draft*;
+   - armed and being built: *step N of M*;
+   - *In implementation* but idle (no agent on it now);
+   - *Implemented*, shown only while it still has a task.
+
+   Each row shows its status or stage, the policy's last decision, and
+   the Auto glyph (the 23:23 EST amendment's item 3) when it has a task.
+3. **No agent row under a plan.** A plan being built shows its progress
+   as its subagents, one line each, as the children of the plan's row.
+   The agent itself shows only as a short label on the plan's row, such
+   as "claude · w7" (its name and its worktree's label or branch).
+   Tapping the plan's row opens the agent view, as tapping the agent
+   line did; a plan with no agent folds and unfolds as before.
+4. **Plans not being built** show only their row: no children, and
+   folded by default.
+5. **Events attach to the plan's row,** below its subagent lines:
+   questions, confirmations and the policy's decisions, with the buttons
+   in place (2.4) and swipe-to-hide (the 01:07 EST amendment) as before.
+6. **Open questions.** A plan's row shows "N open questions" when the
+   plan has any unanswered, from the count the plan questions plan
+   (20261113_02) adds to the planning reader, carried on `overview`'s
+   plan rows as `open_questions`.
+7. **Versions.** Patches only: the planning plugin 0.1.3 and the daemon
+   0.7.14 (the plan questions plan's step 1), the policy plugin 0.1.3
+   (`overview`'s plan rows gain `project` and `open_questions`, and
+   list the project's plans in their stages), flankr-companion 0.8.13,
+   and the app 0.7.27.
+
+## Amendment — 2026-11-13 11:58 EST: a Claude Code goal links its pane to the plan it names, a closed plan is not active, and the step comes from the agent
+
+The owner, on 2026-11-13: "review whats happening with the game agent, I
+set a goal in Claude to complete a specific plan, this should be clearly
+reflected in the active plans with active plans screen showing the step
+the agent is completing, it should also recognize a consolidated plan as
+effectively closed and not show it as active"; and, told what was found
+and what this amendment would say: "yes, write it and build it in the
+worktree". The owner's instruction is what allows this amendment to the
+frozen plan.
+
+What was found: the agent's pane had a Claude Code goal naming one plan,
+but the pane had an armed task, made by Build the night before on an
+older plan. The policy's matching (the plan policy agent plan, 2.3
+item 5 as its 22:31 EST amendment, item 5, orders it) always takes the
+pane's armed task first, so every card from that pane was linked to the
+older plan with no step, and the goal's plan was never considered.
+
+It replaces: 2.2 item 2's order (and the plan policy agent plan's 22:31
+EST amendment, item 5, which orders the policy's own matching); 2.2
+item 1's `current_step` rule; and the 01:52 EST amendment's item 2 as
+far as it lets a closed plan show. The rest stands.
+
+1. **A goal wins.** Claude Code records a goal in the session's
+   transcript (`~/.claude/projects/<project>/<session>.jsonl`): an
+   `attachment` line whose `attachment` is `{"type": "goal_status",
+   "met": <bool>, "condition": "<the goal>"}`, and the text `Goal set:
+   <the goal>` as a queued command or user message. The daemon reads
+   the transcript of the session tailed for the pane (every file of a
+   continued session, oldest first), once from the start and then only
+   the bytes added since, and keeps, per file, the newest of these in
+   file order:
+   - a `goal_status` with `met: false` and a non-empty `condition`, or a
+     `Goal set: <text>` line, sets the goal to that text;
+   - a `goal_status` with `met: true`, or with no `condition`, or a text
+     starting `Goal cleared` or `Goal removed`, ends it: no goal.
+
+   The goal links the pane to a plan when its text names a plan file:
+   a word of the form `YYYYMMDD_NN_<NAME>_PLAN` (capital letters, digits
+   and underscores), with or without a leading path such as
+   `docs/design/` and with or without `.md`, that is a plan in
+   `docs/design/` of the pane's project (the main checkout's, as the
+   policy plan's 2.8 item 2 reads plans). The first such word counts.
+   `linked_by` is `goal`.
+
+   **The order** of the links is now: `goal`; then the pane's armed task
+   (`pinned`); then a plan path in the reply (`reply_path`); then a
+   plan's title (`summary_title`); then, for `overview` only, the
+   worktree's branch (`worktree_branch`) and the model's match
+   (`gemini`). The first four are also the policy's own matching, so a
+   card from a pane with a goal is judged against the goal's plan: with
+   no task on that plan its rule is `unapproved` and the policy sends
+   nothing, as for any plan without Build.
+
+   A new goal moves the pane off its older task. The task is not
+   changed: it stays armed, with its autocontinue, in the task store,
+   and its row shows with no agent (*In implementation · idle*) until
+   the owner removes it or a pane is linked to it again.
+2. **A closed plan is not active.** A plan whose status is
+   `Implemented`, `Superseded (by <plan>)`, `Retired (by <plan>)` or
+   `Consolidated (by <plan>)` (implemented in part, its remaining steps
+   gathered into the named plan) is closed. When any rule in item 1's
+   order finds a closed plan, the link follows on:
+   - to the plan its `(by <plan>)` names, resolved as the planning
+     reader resolves it (a link's target, a base or file name in
+     `docs/design/`, or a path from the root), if that plan exists in
+     the project;
+   - else to the newest plan whose front matter's `consolidates:` list
+     names it (each entry resolved the same way);
+   - and on again, at most 8 times, until a plan that is not closed.
+
+   If it ends at no plan, or at a closed one, that rule gives nothing
+   and the next rule in the order is tried. So a pane, and a task's
+   pane, are never linked to a closed plan.
+
+   In `overview`, a `Superseded`, `Retired` or `Consolidated` plan never
+   has a row, even while it has a task; the task stays in the store,
+   untouched, and no pane is linked to it, since the link follows past
+   its plan. An `Implemented` plan keeps the 01:52 EST
+   amendment's rule, a row only while it has a task, so the owner can
+   remove the finished task; that row never has agents under it, so it
+   never shows *step N of M*. A pane whose stored link points at a plan
+   that has since closed shows under **Not on a plan** until its next
+   Finished card links it again.
+3. **The current step comes from the agent.** For the plan a Finished
+   card is linked to (by any rule), the daemon reads the card's reply
+   for the step the agent names, case-insensitively:
+   - `starting step N`, `start step N`, `starting on step N`, `now step
+     N`, `on to step N`, `onto step N`, `moving to step N`, `moving on
+     to step N`, `next is step N`, `working on step N`;
+   - `step N is in`, `step N in`, `step N done`, `step N is done`, `step
+     N complete`, `step N is complete`, `step N completed`, `step N
+     landed`, `step N finished`, `step N committed`.
+
+   `N` is digits, and is counted only when it is at least 1 and, when
+   the plan's steps are known, at most their number. The highest `N` in
+   the reply is kept in the same per-plan record as the policy's
+   decisions' steps, which keeps the highest it has seen: a reply naming
+   an earlier step does not move it back. `current_step` is that record
+   (replacing 2.2 item 1's "highest step in the plan's decisions, else
+   the step number the newest linked Finished card's summary names").
+   A step named done is shown as itself, not as the next one, until the
+   agent names a later step. The app's row already reads *step N of M*
+   for an In implementation plan with an agent linked and a
+   `current_step`, so the app does not change.
+4. **Versions.** Patches only: the policy plugin
+   (`dev.flankr.plugins.policy`) 0.1.4 and the daemon 0.7.16, with their
+   `VERSIONS.md` and `UPDATES.md` entries. The planning plugin,
+   flankr-companion and the app do not change (`linked_by` is an open
+   set there).
+
+**Done when:** with neutral fixtures, tests show that a pane with an
+older armed task and a goal naming another plan is linked to the goal's
+plan with `linked_by` `goal`, and the older task's row has no agent; a
+goal reported met, or cleared, gives the task back; a newer goal moves
+the pane; a transcript's goal lines are read as item 1 says, the newest
+winning; a link found on a `Consolidated`, `Superseded` or `Retired`
+plan follows its `(by <plan>)`, or a `consolidates:` list, and such a
+plan has no `overview` row even with a task; and the step phrases of
+item 3 set `current_step`, kept at the highest. The root crate passes
+`cargo fmt --check`, `cargo clippy --all-targets` with no new warnings,
+and its tests.

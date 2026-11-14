@@ -1,4 +1,4 @@
-//! The planning plugin's daemon half, `dev.flankr.plugins.planning@0.1.2`
+//! The planning plugin's daemon half, `dev.flankr.plugins.planning@0.1.3`
 //! (docs/design/20261028_04_PLUGINS_PLAN.md, decision 3.8).
 //!
 //! Read-only and off by default. `plans.list` lists the focused project's
@@ -121,7 +121,7 @@ impl Plugin for Planning {
     }
 
     fn version(&self) -> PluginVersion {
-        PluginVersion::Semver("0.1.2")
+        PluginVersion::Semver("0.1.3")
     }
 
     fn menu(&self) -> &'static [MenuItem] {

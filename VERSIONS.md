@@ -1488,3 +1488,62 @@ amendment, living section L3; 0.8.13 is reserved for another plan):
   message sent to the viewed agent, and `Input::RespondTo` for the viewed
   pane. It comes back if the send is refused, and a later question in the
   same words shows once the first is no longer live.
+
+## dev.flankr.plugins.planning 0.1.3 — 2026-11-13 (the commit tagged `dev.flankr.plugins.planning-v0.1.3`)
+
+Plan 20261113_02, step 1. Strictly additive (fields added on schema 1).
+
+- **Added:** `plans.show`'s plan carries `questions`: the plan's open
+  questions section (`heading`, `line`) and its numbered `items`, each
+  with `n`, `line`, `lead`, `text`, `recommendation` and `answered` (the
+  amendment's `index` and `timestamp`, or `null`); `null` with no
+  section. The general agent's `planning_plan_show` tool gets it too.
+- **Added:** each `plans.list` row carries `open_questions`, the count
+  of items no amendment answered (`0` with no section).
+
+## dev.flankr.plugins.policy 0.1.3 — 2026-11-13 (the commit tagged `dev.flankr.plugins.policy-v0.1.3`)
+
+Plan 20261112_03, the 2026-11-13 01:52 EST amendment, items 2, 4 and 6.
+Strictly additive (fields and rows added to `overview`'s answer).
+
+- **Added:** each `overview` plan row carries `project` (`root`, and
+  `name`, its folder's name) and `open_questions` (the count of the
+  plan's open questions no amendment answered).
+- **Added:** `overview` lists every Draft or In implementation plan of
+  the projects it has read, with no pane and no task as well (its
+  `agents` empty); an Implemented plan still shows only while it has a
+  task.
+
+## flankr-companion 0.8.15 — 2026-11-13 (the commit tagged `flankr-companion-v0.8.15`)
+
+Plan 20261112_03, the 2026-11-13 01:52 EST amendment. Strictly additive
+(fields appended to `PolicyPlanGroup`, and new types and a method).
+
+- **Added:** `PolicyPlanGroup::project` (`PolicyProject { root, name }`)
+  and `PolicyPlanGroup::open_questions`, from the policy plugin 0.1.3's
+  `overview`.
+- **Added:** `PolicyOverview::by_project(agents, order)` and
+  `ProjectGroup` (`project`, `plans`, `key`, `idle_ms`): the Active tasks
+  view's groups, one per project, a kept order first, then by most recent
+  activity, **Not on a plan** last.
+
+## dev.flankr.plugins.policy 0.1.4 — 2026-11-13 (the commit tagged `dev.flankr.plugins.policy-v0.1.4`)
+
+Plan 20261112_03, the 2026-11-13 11:58 EST amendment. A patch, as the
+owner keeps the current series; it changes which plan a pane is linked
+to and which rows `overview` lists.
+
+- **Added:** `linked_by` `goal`: the pane's Claude Code goal names the
+  plan. It comes before the pane's armed task (`pinned`), for
+  `overview` and for the policy's own matching.
+- **Changed:** a link found on an `Implemented`, `Superseded`,
+  `Retired` or `Consolidated` plan follows its `(by <plan>)`, else the
+  newest plan whose `consolidates:` lists it; one that leads to no open
+  plan is not made.
+- **Changed:** `overview` lists no `Superseded`, `Retired` or
+  `Consolidated` plan, even with a task; an `Implemented` plan shows
+  only while it has a task, with no agents. A pane linked to a plan
+  that has since closed is in `unlinked`.
+- **Changed:** `current_step` also takes the step the agent's reply
+  names ("starting step N", "step N done" and the like), kept at the
+  highest seen.

@@ -2089,3 +2089,78 @@ which held only when the session's pending question matched the card:
 4. **Versions.** flankr-companion 0.8.14, a patch (0.8.13 is reserved
    for another plan), with no public API change; the app 0.7.26, a patch
    with its `apps/UPDATES.md` entry (0.7.25 is another branch's).
+
+## Amendment — 2026-11-13 09:50 EST: a reply that asks without a question mark, or before a closing note, is a question (living section L3)
+
+On the owner's explicit instruction (Rule 1.5), 2026-11-13, in
+`docs/OWNER_REPORTS.md` (09:47 EST): "there's open questions/approvals in
+the [other repository's] agent which are not appearing as cards or are
+appearing and disappearing, a clear question such as should I tell it to
+proceed has a yes/no answer". The agent works in another of the owner's
+repositories.
+
+**The fault.** Decision 8, as the 16:32 EDT amendment of 2026-10-23
+leaves it, takes a reply's pending question from its *final paragraph*,
+and only when a line of that paragraph ends with `?`
+(`src/sessions/pending.rs`, `final_paragraph` and `asks`). The agent's
+four replies of 2026-11-13 14:28 to 14:44 UTC (pane `w7:p1`) contain no
+question mark at all. Two ask in the imperative ("Say the word and I'll
+carry on with that, …", "Say go and I'll draft it there: …"), and two of
+those put a one-line note after the asking paragraph ("Still holding the
+… test, unstarted."). So no pending question was found: the daemon sent
+each reply as a live Finished card (the phone's log says "ding: the
+viewed agent finished"), with no Yes or No. The only question the owner
+saw was the one Gemini wrote into its spoken summary and the pinned
+*While you spoke* card ("… Shall I tell it to proceed?"), which has no
+answers and gives way to any live card. The plan policy's
+`decision=ask rule=autocontinue_off` 15 s after each card only logs and
+tells the Active tasks view; it raises and removes no card. The 01:50 EST
+amendment's "an answered question card goes" never ran: no question card
+was raised to answer.
+
+**The fix.** This replaces decision 8's first bullet ("that paragraph
+ends with `?`, or contains a line that does") and its "the final
+paragraph" as the place the question is looked for:
+
+1. **The asking paragraph.** The question is the reply's final paragraph
+   when it asks; else, when the final paragraph is a closing note, the
+   paragraph before it when a sentence of that one opens with a go-ahead
+   invitation (item 2's list), with or without its `?`. A closing note is
+   one line of at most 160 characters that does not itself ask and is not
+   a heading (`#`), table row (`|`), list item (`- `, `* `, `N. `) or code
+   fence. Only one closing note is passed over. A question that is not a
+   go-ahead ("Did that work?") followed by a note ("It did.") is still
+   answered by the note, as before.
+2. **What asks.** A paragraph asks when a line of it ends with `?`
+   (emphasis, quotes and brackets after it ignored, as before), or when a
+   sentence of it begins, ignoring case and leading `*`, `_` or `>`, with
+   one of these go-ahead invitations: `say go`, `say yes`, `say the word`,
+   `say so`, `shall i `, `should i `, `want me to `, `do you want me to `,
+   `would you like me to `, `let me know if you want`,
+   `let me know whether`, `tell me whether`. A sentence begins at the
+   start of a line or after `. `, `! `, `? `, `: ` or ` — `. A generic
+   "Let me know if …" does not ask.
+3. **Everything else is as before.** The question text is the asking
+   paragraph, redacted and cut to 400 characters; its `ts` is the reply's;
+   `SUGGESTIONS.md`'s rules give its answers (the `question` rule's Yes
+   and No, sending `yes` and `no`, unless the `plan` rule takes it). Every
+   place that finds the pending question or a resolved Question card uses
+   the same rule: the agent view's live and resolved cards, the Finished
+   card's test, the notices, Gemini's session context and the plan
+   policy's judgement.
+4. **Not changed:** a reply that asks nothing stays a Finished card even
+   when Gemini's spoken summary ends in a question of its own (the 14:28
+   UTC reply of the report is one).
+5. **Versions.** The daemon 0.7.15, a patch, with its `UPDATES.md` entry;
+   the app 0.7.28, a patch, with its `apps/UPDATES.md` entry, since the
+   app's user sees the cards (FLANKR RULE 2 item 4). flankr-companion is
+   not changed.
+
+**Done when:** a reply whose final paragraph is "Say go and I'll draft
+it." and a reply whose asking paragraph ("Say the word and I'll carry
+on.") is followed by "Still holding the test, unstarted." are each the
+pending question with the `yes` and `no` answers, and a live Question
+card in the sections, not a Finished card; "Let me know if anything
+breaks.", "Did that work?" followed by "It did. Everything is
+committed.", and a go-ahead followed by a closing paragraph of two lines
+or over 160 characters are not; and the daemon's tests for these pass.

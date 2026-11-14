@@ -1028,7 +1028,7 @@ pub(crate) mod tests {
         assert_eq!(popup_ids(&items), [plan.clone(), "---".into(), all.clone()]);
         assert_eq!(items[0].item.label, "Plugins");
         let cells: Vec<&str> = items[0].cells.iter().map(|c| c.text.as_str()).collect();
-        assert_eq!(cells, ["4", "10/28", "Plugins", "InImpl"]);
+        assert_eq!(cells, ["10/28 04", "Plugins", "InImpl"]);
         // Its ids parse back to the plugin's own.
         let Some(crate::menu::Choice::Popup { ns, item, id }) = crate::menu::Choice::parse(&plan)
         else {

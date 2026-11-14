@@ -4905,3 +4905,98 @@ Plan: the add images plan (20261113_01). Small departures (Rule 1.7):
 6. **Step 4** (the end-to-end check on the S23) is left for the owner's
    device run, and **step 6**'s features paragraph in the README for the
    lead; the decision table's row was updated in the first commit.
+
+## 2026-11-13 01:51 EST — Active tasks grouped by project, and plans' open questions counted
+
+Plans: the active plans home view plan (20261112_03), by an amendment
+the owner approved on 2026-11-13 ("approve the amendments"); and the
+plan questions plan (20261113_02), approved and starting with the step
+the count needs. Steps, in order:
+
+1. docs: the amendment to the active plans home view plan, quoting the
+   owner's two messages: projects at the top level, each plan one row in
+   its stage, a plan being built showing its subagents, no agent row,
+   events under the plan row, and an open-questions count.
+2. flankr (the plan questions plan, step 1): the planning plugin's reader
+   finds a plan's open questions; `plans.show` carries `questions` and
+   `plans.list`'s rows `open_questions`. Planning plugin 0.1.3; daemon
+   0.7.14 with its `UPDATES.md` entry. The plan's status, immutable
+   marker and README row go in this commit.
+3. flankr: the policy plugin's `overview` gives each plan row its project
+   and open-question count, and lists the project's plans in their
+   stages (Draft, In implementation, and Implemented while a task).
+   Policy plugin 0.1.3.
+4. flankr-companion 0.8.13: the overview's new fields, and the grouping
+   by project for the view.
+5. companion: the Active tasks view by project (app 0.7.27).
+
+Steps 2 to 4 of the plan questions plan (the answers message, the plan
+page's answers, the plans table's badge) are not part of this work.
+
+## 2026-11-13 02:58 EST — Active tasks by project, and plans' open questions: departures
+
+Plans: the active plans home view plan (20261112_03), its 2026-11-13
+01:52 EST amendment; and the plan questions plan (20261113_02), step 1.
+Small departures (Rule 1.7):
+
+1. **flankr-companion is 0.8.15, not 0.8.13.** The 01:52 EST amendment's
+   item 7 names 0.8.13; 0.8.14 was released on another branch first, so
+   this work takes 0.8.15. The app is 0.7.27, as the amendment says.
+2. **Which amendment answers a question** (the plan questions plan,
+   decision 2): the numbers an amendment names next to "open
+   question(s)" win over its subject; the subject answers every item
+   only when the amendment names no numbers. A subject answers all when
+   it calls the open questions answered, settled or approved, or gives
+   the owner's answers (`answers:`, `owner's answers`), not on any use
+   of the word "answers": plan 20261112_02's 22:03 EST subject,
+   "autocontinue only answers the agent's own continue question", would
+   otherwise have answered every item.
+3. **Recommendations** include a sentence with `(recommended,` as well
+   as `(recommended)`; plan 20261112_03's item 3 is written that way.
+4. **Step 1's Done when** says items 1 to 6 of plan 20261112_03 are
+   answered by its 21:58 EST amendment; that amendment also names open
+   questions 7 and 8 (in its items 7 and 6), so eight are answered and
+   item 9, named only in part, stays open. The test checks against
+   copies of the two plans in `tests/fixtures/plan_questions/` rather
+   than the planning fixture, so the list fixture's tests are unchanged.
+5. **The policy plugin 0.1.3** lists every Draft or In implementation
+   plan of the projects it has read, which can be many in a long-running
+   repository; they are one row each with no children.
+6. **The plan row's tap** opens the agent view of its first agent; a plan
+   with no agent folds (it has no children to fold). A project's line
+   folds its plans. **Not on a plan** keeps its agent lines, since it has
+   no plan row to carry them.
+
+## 2026-11-13 12:06 EST — A Claude Code goal links its pane, closed plans, the agent's step: departures
+
+Plans: the active plans home view plan (20261112_03), its 2026-11-13
+11:58 EST amendment; and, through it, the plan policy agent plan
+(20261112_02). Small departures (Rule 1.7):
+
+1. **The plan policy agent plan's matching changes without an amendment
+   of its own.** Its 2.3 item 5, as its 22:31 EST amendment's item 5
+   orders it, put the pane's task first. The owner's change was agreed
+   as one amendment, to the active plans home view plan, and that
+   amendment names this text as replaced: the policy's matching is now
+   goal, task, the reply's path, the title. That plan is not edited.
+2. **The `status` rule meets fewer plans.** A task whose plan is now
+   Implemented, Superseded, Retired or Consolidated no longer matches
+   (the match follows past it), so the policy's `status` rule, which
+   also switched that task's autocontinue off, now only meets a plan on
+   Hold. The task is left as it is; nothing is sent for it.
+3. **The policy plugin is a patch, 0.1.4,** although `overview`'s rows
+   and links change in ways a caller sees (Critical Rule 5.4 would make
+   it 0.2.0): the owner keeps the current version series with patch
+   bumps for now.
+4. **How a goal ends.** Only a goal being set was seen in a real
+   transcript (a `goal_status` attachment with `met: false`, and the
+   `Goal set: ` text). A goal met or cleared is taken from a
+   `goal_status` with `met: true` or no `condition`, or a text starting
+   `Goal cleared` or `Goal removed`, as the amendment says; if Claude
+   Code records the end some other way, the goal keeps counting until a
+   newer goal is set.
+5. **When the goal is read.** The goal is read when a Finished card
+   from the pane arrives, as the other links are; the first read of a
+   long transcript reads the whole file once, off the async threads (a
+   373 MB transcript took about 5 s in a debug build), and later reads
+   only what was added.

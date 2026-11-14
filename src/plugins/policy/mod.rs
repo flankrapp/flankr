@@ -1,4 +1,4 @@
-//! The plan policy plugin's daemon half, `dev.flankr.plugins.policy@0.1.2`
+//! The plan policy plugin's daemon half, `dev.flankr.plugins.policy@0.1.4`
 //! (docs/design/20261112_02_PLAN_POLICY_AGENT_PLAN.md, with its
 //! amendments).
 //!
@@ -143,6 +143,12 @@ pub trait Services: Send + Sync {
     /// The question the agent in `pane_id` ended its turn with, in its
     /// reply's words, if any.
     fn pending_question(&self, _pane_id: &str) -> Option<String> {
+        None
+    }
+    /// The Claude Code goal set in `pane_id`'s session, its text, while
+    /// it is neither met nor cleared (plan 20261112_03, the 2026-11-13
+    /// 11:58 EST amendment, item 1).
+    async fn goal(&self, _pane_id: &str) -> Option<String> {
         None
     }
     /// The choice question open on `pane_id`, its first question's words,
@@ -384,6 +390,7 @@ impl PlanPolicy {
     async fn decide(
         &self,
         event: &CardSummaryEvent,
+        goal: Option<&str>,
         ctx: &PluginCtx,
         settings: &Settings,
     ) -> Option<Decision> {
@@ -406,7 +413,7 @@ impl PlanPolicy {
             .filter(|t| t.project_root == root)
             .collect();
         let plans = plans::list(ctx).await.unwrap_or_default();
-        let Some((plan, _linked)) = rules::match_plan(event, &tasks, &plans) else {
+        let Some((plan, _linked)) = rules::match_plan(event, goal, &tasks, &plans) else {
             return Some(Decision::new(
                 event,
                 Verdict::Stop,
@@ -628,7 +635,7 @@ impl Plugin for PlanPolicy {
     }
 
     fn version(&self) -> PluginVersion {
-        PluginVersion::Semver("0.1.2")
+        PluginVersion::Semver("0.1.4")
     }
 
     fn menu(&self) -> &'static [MenuItem] {
@@ -710,10 +717,21 @@ impl Plugin for PlanPolicy {
         let settings = Settings::of(ctx.config());
         // 2.8 item 2: a worktree's pane works on the main checkout's plans.
         let checkout = worktree::checkout(ctx).await;
+        // The pane's Claude Code goal comes first (plan 20261112_03, the
+        // 2026-11-13 11:58 EST amendment, item 1).
+        let goal = match &self.services {
+            Some(s) => s.goal(&event.pane.pane_id).await,
+            None => None,
+        };
         // The Active tasks view's link, for every agent, paused or not; it
         // never makes the policy act (plan 20261112_03, 2.2 item 2).
-        self.link_card(event, checkout.main.as_ref().unwrap_or(ctx), &checkout)
-            .await;
+        self.link_card(
+            event,
+            goal.as_deref(),
+            checkout.main.as_ref().unwrap_or(ctx),
+            &checkout,
+        )
+        .await;
         if self.paused() {
             return;
         }
@@ -741,7 +759,7 @@ impl Plugin for PlanPolicy {
             return;
         }
         let ctx = checkout.main.as_ref().unwrap_or(ctx);
-        if let Some(mut decision) = self.decide(event, ctx, &settings).await {
+        if let Some(mut decision) = self.decide(event, goal.as_deref(), ctx, &settings).await {
             decision.worktree = checkout.worktree.clone();
             match decision.verdict {
                 Verdict::Continue => self.continue_through_the_gate(&mut decision, ctx, &settings),
@@ -801,13 +819,16 @@ impl PlanPolicy {
     }
 
     /// Which plan a card's pane is on, for the Active tasks view (plan
-    /// 20261112_03, 2.2 item 2, as its 22:03 EST amendment matches): the
-    /// policy's own match (`pinned`, `reply_path`, `summary_title`), else
-    /// the worktree's `plan/<id>` branch, else one `plan_match` call. A
-    /// failure keeps the pane's last link.
+    /// 20261112_03, 2.2 item 2, as its 22:03 EST and 2026-11-13 11:58 EST
+    /// amendments match): the policy's own match (`goal`, `pinned`,
+    /// `reply_path`, `summary_title`), else the worktree's `plan/<id>`
+    /// branch, else one `plan_match` call. A failure keeps the pane's last
+    /// link. The step the reply names is kept as the plan's (the 11:58
+    /// EST amendment, item 3).
     async fn link_card(
         &self,
         event: &CardSummaryEvent,
+        goal: Option<&str>,
         ctx: &PluginCtx,
         checkout: &worktree::Checkout,
     ) {
@@ -823,10 +844,11 @@ impl PlanPolicy {
             .collect();
         let plans = plans::list(ctx).await.unwrap_or_default();
         let mut found: Option<(plans::PlanDoc, &'static str)> =
-            rules::match_plan(event, &tasks, &plans).map(|(p, by)| {
+            rules::match_plan(event, goal, &tasks, &plans).map(|(p, by)| {
                 (
                     p.clone(),
                     match by {
+                        rules::LinkedBy::Goal => "goal",
                         rules::LinkedBy::Task => "pinned",
                         rules::LinkedBy::Path => "reply_path",
                         rules::LinkedBy::Title => "summary_title",
@@ -836,8 +858,9 @@ impl PlanPolicy {
         if found.is_none()
             && let Some(branch) = &checkout.branch
         {
-            found =
-                overview::plan_of_branch(branch, &plans).map(|p| (p.clone(), "worktree_branch"));
+            found = overview::plan_of_branch(branch, &plans)
+                .and_then(|p| rules::follow(p, &plans))
+                .map(|p| (p.clone(), "worktree_branch"));
         }
         if found.is_none()
             && let Some(services) = &self.services
@@ -881,8 +904,13 @@ impl PlanPolicy {
                 .or_default();
             session.agent = event.pane.agent.clone();
             session.project = event.project.clone();
-            let changed = session.link.as_ref() != Some(&link);
+            let mut changed = session.link.as_ref() != Some(&link);
             session.link = Some(link.clone());
+            if let Some(n) = rules::step_named(&event.reply, plan.steps.len()) {
+                let best = state.steps.entry(plan.path.clone()).or_insert(0);
+                changed |= n > *best;
+                *best = (*best).max(n);
+            }
             changed
         };
         if changed {
