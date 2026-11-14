@@ -247,6 +247,9 @@ impl Kind {
 const KIND_W: f32 = 20.0;
 /// The gap before a mark after a text, in points.
 const MARK_GAP: f32 = 6.0;
+/// The project title's arrow's touch area: the right of the row, in
+/// points (2.5 item 2).
+const ARROW_W: f32 = 48.0;
 /// The chevron's column at the left of a collapsible row, in points.
 const CHEVRON_W: f32 = 18.0;
 
@@ -662,7 +665,9 @@ impl PlanList {
         for project in &projects {
             let key = format!("project:{}", project.key());
             if let Some(pr) = &project.project {
-                let item = self.project_line(pr, &key, y, w);
+                // Its arrow opens its main agent (2.5).
+                let main = project.main_agent(&self.agents).map(|a| a.pane_id.clone());
+                let item = self.project_line(pr, &key, main, y, w);
                 y += item.rect.h;
                 items.push(item);
                 if self.folded.contains(&key) {
@@ -1007,6 +1012,7 @@ impl PlanList {
         &self,
         p: &flankr_companion::policy::PolicyProject,
         key: &str,
+        main: Option<String>,
         y: f32,
         w: f32,
     ) -> Item {
@@ -1020,18 +1026,35 @@ impl PlanList {
         };
         // The drawn chevron, right while folded and down while open (2.4).
         let open = !self.folded.contains(key);
+        let mut chevrons = vec![([PAD * s + 6.0 * s, y + h * 0.5], open, theme().accent)];
+        let mut hits = vec![(rect, ListHit::Fold(key.to_string()))];
+        // The arrow at the right edge, the right-pointing chevron in the
+        // secondary ink, with the right ARROW_W of the row its own: it
+        // opens the project's main agent (2.5); none without an agent.
+        let arrow_w = if main.is_some() { ARROW_W * s } else { 0.0 };
+        if let Some(pane) = main {
+            chevrons.push(([w - PAD * s - 6.0 * s, y + h * 0.5], false, theme().dim));
+            hits.push((
+                Rect::new(w - ARROW_W * s, y, ARROW_W * s, h),
+                ListHit::Agent(pane),
+            ));
+        }
         Item {
             rect,
             texts: vec![(
-                ellipsis(&name, w - 2.0 * PAD * s - CHEVRON_W * s, LINE_PT * s),
+                ellipsis(
+                    &name,
+                    w - 2.0 * PAD * s - CHEVRON_W * s - arrow_w,
+                    LINE_PT * s,
+                ),
                 [(PAD + CHEVRON_W) * s, y + (h - line_h(LINE_PT * s)) * 0.5],
                 LINE_PT * s,
                 theme().accent,
             )],
             fills: vec![(Rect::new(0.0, y, w, h), theme().card, 0.0)],
-            hits: vec![(rect, ListHit::Fold(key.to_string()))],
+            hits,
             key: None,
-            chevrons: vec![([PAD * s + 6.0 * s, y + h * 0.5], open, theme().accent)],
+            chevrons,
             ..Default::default()
         }
     }
@@ -2351,8 +2374,14 @@ mod tests {
         )
     }
 
+    /// The widest area of `hit`: a row's, before a title's arrow.
     fn rect_of(l: &PlanList, hit: &ListHit) -> Rect {
-        l.hits().into_iter().find(|(_, h)| h == hit).unwrap().0
+        l.hits()
+            .into_iter()
+            .filter(|(_, h)| h == hit)
+            .max_by(|a, b| a.0.w.total_cmp(&b.0.w))
+            .unwrap()
+            .0
     }
 
     /// The 2026-11-13 01:07 EST amendment, item 1.
@@ -2433,10 +2462,11 @@ mod tests {
             !l.texts().contains(&"Plan policy agent".to_string()),
             "hidden"
         );
+        // Only the project title's arrow still opens p1.
         assert!(
             !l.hits()
                 .iter()
-                .any(|(_, h)| *h == ListHit::Agent("p1".into()))
+                .any(|(r, h)| *h == ListHit::Agent("p1".into()) && r.w > 48.0 * 2.0)
         );
         assert_eq!(l.hidden(), 1);
         // The same state again: still hidden.
@@ -2648,5 +2678,75 @@ mod tests {
         // A confirmation open on p1's pane brings its plan back.
         l.confirm_opened("p1", 30, "continue", "plugin:policy", None);
         assert!(l.texts().contains(&"Plan policy agent".to_string()));
+    }
+
+    /// The active tasks overview plan, step 5: a tap on the project
+    /// title's arrow opens its most recently active top-level agent; a
+    /// tap elsewhere on the title folds it; no agent, no arrow.
+    #[test]
+    fn the_titles_arrow_opens_the_projects_main_agent() {
+        let mut l = list();
+        let mut agents = l.agents.clone();
+        agents[0].last_activity = Some("2026-11-14T20:00:00Z".into());
+        agents[1].last_activity = Some("2026-11-14T20:00:30Z".into());
+        l.set_agents(&agents);
+        let title = rect_of(&l, &ListHit::Fold("project:/r/flankr".into()));
+        let arrow = l
+            .hits()
+            .into_iter()
+            .find(|(r, h)| matches!(h, ListHit::Agent(_)) && r.y == title.y)
+            .unwrap();
+        assert_eq!(arrow.1, ListHit::Agent("p2".into()), "p2 the newest");
+        assert_eq!(arrow.0.w, 48.0 * 2.0, "48 pt at scale 2");
+        assert_eq!(
+            arrow.0.x + arrow.0.w,
+            title.x + title.w,
+            "at the right edge"
+        );
+        assert_eq!(arrow.0.h, title.h, "its full height");
+        assert_eq!(
+            l.chevrons()[..2],
+            [true, false],
+            "the fold's, then the arrow"
+        );
+        let tap = |l: &mut PlanList, c: [f32; 2]| {
+            l.touch(8, TouchPhase::Started, c[0], c[1], Duration::ZERO);
+            l.touch(8, TouchPhase::Ended, c[0], c[1], Duration::from_millis(40))
+        };
+        assert_eq!(
+            tap(&mut l, arrow.0.center()),
+            Some(ListHit::Agent("p2".into()))
+        );
+        assert!(
+            l.texts().contains(&"Plan policy agent".to_string()),
+            "not folded"
+        );
+        let left = [title.x + 40.0, title.y + title.h * 0.5];
+        assert_eq!(
+            tap(&mut l, left),
+            Some(ListHit::Fold("project:/r/flankr".into()))
+        );
+        assert!(
+            !l.texts().contains(&"Plan policy agent".to_string()),
+            "folded"
+        );
+        // A project with no agent: no arrow.
+        let mut o = overview();
+        o.plans[0].agents.clear();
+        o.plans[1].agents.clear();
+        let mut l = list();
+        l.set_overview(Some(o), Grouping::ByPlan);
+        let title = rect_of(&l, &ListHit::Fold("project:/r/flankr".into()));
+        assert!(
+            !l.hits()
+                .iter()
+                .any(|(r, h)| matches!(h, ListHit::Agent(_)) && r.y == title.y)
+        );
+        assert!(l.chevrons()[0]);
+        assert_eq!(
+            l.chevrons().len(),
+            2,
+            "the fold's and the inactive section's"
+        );
     }
 }

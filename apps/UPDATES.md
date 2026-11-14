@@ -472,3 +472,8 @@ These changes came before the app had version numbers.
 - In Active tasks, rows that have been quiet for more than 10 minutes fold away under an "N inactive" row at the end of each project (and of Not on a plan): plans no agent is working on, finished subagents, and agents whose turn ended. Tap it to open or close it; it starts closed each time the app starts.
 - A row never folds away while something waits on you: a question, an approval, or the plan policy asking. A row comes back out as soon as its agent starts working again or something waits on you.
 - Finished subagents are now listed too, inside "N inactive" once they've been quiet for 10 minutes. Needs the daemon 0.7.17 or later.
+
+## 0.7.33 — 2026-11-14
+
+**Added**
+- Each project's title in Active tasks has an arrow at its right edge. Tap it to open the turns of the project's agent that was active most recently, as tapping that agent in All agents does. A tap anywhere else on the title still folds and unfolds the project. A project with no agent has no arrow.
