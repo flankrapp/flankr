@@ -56,6 +56,8 @@ fn child(id: &str, short: &str, description: &str, finished: bool, minutes: u64)
         started: now() - minutes * 60,
         started_by: None,
         turn: None,
+        working: false,
+        last_activity: None,
     }
 }
 
@@ -104,6 +106,9 @@ fn agent(children: Vec<ChildInfo>) -> AgentInfo {
         children,
         workspace_label: None,
         workspace_number: None,
+        working: false,
+        last_activity: None,
+        goal: None,
     }
 }
 

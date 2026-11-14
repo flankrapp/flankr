@@ -458,3 +458,10 @@ These changes came before the app had version numbers.
 
 **Fixed**
 - A project's name in Active tasks no longer starts with a missing-glyph box: a drawn chevron points right while the project is folded and down while it is open.
+
+## 0.7.31 — 2026-11-14
+
+**Added**
+- In Active tasks, a row whose agent is still producing shows the drawer's spinner in place of its glyph: a plan being built, a subagent at work, an agent's goal, and an agent not on a plan. It means new turns are still coming in, not only that the agent is busy; a long tool call still counts while the agent's timer keeps running. Needs the daemon 0.7.17 or later; with an older one, the spinner follows what herdr says.
+- An agent's own goal that names no plan has its own ◎ row, with the goal's first line, under the project the agent works in (or under the agent in Not on a plan). Tap it to open that agent.
+- A subagent still working on a long tool call stays listed under its plan.

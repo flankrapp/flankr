@@ -139,6 +139,8 @@ pub(crate) mod tests {
             started: NOW - minutes_ago * 60,
             started_by: Some(format!("toolu_{id}")),
             turn: None,
+            working: false,
+            last_activity: None,
         }
     }
 

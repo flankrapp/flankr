@@ -33,9 +33,10 @@ use std::time::Duration;
 
 use flankr_companion::policy::{
     PlanGroup, PolicyAgentLink, PolicyDecision, PolicyOverview, PolicyPlanGroup, ProjectGroup,
+    in_project,
 };
 use libcontrols::{DrawContext, Rect};
-use libflankr_proto::common::{AgentInfo, Turn};
+use libflankr_proto::common::{AgentInfo, ChildInfo, Turn};
 use libmorph::TouchPhase;
 use libmsdf::drawlist::DrawList;
 
@@ -185,6 +186,9 @@ struct Glyph {
     /// Drawn after the row's text of this index, where the face puts its
     /// end, rather than at `at[0]`.
     after: Option<usize>,
+    /// The row is working: the drawer's Braille spinner in place of the
+    /// glyph (2.2 item 5).
+    spin: bool,
 }
 
 /// The kinds of row (the active tasks overview plan, 2.1), each drawn
@@ -286,6 +290,9 @@ pub struct PlanList {
     /// finger was down.
     order: Vec<String>,
     since_touch: Duration,
+    /// The spinner's clock, and the frame last drawn while one spins.
+    clock: Duration,
+    frame: Option<usize>,
 }
 
 impl Default for PlanList {
@@ -320,6 +327,8 @@ impl PlanList {
             refreshing: None,
             order: Vec::new(),
             since_touch: RESORT_AFTER,
+            clock: Duration::ZERO,
+            frame: None,
         }
     }
 
@@ -338,6 +347,29 @@ impl PlanList {
     /// The app's clock, for the events' ages.
     pub fn set_now(&mut self, now: Duration) {
         self.now = now;
+    }
+
+    /// The spinner's clock, the drawer's (the app's time since it
+    /// started), before each draw (2.2 item 5): the list is drawn again
+    /// only when a spinning row is in view and the frame moved on.
+    pub fn set_clock(&mut self, clock: Duration) {
+        self.clock = clock;
+        let frame = self
+            .spinning()
+            .then(|| crate::drawer::spinner::frame_at(clock));
+        if frame != self.frame {
+            self.frame = frame;
+            self.dirty = true;
+        }
+    }
+
+    /// Whether a working row's spinner is in view.
+    pub fn spinning(&self) -> bool {
+        let top = self.scroll.offset();
+        let (vy, vh) = (top, self.viewport.h);
+        self.items.iter().any(|i| {
+            i.glyphs.iter().any(|g| g.spin) && i.rect.y + i.rect.h >= vy && i.rect.y <= vy + vh
+        })
     }
 
     /// The plugin's answer, or why there is none.
@@ -583,6 +615,21 @@ impl PlanList {
         // A task swiped away stays hidden until a new event row or a
         // state change (the 2026-11-13 01:07 EST amendment, item 3).
         let mut back: Vec<String> = Vec::new();
+        // Each goal row goes under the project its agent's folder lies in,
+        // else under its agent in Not on a plan (2.1 item 2).
+        let goals = self.goal_agents(&projects);
+        let goal_home = |a: &AgentInfo| {
+            projects
+                .iter()
+                .filter_map(|p| p.project.as_ref())
+                .find(|p| !p.root.is_empty() && in_project(a, &p.root))
+                .map(|p| p.root.clone())
+        };
+        let homed: HashSet<String> = goals
+            .iter()
+            .filter(|(a, _)| goal_home(a).is_some())
+            .map(|(a, _)| a.pane_id.clone())
+            .collect();
         for project in &projects {
             let key = format!("project:{}", project.key());
             if let Some(pr) = &project.project {
@@ -636,6 +683,15 @@ impl PlanList {
                         let item = self.agent_line(agent, link, y, w);
                         y += item.rect.h;
                         items.push(item);
+                        // Its goal under it, when no project took it.
+                        if let Some((a, goal)) =
+                            goals.iter().find(|(a, _)| a.pane_id == agent.pane_id)
+                            && !homed.contains(&a.pane_id)
+                        {
+                            let item = self.goal_line(a, goal, y, w);
+                            y += item.rect.h;
+                            items.push(item);
+                        }
                     }
                     for item in self.event_rows(agent, y, w) {
                         if let Some(Hide::Event(k)) = &item.key
@@ -644,6 +700,16 @@ impl PlanList {
                             hidden += 1;
                             continue;
                         }
+                        y += item.rect.h;
+                        items.push(item);
+                    }
+                }
+            }
+            // The project's goal rows, after its plans.
+            if let Some(pr) = &project.project {
+                for (a, goal) in &goals {
+                    if goal_home(a).as_deref() == Some(pr.root.as_str()) {
+                        let item = self.goal_line(a, goal, y, w);
                         y += item.rect.h;
                         items.push(item);
                     }
@@ -768,6 +834,8 @@ impl PlanList {
                 px: TITLE_PT * s,
                 colour: theme().fg,
                 after: None,
+                // An agent on it still producing (2.2 item 5).
+                spin: g.agents.iter().any(|(a, _)| agent_works(a)),
             });
         }
         texts.push((
@@ -784,6 +852,7 @@ impl PlanList {
                 px: TITLE_PT * s,
                 colour: theme().fg,
                 after: Some(0),
+                spin: false,
             });
             // A second mark after the first, a cell on.
             after.push(' ');
@@ -893,14 +962,16 @@ impl PlanList {
         let mut glyphs = Vec::new();
         let mut at = y;
         for (a, _) in &g.agents {
-            for c in a.children.iter().filter(|c| !c.finished) {
-                // ⑂, then its words (2.1 item 3).
+            for c in a.children.iter().filter(|c| !c.finished || child_works(c)) {
+                // ⑂, then its words (2.1 item 3); the spinner while it
+                // works (2.2 items 3 and 5).
                 glyphs.push(Glyph {
                     text: Kind::Subagent.glyph().to_string(),
                     at: [x, at + 2.0 * s],
                     px: LINE_PT * s,
                     colour: theme().fg,
                     after: None,
+                    spin: child_works(c),
                 });
                 texts.push((
                     ellipsis(&c.short, w - x - KIND_W * s - PAD * s, LINE_PT * s),
@@ -920,6 +991,57 @@ impl PlanList {
             glyphs,
             ..Default::default()
         }
+    }
+
+    /// An agent's own goal that names no plan (2.1 item 2): ◎ and the
+    /// goal cut to one line, the spinner while its agent works; a tap
+    /// opens the agent.
+    fn goal_line(&self, a: &AgentInfo, goal: &str, y: f32, w: f32) -> Item {
+        let s = self.s;
+        let h = SUBAGENT_H * s + 4.0 * s;
+        let rect = Rect::new(0.0, y, w, h);
+        let x = PAD * s;
+        Item {
+            rect,
+            texts: vec![(
+                ellipsis(goal, w - x - KIND_W * s - PAD * s, LINE_PT * s),
+                [x + KIND_W * s, y + 4.0 * s],
+                LINE_PT * s,
+                theme().fg,
+            )],
+            hits: vec![(rect, ListHit::Agent(a.pane_id.clone()))],
+            glyphs: vec![Glyph {
+                text: Kind::Goal.glyph().to_string(),
+                at: [x, y + 4.0 * s],
+                px: LINE_PT * s,
+                colour: theme().fg,
+                after: None,
+                spin: agent_works(a),
+            }],
+            ..Default::default()
+        }
+    }
+
+    /// The agents whose goal names no plan here: none of the plans has
+    /// them linked by their goal.
+    fn goal_agents(&self, projects: &[ProjectGroup]) -> Vec<(AgentInfo, String)> {
+        let by_goal: HashSet<&str> = projects
+            .iter()
+            .flat_map(|p| p.plans.iter())
+            .filter(|g| g.plan.is_some())
+            .flat_map(|g| g.agents.iter())
+            .filter(|(_, l)| l.as_ref().is_some_and(|l| l.linked_by == "goal"))
+            .map(|(a, _)| a.pane_id.as_str())
+            .collect();
+        self.agents
+            .iter()
+            .filter(|a| a.agent != "shell" && !by_goal.contains(a.pane_id.as_str()))
+            .filter_map(|a| {
+                let goal = a.goal.as_deref()?.trim();
+                (!goal.is_empty())
+                    .then(|| (a.clone(), goal.lines().next().unwrap_or("").to_string()))
+            })
+            .collect()
     }
 
     fn waiting(&self, g: &PlanGroup) -> (usize, usize) {
@@ -1005,12 +1127,27 @@ impl PlanList {
                 1.5 * s,
             ));
         }
+        // An agent with no kind of its own spins in its indent while it
+        // works (2.2 item 5).
+        let glyphs = if agent_works(a) {
+            vec![Glyph {
+                text: String::new(),
+                at: [PAD * s + 5.0 * s, y + 4.0 * s],
+                px: LINE_PT * s,
+                colour: theme().fg,
+                after: None,
+                spin: true,
+            }]
+        } else {
+            Vec::new()
+        };
         Item {
             rect,
             texts,
             fills,
             hits: vec![(rect, ListHit::Agent(a.pane_id.clone()))],
             key: None,
+            glyphs,
             ..Default::default()
         }
     }
@@ -1399,8 +1536,13 @@ impl PlanList {
                     Some((text, at, px, _)) => at[0] + ctx.text_advance(text, *px) + MARK_GAP * s,
                     None => g.at[0],
                 };
+                let text = if g.spin {
+                    crate::drawer::spinner::glyph_at(self.clock).to_string()
+                } else {
+                    g.text.clone()
+                };
                 let row = Row {
-                    text: g.text.clone(),
+                    text,
                     x: 0.0,
                     y: 0.0,
                     px: g.px,
@@ -1434,7 +1576,15 @@ impl PlanList {
     pub fn glyphs(&self) -> Vec<String> {
         self.items
             .iter()
-            .flat_map(|i| i.glyphs.iter().map(|g| g.text.trim().to_string()))
+            .flat_map(|i| {
+                i.glyphs.iter().map(|g| {
+                    if g.spin {
+                        crate::drawer::spinner::glyph_at(self.clock).to_string()
+                    } else {
+                        g.text.trim().to_string()
+                    }
+                })
+            })
             .collect()
     }
 
@@ -1596,6 +1746,18 @@ fn agent_label(a: &AgentInfo, link: Option<&PolicyAgentLink>) -> String {
     }
 }
 
+/// Whether `a` is still producing (2.2): the daemon's `working`; from an
+/// older daemon, which sends no `last_activity`, herdr's `working`.
+pub fn agent_works(a: &AgentInfo) -> bool {
+    a.working || (a.last_activity.is_none() && a.status == "working")
+}
+
+/// Whether subagent `c` is still producing (2.2 item 3): the daemon's
+/// `working`; from an older daemon, not finished.
+pub fn child_works(c: &ChildInfo) -> bool {
+    c.working || (c.last_activity.is_none() && !c.finished)
+}
+
 /// The marks after a plan's title (2.1 item 1): ↻ while its task's
 /// autocontinue is on, ◎ while an agent's goal names it.
 fn plan_marks(p: &PolicyPlanGroup, g: &PlanGroup) -> Vec<Kind> {
@@ -1674,7 +1836,8 @@ mod tests {
                 "p1",
                 json!({"subagents_running": 1, "focused": true, "idle_ms": 1000,
                 "children": [
-                    {"id": "a1", "short": "overview screen", "description": "x"},
+                    {"id": "a1", "short": "overview screen", "description": "x",
+                     "last_activity": "2026-11-14T20:00:00Z"},
                     {"id": "a2", "short": "done one", "description": "y", "finished": true}
                 ]}),
             ),
@@ -2136,5 +2299,66 @@ mod tests {
         let mut dl = DrawList::new();
         l.draw(&mut dl, &DrawContext::default(), None);
         assert!(!dl.instances.is_empty());
+    }
+
+    /// The active tasks overview plan, step 3: a working row's glyph is
+    /// the drawer's spinner frame at the same moment, and with nothing
+    /// working the list is not drawn again at the spinner's rate.
+    #[test]
+    fn a_working_row_spins_with_the_drawer() {
+        use crate::drawer::spinner::{FRAME, glyph_at};
+        let mut l = list();
+        let ms = Duration::from_millis;
+        // Nothing working (the fixture agents are idle, from a daemon
+        // that sends last_activity): no spinner, no redraws.
+        let mut agents = l.agents.clone();
+        for a in &mut agents {
+            a.last_activity = Some("2026-11-14T20:00:00Z".into());
+        }
+        agents[0].children[0].working = false;
+        agents[0].children[0].last_activity = Some("2026-11-14T20:00:00Z".into());
+        l.set_agents(&agents);
+        l.take_dirty();
+        assert!(!l.spinning());
+        for i in 0..5 {
+            l.set_clock(FRAME * i);
+            assert!(!l.take_dirty(), "no redraw while nothing spins");
+        }
+        // p1 working, and its subagent: the plan's ☑ and the ⑂ spin.
+        agents[0].working = true;
+        agents[0].children[0].working = true;
+        l.set_agents(&agents);
+        let t = ms(80 * 7 + 3);
+        l.set_clock(t);
+        assert!(l.spinning());
+        let g = l.glyphs();
+        assert_eq!(g[0], glyph_at(t).to_string(), "the drawer's frame: {g:?}");
+        assert_eq!(g[2], glyph_at(t).to_string(), "the subagent's too");
+        assert_eq!(g[1], "\u{21bb}", "the mark stays");
+        assert!(l.take_dirty());
+        l.set_clock(t + ms(10));
+        assert!(!l.take_dirty(), "the same frame: nothing new");
+        l.set_clock(t + FRAME);
+        assert!(l.take_dirty(), "the next frame");
+        // An older daemon (no last_activity): herdr's working.
+        let mut old = agent("p9", json!({"status": "working"}));
+        assert!(agent_works(&old));
+        old.status = "idle".into();
+        assert!(!agent_works(&old));
+        // A goal naming no plan: its own ◎ row, spinning while it works.
+        agents[2].goal = Some("tidy the docs\nmore".into());
+        agents[2].last_activity = Some("2026-11-14T20:00:00Z".into());
+        l.set_agents(&agents);
+        assert!(
+            l.texts().contains(&"tidy the docs".to_string()),
+            "{:?}",
+            l.texts()
+        );
+        assert!(l.glyphs().contains(&"\u{25ce}".to_string()));
+        assert!(
+            l.hits()
+                .iter()
+                .any(|(_, h)| *h == ListHit::Agent("p3".into()))
+        );
     }
 }

@@ -5917,7 +5917,12 @@ impl MorphApp for App {
             (Some(screen), _) => screen.draw(&mut self.list, &draw, Some(&term)),
             (None, Some(agent)) => agent.draw(&mut self.list, &draw, Some(&term)),
             (None, None) if shown == Shown::Pairing => self.screen.draw(&mut self.list, &draw),
-            (None, None) => self.overview.draw(&mut self.list, &draw, Some(&term)),
+            (None, None) => {
+                // The spinner's frame, the drawer's clock (plan 20261114_01,
+                // 2.2 item 5).
+                self.overview.tasks.set_clock(self.started.elapsed());
+                self.overview.draw(&mut self.list, &draw, Some(&term))
+            }
         };
         // The card goes over what the screen drew, unless a prompt card's
         // overlay is over it (each screen draws its own, plan 20261027_03).

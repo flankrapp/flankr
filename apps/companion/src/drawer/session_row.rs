@@ -313,6 +313,9 @@ pub(crate) mod tests {
             summary: None,
             workspace_label: None,
             workspace_number: None,
+            working: false,
+            last_activity: None,
+            goal: None,
         }
     }
 
