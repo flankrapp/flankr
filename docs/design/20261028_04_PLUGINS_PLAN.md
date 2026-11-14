@@ -1144,3 +1144,39 @@ amendment of this time). The app's one hold time is used
 (`controls/hold.rs`, `HOLD` = 500 ms); a release before 500 ms is the
 card's tap, as before. The card draws no progress bar, as it drew none
 before. The rest of decision 3.7 stands.
+
+## Amendment — 2026-11-14 13:59 EST: the plan table's date and NN as one `MM/DD NN` cell
+
+The owner (2026-11-14), of the ☑ popup's plan rows: "the date is correct
+but the number reads as an order or list index, not the daily NN the small
+numbers should be MM/DD NN with leading 0 like the filename".
+
+This replaces the 2026-10-28 23:14 EDT amendment "the plan menu is a
+table, by last update", item 1's first two columns (its **NN** "the
+sequence within its day" and its date as **mm/dd**, each in its own
+right-aligned fixed-width column) and item 3's fallback label's
+`NN mm/dd`; and, in the 23:16 EDT amendment, "the **NN**, **mm/dd** and
+**status** columns" becomes "the date-and-NN and **status** columns". The
+rest of those amendments (the sort, the title and status columns, the
+abbreviations, the sizes) stands.
+
+1. **One cell, date first.** Each row's first column is one small cell,
+   `MM/DD NN`: the date from the file name as `MM/DD`, a space, then the
+   NN exactly as the file name spells it, two digits with its leading
+   zero. `20261028_04_PLUGINS_PLAN` shows `10/28 04`; `20261028_12_…`
+   shows `10/28 12`. When the name has no NN and `plans.list` gives a
+   number, it is shown zero-padded to two digits.
+2. **No NN, just the date.** A plan whose name has no NN, and for which
+   none is given, shows just `MM/DD`; one with no date either shows an
+   empty cell.
+3. **Size and alignment.** The cell is at 0.8 of the row's text size
+   (`CELL_SCALE`), not dim, vertically centred on the row, left-aligned so
+   the dates line up, in a column as wide as its widest cell; the title
+   follows it after the usual gap.
+4. **Both places.** The same cell is used in the ☑ popup's rows and in
+   the All plans… modal's table, which therefore has three columns: the
+   date and NN, the title and the status.
+
+**Done when:** the ☑ popup and All plans… show `20261028_04_PLUGINS_PLAN`
+as `10/28 04` in one small cell before its title, a plan with no NN as
+just its `MM/DD`, and the companion's tests assert both, in app 0.7.29.
