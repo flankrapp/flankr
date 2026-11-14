@@ -444,3 +444,8 @@ These changes came before the app had version numbers.
 
 **Fixed**
 - When an agent asks you to go ahead without a question mark ("Say go and I'll draft it", "Say the word and I'll carry on"), or asks and then adds a one-line note ("Still holding the test, unstarted."), its reply now shows as a question card with Yes and No, pinned until you answer. Before, it showed as a finished turn, and only the spoken summary asked the question, with nothing to tap. Needs the daemon 0.7.15 or later.
+
+## 0.7.29 — 2026-11-14
+
+**Changed**
+- In the plans list (the ☑ menu and All plans…), each plan's small date and number are now one "10/28 04": the date, then the plan's number for that day with its leading zero, as in its file name. Before, the number came first on its own ("4  10/28") and read like a position in the list. A plan without a number shows just its date.

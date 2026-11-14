@@ -35,7 +35,7 @@
 use std::cell::Cell;
 use std::collections::HashMap;
 
-use libcontrols::{DrawContext, PopupCell, PopupItem, PopupRow, Rect, TextAlign};
+use libcontrols::{DrawContext, PopupCell, PopupItem, PopupRow, Rect};
 use libmsdf::drawlist::DrawList;
 use serde_json::{Value, json};
 
@@ -81,8 +81,9 @@ pub struct PlanRow {
     pub status: String,
     /// The README's status, when its table says otherwise.
     pub readme_status: Option<String>,
-    /// The sequence within its day, from the file name (`nn` when the
-    /// name has none), without leading zeros.
+    /// The sequence within its day, as the file name spells it, with its
+    /// leading zero (`nn`, zero-padded to two digits, when the name has
+    /// none).
     pub nn: String,
     /// `mm/dd`, from the file name (`date_from_name` when it has none).
     pub mmdd: String,
@@ -136,7 +137,11 @@ impl PlanRow {
             .map(|d| format!("{}/{}", &d[4..6], &d[6..8]))
             .unwrap_or_default();
         let nn = name_nn(&base)
-            .or_else(|| v.get("nn").and_then(Value::as_u64).map(|n| n.to_string()))
+            .or_else(|| {
+                v.get("nn")
+                    .and_then(Value::as_u64)
+                    .map(|n| format!("{n:02}"))
+            })
             .unwrap_or_default();
         let named_dash = named
             .as_deref()
@@ -163,6 +168,16 @@ impl PlanRow {
         })
     }
 
+    /// The table's small first cell: `MM/DD NN`, just `MM/DD` with no NN,
+    /// just the NN with no date.
+    pub fn stamp(&self) -> String {
+        [self.mmdd.as_str(), self.nn.as_str()]
+            .into_iter()
+            .filter(|t| !t.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
     /// The line under the title: date · status, and the README's.
     fn subtitle(&self) -> String {
         let mut line = [self.date.as_str(), self.status.as_str()]
@@ -185,12 +200,11 @@ fn name_date(base: &str) -> Option<String> {
         .then(|| d.to_string())
 }
 
-/// The file name's NN, `YYYYMMDD_NN_`, without leading zeros.
+/// The file name's NN, `YYYYMMDD_NN_`, as the name spells it.
 fn name_nn(base: &str) -> Option<String> {
     name_date(base)?;
     let nn = base.get(9..)?.split('_').next()?;
-    let n: u32 = nn.parse().ok()?;
-    Some(n.to_string())
+    (!nn.is_empty() && nn.bytes().all(|b| b.is_ascii_digit())).then(|| nn.to_string())
 }
 
 /// Days from 1970-01-01 to a civil date (Howard Hinnant's
@@ -285,18 +299,13 @@ pub fn rows_of(result: &Value) -> Vec<PlanRow> {
     rows
 }
 
-/// A plan's popup row: the item, and its four cells (NN and mm/dd
-/// right-aligned, the title taking the room left, the status dim), NN,
-/// mm/dd and the status at [`CELL_SCALE`]. Each column is as wide as its
-/// widest cell, so the rows line up.
+/// A plan's popup row: the item, and its three cells (`MM/DD NN`, the
+/// title taking the room left, the status dim), the first and the status
+/// at [`CELL_SCALE`]. Each column is as wide as its widest cell, so the
+/// rows line up.
 pub fn menu_row(row: &PlanRow) -> PopupRow {
     PopupItem::action(format!("{MENU_PLAN}{}", row.base), row.title.clone()).with_cells(vec![
-        PopupCell::new(row.nn.clone())
-            .align(TextAlign::Right)
-            .scale(CELL_SCALE),
-        PopupCell::new(row.mmdd.clone())
-            .align(TextAlign::Right)
-            .scale(CELL_SCALE),
+        PopupCell::new(row.stamp()).scale(CELL_SCALE),
         PopupCell::new(row.title.clone()).flex(),
         PopupCell::new(status_abbrev(&row.status))
             .dim(true)
@@ -305,21 +314,18 @@ pub fn menu_row(row: &PlanRow) -> PopupRow {
 }
 
 /// The modal table's columns at width `w`, the title's size `px`: each
-/// `[x, width]`, NN, mm/dd, title, status. NN and mm/dd fit their widest
-/// at [`CELL_SCALE`], the status its widest abbreviation, the title the
-/// rest.
-fn table_columns(rows: &[PlanRow], w: f32, px: f32, gap: f32) -> [[f32; 2]; 4] {
+/// `[x, width]`, `MM/DD NN`, title, status. The first fits its widest at
+/// [`CELL_SCALE`], the status its widest abbreviation, the title the rest.
+fn table_columns(rows: &[PlanRow], w: f32, px: f32, gap: f32) -> [[f32; 2]; 3] {
     let small = px * CELL_SCALE;
     let cw = |n: usize| n as f32 * small * CELL_EM;
     let widest = |f: &dyn Fn(&PlanRow) -> usize| rows.iter().map(f).max().unwrap_or(0);
-    let nn_w = cw(widest(&|r| r.nn.chars().count()).max(1));
-    let md_w = cw(widest(&|r| r.mmdd.chars().count()));
+    let stamp_w = cw(widest(&|r| r.stamp().chars().count()).max(1));
     let st_w = cw(widest(&|r| status_abbrev(&r.status).chars().count()));
-    let title_x = nn_w + md_w + 2.0 * gap;
+    let title_x = stamp_w + gap;
     let title_w = (w - title_x - st_w - gap).max(0.0);
     [
-        [0.0, nn_w],
-        [nn_w + gap, md_w],
+        [0.0, stamp_w],
         [title_x, title_w],
         [title_x + title_w + gap, st_w],
     ]
@@ -535,9 +541,8 @@ impl Planning {
                 for r in rows {
                     let top = y;
                     let cells = [
-                        (r.nn.clone(), small, Ink::Text, true),
-                        (r.mmdd.clone(), small, Ink::Text, true),
-                        (cut(&r.title, cols[2][1], px), px, Ink::Text, false),
+                        (r.stamp(), small, Ink::Text, false),
+                        (cut(&r.title, cols[1][1], px), px, Ink::Text, false),
                         (status_abbrev(&r.status), small, Ink::Dim, false),
                     ];
                     for ((text, size, ink, right), [x, cw]) in cells.into_iter().zip(cols) {
@@ -920,6 +925,7 @@ impl DevicePlugin for Planning {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use libcontrols::TextAlign;
     use libflankr_proto::ErrorObject;
 
     /// `plans.list` as the daemon half gives it, oldest first.
@@ -1009,11 +1015,11 @@ mod tests {
         assert_eq!(texts(&p, &ViewKind::Modal), [copy::PLANNING_READING.text]);
         answer(&mut p, 1, list_fixture());
         let shown = texts(&p, &ViewKind::Modal);
-        // Four cells a row: NN, mm/dd, the title (cut), the status.
-        assert_eq!(shown.len(), 8, "{shown:?}");
-        assert_eq!(shown[..2], ["4", "10/28"]);
-        assert!(shown[2].starts_with("Built-in"));
-        assert_eq!(shown[3], "InImpl");
+        // Three cells a row: MM/DD NN, the title (cut), the status.
+        assert_eq!(shown.len(), 6, "{shown:?}");
+        assert_eq!(shown[0], "10/28 04");
+        assert!(shown[1].starts_with("Built-in"));
+        assert_eq!(shown[2], "InImpl");
         // Tap the first row.
         p.laid.set((1000.0, 2.0));
         let mut out = PluginOut::new(2);
@@ -1178,10 +1184,10 @@ mod tests {
         assert_eq!(
             labels(&p.menu("plans")),
             [
-                "plan/20261028_04_PLUGINS_PLAN = 4 | 10/28 | Built-in plugins, with a namespaced \
+                "plan/20261028_04_PLUGINS_PLAN = 10/28 04 | Built-in plugins, with a namespaced \
                  message flow, a title-bar menu and the planning plugin | InImpl"
                     .to_string(),
-                "plan/20261024_02_SETTINGS_SCREEN_PLAN = 2 | 10/24 | The settings screen | InImpl"
+                "plan/20261024_02_SETTINGS_SCREEN_PLAN = 10/24 02 | The settings screen | InImpl"
                     .to_string(),
                 "---".to_string(),
                 format!("all = {}", copy::PLANNING_ALL_PLANS.text),
@@ -1208,7 +1214,7 @@ mod tests {
         assert_eq!(items[0].item.id.as_str(), "plan/20261028_12_P12_PLAN");
         assert_eq!(
             labels(&items)[0],
-            "plan/20261028_12_P12_PLAN = 12 | 10/28 | Plan 12 | Draft"
+            "plan/20261028_12_P12_PLAN = 10/28 12 | Plan 12 | Draft"
         );
         assert_eq!(items[9].item.id.as_str(), "plan/20261028_03_P3_PLAN");
         // An empty list, then an error.
@@ -1316,13 +1322,19 @@ mod tests {
     #[test]
     fn nn_and_mm_dd_come_from_the_file_name_else_the_fields() {
         let r = PlanRow::from_json(&json!({"base": "20261028_04_PLUGINS_PLAN"})).unwrap();
-        assert_eq!((r.nn.as_str(), r.mmdd.as_str()), ("4", "10/28"));
+        assert_eq!((r.nn.as_str(), r.mmdd.as_str()), ("04", "10/28"));
+        assert_eq!(r.stamp(), "10/28 04");
         let r = PlanRow::from_json(
             &json!({"base": "PLUGINS", "nn": 7, "date_from_name": "2026-03-09"}),
         )
         .unwrap();
-        assert_eq!((r.nn.as_str(), r.mmdd.as_str()), ("7", "03/09"));
+        assert_eq!((r.nn.as_str(), r.mmdd.as_str()), ("07", "03/09"));
+        assert_eq!(r.stamp(), "03/09 07");
         assert_eq!(r.updated, update_key("2026-03-09"));
+        // No NN: just the date.
+        let r = PlanRow::from_json(&json!({"base": "PLUGINS", "date_from_name": "2026-03-09"}))
+            .unwrap();
+        assert_eq!(r.stamp(), "03/09");
     }
 
     #[test]
@@ -1346,35 +1358,28 @@ mod tests {
     }
 
     #[test]
-    fn a_popup_row_is_four_cells_with_the_small_ones_at_0_8() {
+    fn a_popup_row_is_three_cells_with_the_small_ones_at_0_8() {
         let mut p = Planning::new();
         let mut out = PluginOut::new(1);
         p.menu_opened("plans", &mut out);
         answer(&mut p, 1, list_fixture());
         let rows = p.menu("plans");
         let cells = &rows[0].cells;
-        assert_eq!(cells.len(), 4);
-        let [nn, mmdd, title, status] = [&cells[0], &cells[1], &cells[2], &cells[3]];
-        assert_eq!((nn.text.as_str(), nn.align), ("4", TextAlign::Right));
+        assert_eq!(cells.len(), 3);
+        let [stamp, title, status] = [&cells[0], &cells[1], &cells[2]];
         assert_eq!(
-            (mmdd.text.as_str(), mmdd.align),
-            ("10/28", TextAlign::Right)
+            (stamp.text.as_str(), stamp.align),
+            ("10/28 04", TextAlign::Left)
         );
         assert_eq!(title.align, TextAlign::Left);
         assert_eq!(title.width, libcontrols::PopupCellWidth::Flex);
         assert_eq!(status.text, "InImpl");
         assert_eq!(status.align, TextAlign::Left);
         // Sizes: all but the title at 0.8; only the status dim.
-        assert_eq!(
-            [nn.scale, mmdd.scale, title.scale, status.scale],
-            [0.8, 0.8, 1.0, 0.8]
-        );
-        assert_eq!(
-            [nn.dim, mmdd.dim, title.dim, status.dim],
-            [false, false, false, true]
-        );
+        assert_eq!([stamp.scale, title.scale, status.scale], [0.8, 1.0, 0.8]);
+        assert_eq!([stamp.dim, title.dim, status.dim], [false, false, true]);
         // The other columns size to their widest cell, so they line up.
-        for c in [nn, mmdd, status] {
+        for c in [stamp, status] {
             assert_eq!(c.width, libcontrols::PopupCellWidth::Auto);
         }
         // Headings and All plans… stay plain labels.
@@ -1396,39 +1401,40 @@ mod tests {
         let mut list = DrawList::new();
         libcontrols::DrawControl::draw(&menu, &mut list, &ctx);
         let layout = state.layout().expect("drawn");
-        assert_eq!(layout.columns.len(), 4);
+        assert_eq!(layout.columns.len(), 3);
         // In order, left to right, inside the frame.
-        for k in 1..4 {
+        for k in 1..3 {
             assert!(layout.columns[k][0] > layout.columns[k - 1][0]);
         }
-        let [x, w] = layout.columns[3];
+        let [x, w] = layout.columns[2];
         assert!(x + w <= layout.frame.x + layout.frame.w);
         // The long title takes the room left: the menu is at its widest.
         assert!((layout.frame.w - 320.0).abs() < 0.01, "{}", layout.frame.w);
     }
 
     #[test]
-    fn the_modal_table_has_four_columns_with_the_small_ones_at_0_8_centred() {
+    fn the_modal_table_has_three_columns_with_the_small_ones_at_0_8_centred() {
         let mut p = Planning::new();
         let mut out = PluginOut::new(1);
         p.action("plans", &mut out);
         answer(&mut p, 1, list_fixture());
         let (w, s) = (1000.0, 2.0);
         let laid = p.lay_out(&ViewKind::Modal, w, s);
-        assert_eq!(laid.lines.len(), 8);
+        assert_eq!(laid.lines.len(), 6);
         let row_h = TAP_H * s;
         let px = TITLE_PT * s;
-        for (i, row) in laid.lines.chunks(4).enumerate() {
+        for (i, row) in laid.lines.chunks(3).enumerate() {
             let top = i as f32 * row_h;
+            assert_eq!(row[0].text, ["10/28 04", "10/24 02"][i]);
             let sizes: Vec<f32> = row.iter().map(|l| l.px).collect();
-            assert_eq!(sizes, [px * 0.8, px * 0.8, px, px * 0.8]);
+            assert_eq!(sizes, [px * 0.8, px, px * 0.8]);
             assert_eq!(
                 row.iter().map(|l| l.ink).collect::<Vec<_>>(),
-                [Ink::Text, Ink::Text, Ink::Text, Ink::Dim]
+                [Ink::Text, Ink::Text, Ink::Dim]
             );
             assert_eq!(
                 row.iter().map(|l| l.right).collect::<Vec<_>>(),
-                [true, true, false, false]
+                [false, false, false]
             );
             // Each vertically centred on its row.
             for l in row {
@@ -1436,12 +1442,14 @@ mod tests {
                 assert!((mid - (top + row_h * 0.5)).abs() < 0.01, "{l:?}");
             }
             // Left to right, inside the width.
-            assert!(row[0].x < row[1].x && row[1].x < row[2].x && row[2].x < row[3].x);
-            assert!(row[3].x + columns_w(&row[3].text, row[3].px) * 1.2 <= w);
+            assert!(row[0].x < row[1].x && row[1].x < row[2].x);
+            // The date and NN end before the title starts.
+            assert!(row[0].x + columns_w(&row[0].text, row[0].px) <= row[1].x);
+            assert!(row[2].x + columns_w(&row[2].text, row[2].px) * 1.2 <= w);
         }
         // The rows line up: the same edges in each.
         let xs =
-            |i: usize| -> Vec<f32> { laid.lines[i * 4..i * 4 + 4].iter().map(|l| l.x).collect() };
+            |i: usize| -> Vec<f32> { laid.lines[i * 3..i * 3 + 3].iter().map(|l| l.x).collect() };
         assert_eq!(xs(0), xs(1));
         // One tap and one rule a row.
         assert_eq!(laid.taps.len(), 2);
@@ -1449,11 +1457,11 @@ mod tests {
         // A narrow modal cuts the title with … and keeps the rest.
         let narrow = p.lay_out(&ViewKind::Modal, 300.0, 1.0);
         assert!(
-            narrow.lines[2].text.ends_with('\u{2026}'),
+            narrow.lines[1].text.ends_with('\u{2026}'),
             "{:?}",
-            narrow.lines[2]
+            narrow.lines[1]
         );
-        assert_eq!(narrow.lines[3].text, "InImpl");
+        assert_eq!(narrow.lines[2].text, "InImpl");
         // The second row taps to its plan.
         p.laid.set((w, s));
         let mut out = PluginOut::new(2);
