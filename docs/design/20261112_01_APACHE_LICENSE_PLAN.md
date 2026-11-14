@@ -460,3 +460,35 @@ They are documented, not settled, and none of them is a step of this plan:
   published, and how users get it is undecided;
 - two origin comments remain, in `apps/companion/Cargo.toml` and the
   push scripts.
+
+## Amendment — 2026-11-14 15:14 EST: the README's risk and licence sections carry the owner's text
+
+The owner, on 2026-11-14: "append the current README plan or directly
+with this content on the appropriate branch, pass to a subagent, don't
+rewrite it, just fix the links", with the text of two sections,
+"Understanding the Risks" and "License and Disclaimer".
+
+The main README's `## Use at your own risk` and `## Licence` sections are
+replaced, in the same place, by `## Understanding the Risks` and
+`## License and Disclaimer`, which carry the owner's text word for word.
+The only changes are links: "LICENSE" links to `LICENSE`, and "sections
+7 and 8 of the LICENSE" links to `LICENSE`. "herdr" is not linked, since
+the README links it nowhere else. The third-party list that followed the
+licence paragraph (libherdr_term and its NOTICE, the companion app's fonts
+and voice models) is kept under `## License and Disclaimer`, and
+`## Architectural decisions` stays last. Commit 534d1bb.
+
+This replaces, for the main README's wording: the 15:55 EST amendment's
+item 1 (the quoted "Use at your own risk" text and its heading), the 01:33
+EST amendment's item 1 (the one short paragraph under **Use at your own
+risk**), and step 4's `## Licence` section heading. Where those name the
+heading "Use at your own risk", `## Licence`, or the anchor
+`../../README.md#use-at-your-own-risk`, the headings are now
+`## Understanding the Risks` and `## License and Disclaimer`, and the anchor
+is `../../README.md#understanding-the-risks`.
+
+Links updated in other files: `apps/companion/README.md`, whose link to
+the main README's risk section now reads "Understanding the Risks" and
+points to `../../README.md#understanding-the-risks` (commit 2f9751c). No
+other file outside this plan's body linked the old anchors. The status
+stays `Implemented`.
