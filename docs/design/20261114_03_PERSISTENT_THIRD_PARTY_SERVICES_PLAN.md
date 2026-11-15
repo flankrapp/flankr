@@ -1,7 +1,7 @@
 ---
 title: Persistent third-party services, with Bitmot as the first VPN provider
 date: 2026-11-14
-status: Draft
+status: In implementation
 covers:
   - "A platform-neutral user-service trait and service specification, with a macOS user launchd backend first and later backends such as systemd --user added behind the same trait"
   - "A `flankr service` command that controls flankr and enabled third-party services, while `flankr serve`, `flankr server`, and existing stop/restart forms remain shortcuts"
@@ -420,3 +420,11 @@ The feature matrix keeps the current default only when its provider is built:
 variants, constructors, parser branches, and tests are feature-gated. This
 keeps `--no-default-features` compilable while preserving today's behavior for
 the default build.
+
+## Amendment — 2026-11-14 20:34 EST: implementation frozen
+
+The implementation branch has been cut from the approved plan commit. This
+amendment changes the front-matter status from `Draft` to `In implementation`
+and makes the plan immutable under AGENTS.md Rule 1.5. The requirements and
+interfaces above are the governing implementation contract; later changes
+require an owner-directed amendment.
