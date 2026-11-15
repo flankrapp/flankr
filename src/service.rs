@@ -51,7 +51,12 @@ impl FlankrProvider {
         let home = std::env::var_os("HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("/"));
-        let state = home.join(".local/state/flankr/services");
+        let state = crate::daemon::state_dir(&home);
+        let files = crate::daemon::DaemonFiles::for_socket(
+            &state,
+            &context.socket,
+            &crate::server::default_socket_path(),
+        );
         let mut args = vec![OsString::from("server")];
         args.extend(context.server_args.iter().cloned());
         ServiceSpec {
@@ -60,8 +65,8 @@ impl FlankrProvider {
             args,
             working_dir: context.working_dir.clone(),
             env: crate::daemon::passed_env(std::env::vars_os()),
-            stdout: state.join("flankr.log"),
-            stderr: state.join("flankr.log"),
+            stdout: files.log.clone(),
+            stderr: files.log,
             keep_alive: true,
         }
     }
