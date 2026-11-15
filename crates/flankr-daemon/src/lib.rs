@@ -376,6 +376,11 @@ mod launchd {
     }
 }
 
+pub mod service;
+pub use service::{
+    ServiceSpec, ServiceStatus, UnsupportedBackend, UserServiceBackend, platform_backend,
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
