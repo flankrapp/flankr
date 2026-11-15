@@ -206,7 +206,18 @@ impl UserServiceBackend for LaunchdUserBackend {
         let expected = fingerprint(spec);
         let saved = self.state_path(spec).ok().and_then(|path| fs::read_to_string(path).ok());
         if current.is_some() && saved.as_deref() == Some(expected.as_str()) {
-            return Ok(current.unwrap_or(ServiceStatus::Loaded));
+            let target = self.target(spec)?;
+            let output = self.run(&[
+                OsStr::new("kickstart"),
+                OsStr::new("-k"),
+                OsStr::new(&target),
+            ])?;
+            if !output.status.success() {
+                return Err(command_error("launchctl kickstart", &output));
+            }
+            return self
+                .loaded(spec)
+                .map(|state| state.unwrap_or(ServiceStatus::Loaded));
         }
         if current.is_some() {
             let _ = self.stop(spec)?;
