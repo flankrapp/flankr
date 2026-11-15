@@ -5066,3 +5066,55 @@ needed to make it work (Rule 1.7):
 
 The app's bumps were not consolidated: one patch per step, 0.7.30 to
 0.7.33, each tagged. The device check on the S23 is left for the lead.
+
+## 2026-11-14 20:05 EST — Bitmot raw-TCP relay: planned
+
+Plan: the Bitmot raw-TCP relay plan (20261114_02). The owner asked for a
+Bitmot VPN driver using the installed `~/.local/bin/bitmot`, exposing the
+flankr daemon through a user-supplied named endpoint. The plan uses Bitmot's
+raw edge-node relay:
+
+```text
+bitmot io1 relay --node <NODE> --tcp <PORT>=127.0.0.1:<PORT> --exit-on-stdin-close
+```
+
+It deliberately does not add a WebSocket bridge, change the existing Noise/TCP
+protocol, or install Bitmot's root `io1d` LaunchDaemon. The endpoint must be a
+Bitmot raw-TCP node/host accepted by `--node`; an HTTP-only child subdomain is
+not silently treated as a raw endpoint.
+
+## 2026-11-14 20:10 EST — Bitmot relay persistence: plan amended
+
+Plan: the Bitmot raw-TCP relay plan (20261114_02). The owner asked for the
+relay to survive flankr restarts and upgrades. The plan now uses a separate
+user-owned launchd job for the raw Bitmot relay, with a stable label and
+reconciliation state under `~/.local/state/flankr/bitmot/`. `flankr-daemon`
+will gain persistent-job support beside its existing one-shot background-start
+helper.
+
+The job runs Bitmot's raw edge-node command directly, without a WebSocket
+bridge, `--public`, or a credential in the plist. The root Bitmot `io1d`
+LaunchDaemon remains separate and is not installed or modified.
+
+## 2026-11-14 20:23 EST — Persistent third-party services: new plan
+
+Plan: persistent third-party services, with Bitmot as the first VPN provider
+(20261114_03). The owner broadened the Bitmot draft: the service lifecycle is
+now platform-neutral, with a user-service trait and a macOS launchd backend
+first, and future non-macOS backends behind the same trait.
+
+The plan adds `flankr service list|status|start|stop|restart`, treats
+`flankr` as one service, keeps `flankr serve` and its existing forms as
+shortcuts, preserves one `Vpn` trait for all providers, and gates providers
+with `vpn-*` Cargo features. The Bitmot launchd label is
+`dev.flankr.vpn.bitmot`. Implementation is to happen on
+`feature/persistent-third-party-services`; the plan stays on the planning
+branch.
+
+## 2026-11-14 20:26 EST — Persistent services: feature-disabled default
+
+Plan: persistent third-party services, with Bitmot as the first VPN provider
+(20261114_03). The feature matrix now preserves Tailscale as the default only
+when `vpn-tailscale` is built. `--no-default-features` defaults to `none`,
+Bitmot requires explicit selection, and disabled provider names fail with the
+required `vpn-*` feature instead of silently falling back.
