@@ -7,7 +7,10 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::io::Write;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AppConfig {
@@ -685,6 +688,77 @@ impl AppConfig {
     }
 }
 
+/// Persist an explicit link VPN selection while preserving unrelated TOML.
+pub fn update_link_vpn(
+    path: &Path,
+    vpn: &str,
+    bitmot_endpoint: Option<&str>,
+) -> Result<(), String> {
+    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => Some(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(format!("The config file can't be read: {e}")),
+    };
+    let mut document = match &text {
+        Some(text) => text
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|_| "The config file is not valid TOML".to_string())?,
+        None => toml_edit::DocumentMut::new(),
+    };
+    let link = document
+        .entry("link")
+        .or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
+    let Some(link) = link.as_table_like_mut() else {
+        return Err("The config file's [link] entry is not a table".to_string());
+    };
+    link.insert("vpn", toml_edit::value(vpn));
+    if let Some(endpoint) = bitmot_endpoint {
+        link.insert("bitmot_endpoint", toml_edit::value(endpoint));
+    }
+    let output = document.to_string();
+    if output.parse::<toml::Table>().is_err() {
+        return Err("The updated config file is not valid TOML".to_string());
+    }
+    replace_config_file(&path, output.as_bytes())
+}
+
+fn replace_config_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let directory = path
+        .parent()
+        .filter(|directory| !directory.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(directory)
+        .map_err(|e| format!("The config directory can't be created: {e}"))?;
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "config.toml".to_string());
+    let temporary = directory.join(format!(
+        ".{name}.{}.{}.tmp",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let mode = std::fs::metadata(path)
+        .map(|metadata| metadata.permissions().mode() & 0o7777)
+        .unwrap_or(0o600);
+    let result = (|| {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)?;
+        file.set_permissions(std::fs::Permissions::from_mode(mode))?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        std::fs::rename(&temporary, path)
+    })();
+    result.map_err(|e| {
+        let _ = std::fs::remove_file(&temporary);
+        format!("The config file can't be written: {e}")
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1092,5 +1166,30 @@ allow_messages = false
         assert_eq!(llm.enabled, Some(true));
         assert_eq!(llm.backends["gemini"].kind.as_deref(), Some("gemini"));
         assert_eq!(llm.uses["spoken_summaries"].enabled, Some(false));
+    }
+    #[test]
+    fn updating_link_vpn_preserves_other_config() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"# keep this comment
+[other]
+value = "preserved"
+
+[link]
+vpn = "tailscale"
+"#,
+        )
+        .unwrap();
+
+        update_link_vpn(&path, "bitmot", Some("edge.example")).unwrap();
+
+        let output = std::fs::read_to_string(&path).unwrap();
+        assert!(output.contains("# keep this comment"));
+        assert!(output.contains("value = \"preserved\""));
+        let config: AppConfig = toml::from_str(&output).unwrap();
+        assert_eq!(config.link.vpn.as_deref(), Some("bitmot"));
+        assert_eq!(config.link.bitmot_endpoint.as_deref(), Some("edge.example"));
     }
 }

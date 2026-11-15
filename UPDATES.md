@@ -334,3 +334,12 @@ These changes came before the program had version numbers.
 
 **Added**
 - `scripts/install.sh` accepts `--features` and `--no-default-features`, so optional providers such as Bitmot can be included in the installed flankr binary.
+
+## 0.10.0 — 2026-11-14
+
+**Changed**
+- An explicit `flankr pair --vpn <provider>` now saves the link VPN selection
+  and any supplied provider setting in `config.toml`, restarts the existing
+  daemon with that configuration, and then creates the pairing offer.
+- `--replace` still controls only replacement of the pairing record; using it
+  without `--vpn` does not change the link configuration or restart the daemon.

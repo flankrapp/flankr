@@ -54,8 +54,8 @@ impl Rig {
         )
     }
 
-    /// `flankr <command> --mock --config … --listen … --vpn none` here, with only the
-    /// test environment and `extra`.
+    /// `flankr <command> --mock --config … --listen …`, with `--vpn none`
+    /// added for non-pair commands and only the test environment plus `extra`.
     fn command(&self, command: &[&str], extra: &[(&str, &str)]) -> Command {
         self.command_of(Path::new(BIN), command, extra)
     }
@@ -69,11 +69,12 @@ impl Rig {
             .arg("--config")
             .arg(home.join("config.toml"))
             .arg("--listen")
-            .arg(&self.socket)
+            .arg(&self.socket);
+        if command.first().copied() != Some("pair") {
             // Never a real VPN (plan 20261102_03, decision 9).
-            .arg("--vpn")
-            .arg("none")
-            .current_dir(&home)
+            cmd.arg("--vpn").arg("none");
+        }
+        cmd.current_dir(&home)
             .env_clear()
             .env("HOME", &home)
             .env("TMPDIR", &home)
@@ -461,7 +462,18 @@ fn pair_starts_the_daemon_unless_foreground() {
 fn pair_passes_vpn_and_bind_on_and_offers_nothing_only_this_machine_reaches() {
     let rig = Rig::new();
     let files = rig.files();
-    let out = rig.run(&["pair", "--bind", "127.0.0.1:0", "--timeout", "1"], &[]);
+    let out = rig.run(
+        &[
+            "pair",
+            "--vpn",
+            "none",
+            "--bind",
+            "127.0.0.1:0",
+            "--timeout",
+            "1",
+        ],
+        &[],
+    );
     assert_eq!(out.status.code(), Some(1), "{out:?}");
     let stderr = text(&out.stderr);
     assert!(
@@ -488,6 +500,29 @@ fn pair_passes_vpn_and_bind_on_and_offers_nothing_only_this_machine_reaches() {
         log.contains("[link] flankr is only reachable from this machine (127.0.0.1:"),
         "{log}"
     );
+}
+
+/// An explicit VPN on a pairing is persisted and restarts the daemon before
+/// the pairing offer is made (persistent third-party services plan,
+/// 2026-11-14 22:00 EST amendment).
+#[test]
+fn pair_explicit_vpn_updates_config_and_restarts_daemon() {
+    let rig = Rig::new();
+    let files = rig.files();
+    let started = rig.run(&["serve"], &[]);
+    assert_eq!(started.status.code(), Some(0), "{started:?}");
+    rig.wait_until("the initial pid", || files.pid.exists());
+    let first_pid = read_pid(&files.pid).unwrap();
+
+    let out = rig.run(&["pair", "--vpn", "none", "--timeout", "1"], &[]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    rig.wait_until("the restarted pid", || {
+        files.pid.exists() && read_pid(&files.pid).is_some_and(|pid| pid != first_pid)
+    });
+
+    let config = std::fs::read_to_string(rig.home().join("config.toml")).unwrap();
+    let config: toml::Value = toml::from_str(&config).unwrap();
+    assert_eq!(config["link"]["vpn"].as_str(), Some("none"));
 }
 
 /// `--version`, `-V` and `version` print the version and start nothing;

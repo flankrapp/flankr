@@ -29,9 +29,9 @@
 //! override) unless `--transport` names a transport, else `config.toml`'s
 //! transport, else `~/.config/herdr/herdr.sock`.
 
-use std::path::{Path, PathBuf};
-
 use flankr::transport::{HerdrClient, HerdrTransport, RemoteSshConfig};
+use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 struct AppArgs {
     config: Option<String>,
@@ -527,18 +527,100 @@ fn stop_bitmot_service(args: &AppArgs) -> i32 {
     }
 }
 
-async fn pair(args: AppArgs) -> Result<i32, Box<dyn std::error::Error>> {
-    let config = flankr::config::AppConfig::load_or_default(args.config.as_deref().map(Path::new));
-    let socket = daemon_socket(&args, &config);
+async fn wait_for_daemon(socket: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let socket = flankr::daemon::absolute(socket);
+    let deadline = Instant::now() + flankr::daemon::START_WAIT;
+    loop {
+        if flankr::daemon::answers(&socket).await.is_some() {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "flankr: restarted daemon did not answer on {}",
+                socket.display()
+            )
+            .into());
+        }
+        tokio::time::sleep(flankr::daemon::START_POLL).await;
+    }
+}
+
+async fn restart_pair_daemon(args: &mut AppArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let context = service_context(args)?;
+    let registry = flankr::service::Registry::new(&context);
+    let persistent_status = registry.status("flankr", &context);
+    if matches!(
+        persistent_status,
+        Ok(flankr_daemon::ServiceStatus::Running { .. } | flankr_daemon::ServiceStatus::Loaded)
+    ) {
+        let status = registry.restart("flankr", &context)?;
+        wait_for_daemon(&context.socket).await?;
+        eprintln!("flankr: daemon restarted ({})", status.description());
+        return Ok(());
+    }
+
+    if args.foreground
+        && flankr::daemon::answers(&flankr::daemon::absolute(&context.socket))
+            .await
+            .is_none()
+    {
+        // Preserve `pair --foreground`: it may reconfigure a daemon that
+        // already exists, but it must not start one.
+        return Ok(());
+    }
+
+    // A daemon started before persistent services was enabled is detached
+    // from launchd. Reconcile it through the existing restart path instead.
+    args.restart = true;
+    let rest = server_flags(args);
+    let code = serve_background(args, rest).await?;
+    if code != 0 {
+        return Err(format!("flankr: daemon restart failed with exit code {code}").into());
+    }
+    Ok(())
+}
+
+fn apply_pair_vpn_config(
+    args: &AppArgs,
+    config_path: &Path,
+    config: &mut flankr::config::AppConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(vpn) = args.vpn.as_deref() else {
+        return Ok(());
+    };
+    let vpn = vpn.trim().to_ascii_lowercase();
+    config.link.vpn = Some(vpn.clone());
+    if let Some(endpoint) = args.bitmot_endpoint.as_deref() {
+        config.link.bitmot_endpoint = Some(endpoint.to_string());
+    }
+    flankr::server::link::LinkSettings::from_config(&config.link)
+        .map_err(|error| format!("flankr pair: {error}"))?;
+    flankr::config::update_link_vpn(config_path, &vpn, args.bitmot_endpoint.as_deref())
+        .map_err(|error| format!("flankr pair: {error}"))?;
+    Ok(())
+}
+
+/// Pairing replacement with an explicit VPN also changes the daemon's link
+/// configuration and restarts it before the new offer is generated.
+async fn pair(mut args: AppArgs) -> Result<i32, Box<dyn std::error::Error>> {
+    let config_path = config_path(&args);
+    let mut config =
+        flankr::config::AppConfig::load_or_default(args.config.as_deref().map(Path::new));
     let usage = "usage: flankr pair [--foreground] [--listen <socket>] [--name <name>] [--protocols companion,harness] [--replace] [--code <code>] [--qr-png <file>] [--timeout <secs>] [--vpn tailscale|bitmot|none] [--bitmot-endpoint <node>] [--bind <addr:port>]...";
     // `--restart` is `serve`'s; `pair`'s `--replace` is about the paired
     // name (the 2026-11-03 11:53 EST amendment, item 4).
     if !args.positional.is_empty() || args.stop || args.restart {
         return Err(usage.into());
     }
+    let change_vpn = args.vpn.is_some();
+    if change_vpn {
+        apply_pair_vpn_config(&args, &config_path, &mut config)?;
+        restart_pair_daemon(&mut args).await?;
+    }
+    let socket = daemon_socket(&args, &config);
     // No daemon answering: start one in the background first, as `serve`
     // would, unless `--foreground` (the 22:26 EST amendment, items 1 and 3).
-    if !args.foreground {
+    if !change_vpn && !args.foreground {
         let listen = flankr::daemon::absolute(&socket);
         match flankr::daemon::answers(&listen).await {
             None => {
