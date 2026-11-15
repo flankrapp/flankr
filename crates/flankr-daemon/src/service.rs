@@ -339,7 +339,7 @@ fn plist_text(spec: &ServiceSpec) -> io::Result<String> {
 }
 
 #[cfg(target_os = "macos")]
-fn field(out: &mut String, key: &str, value_: &impl AsRef<OsStr>) -> io::Result<()> {
+fn field<T: AsRef<OsStr> + ?Sized>(out: &mut String, key: &str, value_: &T) -> io::Result<()> {
     out.push_str("<key>");
     out.push_str(key);
     out.push_str("</key>");
@@ -347,7 +347,7 @@ fn field(out: &mut String, key: &str, value_: &impl AsRef<OsStr>) -> io::Result<
 }
 
 #[cfg(target_os = "macos")]
-fn value(out: &mut String, value_: &impl AsRef<OsStr>) -> io::Result<()> {
+fn value<T: AsRef<OsStr> + ?Sized>(out: &mut String, value_: &T) -> io::Result<()> {
     let text = value_.as_ref().to_str().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "service plist value is not UTF-8"))?;
     if text.chars().any(|c| c == '\0' || (c.is_control() && c != '\n' && c != '\t')) {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "service plist value has invalid XML characters"));
