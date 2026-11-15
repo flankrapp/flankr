@@ -93,6 +93,8 @@ pub struct LinkSettings {
     pub revoke_interval: Duration,
     /// The VPN the link is reached through (`--vpn`, `[link] vpn`).
     pub vpn: VpnChoice,
+    /// Bitmot edge-node endpoint, when the Bitmot provider is selected.
+    pub bitmot_endpoint: Option<String>,
     /// Give pairing offers whose addresses are all loopback, which the
     /// daemon refuses: for tests over `127.0.0.1` only.
     pub loopback_offers: bool,
@@ -116,6 +118,19 @@ impl LinkSettings {
     /// From `[link]`; files default to `~/.config/flankr/`. An unknown
     /// `vpn` is an error.
     pub fn from_config(config: &LinkConfig) -> Result<Self, String> {
+        let vpn = VpnChoice::choose(None, config.vpn.as_deref())?;
+        #[cfg(feature = "vpn-bitmot")]
+        if matches!(vpn, VpnChoice::Bitmot)
+            && config
+                .bitmot_endpoint
+                .as_deref()
+                .is_none_or(|endpoint| endpoint.trim().is_empty())
+        {
+            return Err(
+                "[link] vpn = 'bitmot' requires [link] bitmot_endpoint (an edge-node name)"
+                    .to_string(),
+            );
+        }
         Ok(LinkSettings {
             key_path: config
                 .key
@@ -132,9 +147,18 @@ impl LinkSettings {
                 .revoke_check_secs
                 .map(|s| Duration::from_secs(s.max(1)))
                 .unwrap_or(DEFAULT_REVOKE_INTERVAL),
-            vpn: VpnChoice::choose(None, config.vpn.as_deref())?,
+            vpn,
+            bitmot_endpoint: config.bitmot_endpoint.clone(),
             loopback_offers: false,
         })
+    }
+
+    /// Set a command-line Bitmot endpoint, replacing the configured value.
+    pub fn with_bitmot_endpoint(mut self, endpoint: Option<&str>) -> Self {
+        if let Some(endpoint) = endpoint {
+            self.bitmot_endpoint = Some(endpoint.to_string());
+        }
+        self
     }
 
     /// With the command line's `--vpn` and `--bind`s, which replace
@@ -204,6 +228,7 @@ enum Reach {
 fn title(name: &str) -> String {
     match name {
         "tailscale" => "Tailscale".to_string(),
+        "bitmot" => "Bitmot".to_string(),
         other => other.to_string(),
     }
 }
@@ -345,7 +370,7 @@ impl Link {
     /// Load (or create) the server key. Refuses a key file that others may
     /// read.
     pub fn open(settings: LinkSettings) -> Result<Arc<Link>, String> {
-        let vpn = settings.vpn.open();
+        let vpn = settings.vpn.open(settings.bitmot_endpoint.as_deref());
         Link::open_with(settings, vpn, Arc::new(ThisMachine))
     }
 
@@ -954,7 +979,7 @@ mod tests {
         assert!(s.auth_path.ends_with(".config/flankr/auth.toml"));
         assert_eq!(s.revoke_interval, DEFAULT_REVOKE_INTERVAL);
         assert!(s.enabled());
-        assert_eq!(s.vpn, VpnChoice::Tailscale);
+        assert_eq!(s.vpn, VpnChoice::default());
         let off = LinkSettings::from_config(&LinkConfig {
             listen: Some(vec![]),
             ..Default::default()
@@ -973,6 +998,7 @@ mod tests {
             listen: Some(vec!["127.0.0.1:0".to_string()]),
             revoke_interval: DEFAULT_REVOKE_INTERVAL,
             vpn: VpnChoice::None,
+            bitmot_endpoint: None,
             loopback_offers: true,
         };
         let first = Link::open(settings.clone()).unwrap().public_key();
@@ -1080,6 +1106,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "vpn-tailscale")]
     #[test]
     fn bind_and_vpn_flags_replace_the_config() {
         let base = LinkSettings::from_config(&LinkConfig {
@@ -1128,6 +1155,7 @@ mod tests {
             listen: Some(strings(listen)),
             revoke_interval: DEFAULT_REVOKE_INTERVAL,
             vpn: VpnChoice::None,
+            bitmot_endpoint: None,
             loopback_offers: false,
         };
         let fake = fake.map(Arc::new);
@@ -1184,6 +1212,7 @@ mod tests {
                 listen: None,
                 revoke_interval: DEFAULT_REVOKE_INTERVAL,
                 vpn: VpnChoice::None,
+                bitmot_endpoint: None,
                 loopback_offers: false,
             },
             Some(Arc::clone(&again) as Arc<dyn Vpn>),

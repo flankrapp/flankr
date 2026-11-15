@@ -64,6 +64,7 @@ async fn start_with(
         listen: Some(vec!["127.0.0.1:0".to_string()]),
         revoke_interval,
         vpn: flankr::server::link::vpn::VpnChoice::None,
+        bitmot_endpoint: None,
         loopback_offers: true,
     };
     let link = Link::open(settings).unwrap();

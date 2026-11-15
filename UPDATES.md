@@ -315,3 +315,10 @@ These changes came before the program had version numbers.
 **Added**
 - The phone's agent list now says whether each agent is still producing, not only what herdr says. When the phone lists the agents, the daemon reads the last 12 visible lines of each pane herdr calls working (at most once every 2 seconds per pane) for the elapsed timer Claude Code draws, such as `(1m 23s ·`; the agent counts as working while that timer has moved on since the last read. With no timer in the pane, it counts as working while its transcript has a tool call with no result yet, or was written in the last minute. A subagent counts as working while it isn't marked finished and has a tool call open or was written in the last minute.
 - The list also gives when each agent and subagent last produced, and an agent's Claude Code goal, while one is set. A long transcript's goal is read in the background the first time, so the list never waits for it.
+
+## 0.8.0 — 2026-11-14
+
+**Added**
+- `flankr service list|status|start|stop|restart` controls flankr and an enabled Bitmot raw-TCP relay. `serve`, `serve --stop`, `serve --restart`, `serve --foreground` and `server` remain shortcuts.
+- `[link] bitmot_endpoint` and `--bitmot-endpoint` configure a Bitmot edge node. Builds select providers with `vpn-tailscale` (default) and `vpn-bitmot`; disabled providers report the feature needed to enable them.
+- Bitmot uses `~/.local/bin/bitmot io1 relay --node <endpoint> --tcp <port>=127.0.0.1:<port>` as the persistent service `dev.flankr.vpn.bitmot`, without putting credentials in its arguments or logs.

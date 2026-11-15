@@ -5,7 +5,10 @@
 //! [`fake::FakeVpn`] in tests, which never run a real VPN.
 
 pub mod fake;
+#[cfg(feature = "vpn-tailscale")]
 pub mod tailscale;
+#[cfg(feature = "vpn-bitmot")]
+pub mod bitmot;
 
 use std::fmt;
 
@@ -63,29 +66,57 @@ pub trait Vpn: Send + Sync {
 }
 
 /// Which VPN the link is reached through (decision 3).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VpnChoice {
-    /// The default.
-    #[default]
+    #[cfg(feature = "vpn-tailscale")]
+    /// The default when Tailscale is built.
     Tailscale,
+    #[cfg(feature = "vpn-bitmot")]
+    /// Bitmot's persistent raw-TCP edge relay.
+    Bitmot,
     /// No VPN: nothing is run or read for one.
     None,
 }
 
+impl Default for VpnChoice {
+    #[cfg(feature = "vpn-tailscale")]
+    fn default() -> Self {
+        Self::Tailscale
+    }
+
+    #[cfg(all(not(feature = "vpn-tailscale"), feature = "vpn-bitmot"))]
+    fn default() -> Self {
+        Self::None
+    }
+
+    #[cfg(all(not(feature = "vpn-tailscale"), not(feature = "vpn-bitmot")))]
+    fn default() -> Self {
+        Self::None
+    }
+}
+
 impl VpnChoice {
-    /// `tailscale` or `none`, in any case; `what` names where it came from
-    /// in the error.
     pub fn parse(name: &str, what: &str) -> Result<VpnChoice, String> {
         match name.trim().to_ascii_lowercase().as_str() {
+            #[cfg(feature = "vpn-tailscale")]
             "tailscale" => Ok(VpnChoice::Tailscale),
+            #[cfg(not(feature = "vpn-tailscale"))]
+            "tailscale" => Err(format!(
+                "{what} requests tailscale, but it is not built; enable Cargo feature vpn-tailscale"
+            )),
+            #[cfg(feature = "vpn-bitmot")]
+            "bitmot" => Ok(VpnChoice::Bitmot),
+            #[cfg(not(feature = "vpn-bitmot"))]
+            "bitmot" => Err(format!(
+                "{what} requests bitmot, but it is not built; enable Cargo feature vpn-bitmot"
+            )),
             "none" => Ok(VpnChoice::None),
             _ => Err(format!(
-                "{what} '{name}' is not known; use tailscale or none"
+                "{what} '{name}' is not known; use tailscale, bitmot, or none"
             )),
         }
     }
 
-    /// `--vpn`, else `[link] vpn`, else Tailscale.
     pub fn choose(flag: Option<&str>, config: Option<&str>) -> Result<VpnChoice, String> {
         if let Some(flag) = flag {
             return VpnChoice::parse(flag, "--vpn");
@@ -96,10 +127,14 @@ impl VpnChoice {
         }
     }
 
-    /// The VPN to use, `None` for no VPN.
-    pub fn open(self) -> Option<std::sync::Arc<dyn Vpn>> {
+    pub fn open(self, endpoint: Option<&str>) -> Option<std::sync::Arc<dyn Vpn>> {
         match self {
+            #[cfg(feature = "vpn-tailscale")]
             VpnChoice::Tailscale => Some(std::sync::Arc::new(tailscale::Tailscale::find())),
+            #[cfg(feature = "vpn-bitmot")]
+            VpnChoice::Bitmot => endpoint
+                .map(bitmot::Bitmot::find)
+                .map(|vpn| std::sync::Arc::new(vpn) as std::sync::Arc<dyn Vpn>),
             VpnChoice::None => None,
         }
     }
@@ -109,6 +144,7 @@ impl VpnChoice {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "vpn-tailscale")]
     #[test]
     fn the_flag_wins_then_the_config_then_tailscale() {
         assert_eq!(VpnChoice::choose(None, None), Ok(VpnChoice::Tailscale));
@@ -122,9 +158,17 @@ mod tests {
             Ok(VpnChoice::None)
         );
         let err = VpnChoice::choose(Some("wireguard"), None).unwrap_err();
-        assert_eq!(err, "--vpn 'wireguard' is not known; use tailscale or none");
+        assert!(err.contains("not known"), "{err}");
         let err = VpnChoice::choose(None, Some("zt")).unwrap_err();
         assert!(err.starts_with("[link] vpn = 'zt'"), "{err}");
+    }
+
+    #[cfg(not(feature = "vpn-tailscale"))]
+    #[test]
+    fn no_provider_defaults_to_none_and_names_missing_feature() {
+        assert_eq!(VpnChoice::choose(None, None), Ok(VpnChoice::None));
+        let err = VpnChoice::choose(Some("tailscale"), None).unwrap_err();
+        assert!(err.contains("vpn-tailscale"), "{err}");
     }
 
     #[test]

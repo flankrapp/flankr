@@ -171,6 +171,7 @@ async fn start_turns(config: AppConfig, with_link: bool, home: &Path, turns: Tur
             listen: Some(vec!["127.0.0.1:0".to_string()]),
             revoke_interval: Duration::from_secs(60),
             vpn: flankr::server::link::vpn::VpnChoice::None,
+            bitmot_endpoint: None,
             loopback_offers: true,
         })
         .unwrap();

@@ -16,6 +16,7 @@ pub mod prompt_cmd;
 pub mod prompts;
 pub mod reasoning;
 pub mod server;
+pub mod service;
 pub mod sessions;
 pub mod suggestions;
 pub mod tail;

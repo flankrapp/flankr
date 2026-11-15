@@ -469,16 +469,17 @@ pub struct LinkConfig {
     /// Replaces the default `127.0.0.1:7347`; `--bind` replaces it for a
     /// run. An empty list turns the link off.
     pub listen: Option<Vec<String>>,
-    /// The VPN the link is reached through: `"tailscale"` (the default)
-    /// or `"none"`; `--vpn` wins (plan 20261102_03, decision 3).
+    /// The VPN the link is reached through: `"tailscale"` (the default),
+    /// `"bitmot"` when built with `vpn-bitmot`, or `"none"`.
     pub vpn: Option<String>,
+    /// Bitmot edge-node name passed to `bitmot io1 relay --node`.
+    pub bitmot_endpoint: Option<String>,
     /// The server's private key (default: ~/.config/flankr/link_key).
     pub key: Option<String>,
     /// The paired clients (default: ~/.config/flankr/auth.toml).
     pub auth: Option<String>,
     /// Seconds between checks of open link connections against
-    /// `auth.toml` (default: 60), a slow fallback to the check on each
-    /// change the file watcher reports (plan 20261027_05, decision 2).
+    /// `auth.toml`, a slow fallback to the check on each change the file watcher reports.
     pub revoke_check_secs: Option<u64>,
 }
 

@@ -39,8 +39,10 @@ struct AppArgs {
     mock_mode: bool,
     /// The daemon socket, for `serve` and `ctl`.
     listen: Option<String>,
-    /// The link's VPN, `tailscale` or `none` (plan 20261102_03, decision 3).
+    /// The link's VPN, `tailscale`, `bitmot`, or `none`.
     vpn: Option<String>,
+    /// The Bitmot edge-node endpoint for `vpn = "bitmot"`.
+    bitmot_endpoint: Option<String>,
     /// The link's addresses for this run, in place of `[link] listen`.
     bind: Vec<String>,
     show_tokens: bool,
@@ -101,6 +103,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> AppArgs {
         mock_mode: false,
         listen: None,
         vpn: None,
+        bitmot_endpoint: None,
         bind: Vec::new(),
         show_tokens: false,
         prompts: None,
@@ -138,6 +141,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> AppArgs {
             "--mock" => parsed.mock_mode = true,
             "--listen" => parsed.listen = args.next(),
             "--vpn" => parsed.vpn = args.next(),
+            "--bitmot-endpoint" => parsed.bitmot_endpoint = args.next(),
             "--bind" => parsed.bind.extend(args.next()),
             "--show-tokens" => parsed.show_tokens = true,
             "--prompts" => parsed.prompts = args.next(),
@@ -289,7 +293,8 @@ async fn serve(args: AppArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     // The link: its key is checked (and created) before anything listens.
     let settings = flankr::server::link::LinkSettings::from_config(&config.link)?
-        .with_flags(args.vpn.as_deref(), &args.bind)?;
+        .with_flags(args.vpn.as_deref(), &args.bind)?
+        .with_bitmot_endpoint(args.bitmot_endpoint.as_deref());
     let link = if settings.enabled() {
         Some(flankr::server::link::Link::open(settings)?)
     } else {
@@ -443,7 +448,7 @@ fn server_flags(args: &AppArgs) -> Vec<String> {
     valued("--config", &args.config);
     valued("--listen", &args.listen);
     valued("--vpn", &args.vpn);
-    valued("--transport", &args.transport_name);
+    valued("--bitmot-endpoint", &args.bitmot_endpoint);
     valued("--remote", &args.remote);
     valued("--socket", &args.socket);
     valued("--prompts", &args.prompts);
@@ -459,6 +464,19 @@ fn server_flags(args: &AppArgs) -> Vec<String> {
         flags.push("--show-tokens".to_string());
     }
     flags
+}
+
+fn service_context(args: &AppArgs) -> Result<flankr::service::ServiceContext, Box<dyn std::error::Error>> {
+    let config_path = config_path(args);
+    let config = flankr::config::AppConfig::load_or_default(Some(&config_path));
+    Ok(flankr::service::ServiceContext {
+        config,
+        config_path,
+        executable: std::env::current_exe()?,
+        working_dir: std::env::current_dir()?,
+        socket: daemon_socket(args, &flankr::config::AppConfig::load_or_default(Some(&config_path))),
+        server_args: server_flags(args).into_iter().map(Into::into).collect(),
+    })
 }
 
 async fn pair(args: AppArgs) -> Result<i32, Box<dyn std::error::Error>> {
@@ -612,10 +630,10 @@ const PROMPT_USAGE: &str = "usage: flankr prompt [--use general_agent] [--agent 
 
 const USAGE: &str = "\
 flankr version | --version | -V
+flankr service list|status|start|stop|restart [service]
 flankr [serve [--foreground | --stop | --restart] | server]
        [--config <file>] [--transport <name> | --remote <user@host> |
         --socket <herdr.sock> | --mock] [--listen <flankr.sock>] [--show-tokens]
-       [--vpn tailscale|none] [--bind <addr:port>]...
        [--prompts <ADDITIONAL_PROMPTS.md>] [--suggestions <SUGGESTIONS.md>]
   serve (the default) starts `flankr server` in the background and returns;
   log and pid in ~/.local/state/flankr/. --foreground runs it here, as
@@ -721,7 +739,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let command = match argv.first().map(String::as_str) {
         Some("serve") | Some("server") | Some("ctl") | Some("pair") | Some("session")
-        | Some("prompt") => argv.remove(0),
+        | Some("prompt") | Some("service") => argv.remove(0),
         _ => "serve".to_string(),
     };
     if command == "server" {
@@ -762,6 +780,16 @@ async fn run(
     argv: Vec<String>,
     background: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if command == "service" {
+        let operation = args.positional.first().map(String::as_str).unwrap_or("list");
+        let service = args.positional.get(1).map(String::as_str);
+        if args.positional.len() > 2 {
+            return Err("usage: flankr service list|status|start|stop|restart [service]".into());
+        }
+        let context = service_context(&args)?;
+        let code = flankr::service::command(operation, service, &context)?;
+        std::process::exit(code);
+    }
     if command == "ctl" {
         std::process::exit(ctl(args).await?);
     }

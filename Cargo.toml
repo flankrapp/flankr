@@ -1,8 +1,13 @@
 [package]
 name = "flankr"
-version = "0.7.17"
+version = "0.8.0"
 edition = "2024"
 license = "Apache-2.0"
+
+[features]
+default = ["vpn-tailscale"]
+vpn-tailscale = []
+vpn-bitmot = []
 
 [dependencies]
 libherdr = { path = "crates/libherdr" }
