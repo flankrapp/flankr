@@ -5118,3 +5118,12 @@ Plan: persistent third-party services, with Bitmot as the first VPN provider
 when `vpn-tailscale` is built. `--no-default-features` defaults to `none`,
 Bitmot requires explicit selection, and disabled provider names fail with the
 required `vpn-*` feature instead of silently falling back.
+
+## 2026-11-14 20:57 EST — Persistent services: implementation clarifications
+
+Plan: persistent third-party services, with Bitmot as the first VPN provider
+(20261114_03). The implementation keeps the frozen service interfaces and adds
+three small operational clarifications: Bitmot service start/restart refuses
+to create a relay before the local flankr link is listening, `flankr service`
+status reports the selected persistence backend, and `serve --stop` explicitly
+cleans up an enabled Bitmot relay while `serve --restart` leaves it running.
