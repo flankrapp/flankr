@@ -6,7 +6,8 @@
 #   scripts/install.sh --remote HOST ...    build, install on HOST (repeatable)
 #   scripts/install.sh --local --remote HOST   both
 #   scripts/install.sh --no-build ...       install the last release build
-#   scripts/install.sh --restart ...        then restart each daemon onto it
+#   scripts/install.sh --features FEATURES ...  enable Cargo features
+#   scripts/install.sh --no-default-features    disable Cargo defaults
 #
 # The binary is copied next to the old one and renamed over it, so a
 # running daemon keeps its own copy until it is restarted. With --restart
@@ -21,7 +22,7 @@ set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 target=${CARGO_TARGET_DIR:-$root/target-main}
 bin=$target/release/flankr
-local_install='' build=1 remotes='' restart=''
+local_install='' build=1 remotes='' restart='' features='' no_default_features=''
 
 while [ $# -gt 0 ]; do
     case $1 in
@@ -29,6 +30,9 @@ while [ $# -gt 0 ]; do
         --remote) [ $# -ge 2 ] || { echo "--remote needs a host" >&2; exit 2; }
                   remotes="$remotes $2"; shift ;;
         --no-build) build= ;;
+        --features) [ $# -ge 2 ] || { echo "--features needs a value" >&2; exit 2; }
+                    features="${features:+$features,}$2"; shift ;;
+        --no-default-features) no_default_features=1 ;;
         --restart) restart=1 ;;
         -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
@@ -38,9 +42,23 @@ done
 [ -n "$remotes" ] || local_install=1
 
 if [ -n "$build" ]; then
-    (cd "$root" && HERDR_SRC=${HERDR_SRC:-$root/external/herdr} \
-        CARGO_TARGET_DIR=$target CARGO_INCREMENTAL=0 \
-        cargo build --release -p flankr)
+    (
+        cd "$root"
+        export HERDR_SRC=${HERDR_SRC:-$root/external/herdr}
+        export CARGO_TARGET_DIR=$target
+        export CARGO_INCREMENTAL=0
+        if [ -n "$no_default_features" ]; then
+            if [ -n "$features" ]; then
+                cargo build --release -p flankr --no-default-features --features "$features"
+            else
+                cargo build --release -p flankr --no-default-features
+            fi
+        elif [ -n "$features" ]; then
+            cargo build --release -p flankr --features "$features"
+        else
+            cargo build --release -p flankr
+        fi
+    )
 fi
 [ -x "$bin" ] || { echo "no release build at $bin" >&2; exit 1; }
 version=$("$bin" --version)

@@ -329,3 +329,8 @@ These changes came before the program had version numbers.
 - `--vpn bitmot` now requires its edge-node endpoint even when selected on the command line.
 - Bitmot service start and restart refuse to create a public relay until the local flankr link is listening.
 - Service status names the persistence backend, and `serve --stop` removes an enabled Bitmot relay while `serve --restart` preserves it.
+
+## 0.9.0 — 2026-11-14
+
+**Added**
+- `scripts/install.sh` accepts `--features` and `--no-default-features`, so optional providers such as Bitmot can be included in the installed flankr binary.
