@@ -1137,7 +1137,7 @@ mod tests {
             })
             .is_err()
         );
-        assert!(VpnChoice::None.open().is_none());
+        assert!(VpnChoice::None.open(None).is_none());
     }
 
     struct Rig {
