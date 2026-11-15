@@ -134,6 +134,16 @@ impl BitmotProvider {
             .and_then(|value| value.rsplit_once(':'))
             .and_then(|(_, port)| port.parse().ok())
             .unwrap_or(crate::server::link::DEFAULT_PORT);
+        if matches!(operation, Operation::Start | Operation::Restart) {
+            let address: SocketAddr = format!("127.0.0.1:{port}")
+                .parse()
+                .map_err(|e| format!("vpn.bitmot local target is invalid: {e}"))?;
+            if TcpStream::connect_timeout(&address, std::time::Duration::from_millis(500)).is_err() {
+                return Err(format!(
+                    "vpn.bitmot local link target 127.0.0.1:{port} is not listening; start flankr first"
+                ));
+            }
+        }
         let spec = vpn.service_spec(port);
         let backend = backend()?;
         let result = match operation {
