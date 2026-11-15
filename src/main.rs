@@ -469,12 +469,13 @@ fn server_flags(args: &AppArgs) -> Vec<String> {
 fn service_context(args: &AppArgs) -> Result<flankr::service::ServiceContext, Box<dyn std::error::Error>> {
     let config_path = config_path(args);
     let config = flankr::config::AppConfig::load_or_default(Some(&config_path));
+    let socket = daemon_socket(args, &config);
     Ok(flankr::service::ServiceContext {
         config,
         config_path,
         executable: std::env::current_exe()?,
         working_dir: std::env::current_dir()?,
-        socket: daemon_socket(args, &flankr::config::AppConfig::load_or_default(Some(&config_path))),
+        socket,
         server_args: server_flags(args).into_iter().map(Into::into).collect(),
     })
 }

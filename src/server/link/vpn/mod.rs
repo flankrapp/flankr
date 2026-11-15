@@ -127,12 +127,12 @@ impl VpnChoice {
         }
     }
 
-    pub fn open(self, endpoint: Option<&str>) -> Option<std::sync::Arc<dyn Vpn>> {
+    pub fn open(self, _endpoint: Option<&str>) -> Option<std::sync::Arc<dyn Vpn>> {
         match self {
             #[cfg(feature = "vpn-tailscale")]
             VpnChoice::Tailscale => Some(std::sync::Arc::new(tailscale::Tailscale::find())),
             #[cfg(feature = "vpn-bitmot")]
-            VpnChoice::Bitmot => endpoint
+            VpnChoice::Bitmot => _endpoint
                 .map(bitmot::Bitmot::find)
                 .map(|vpn| std::sync::Arc::new(vpn) as std::sync::Arc<dyn Vpn>),
             VpnChoice::None => None,

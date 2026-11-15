@@ -1,6 +1,8 @@
 //! Root service providers and the `flankr service` command seam.
 
 use std::ffi::OsString;
+#[cfg(feature = "vpn-bitmot")]
+use std::net::{SocketAddr, TcpStream};
 use std::path::PathBuf;
 use flankr_daemon::{ServiceSpec, ServiceStatus, UserServiceBackend};
 
@@ -123,9 +125,8 @@ impl BitmotProvider {
         Ok(crate::server::link::vpn::bitmot::Bitmot::find(endpoint))
     }
 
-    fn op(&self, context: &ServiceContext, operation: Operation) -> Result<ServiceStatus, String> {
-        let vpn = self.vpn(context)?;
-        let port = context
+    fn port(&self, context: &ServiceContext) -> u16 {
+        context
             .config
             .link
             .listen
@@ -133,7 +134,12 @@ impl BitmotProvider {
             .and_then(|list| list.first())
             .and_then(|value| value.rsplit_once(':'))
             .and_then(|(_, port)| port.parse().ok())
-            .unwrap_or(crate::server::link::DEFAULT_PORT);
+            .unwrap_or(crate::server::link::DEFAULT_PORT)
+    }
+
+    fn op(&self, context: &ServiceContext, operation: Operation) -> Result<ServiceStatus, String> {
+        let vpn = self.vpn(context)?;
+        let port = self.port(context);
         if matches!(operation, Operation::Start | Operation::Restart) {
             let address: SocketAddr = format!("127.0.0.1:{port}")
                 .parse()
@@ -163,7 +169,7 @@ impl ServiceProvider for BitmotProvider {
     }
     fn spec(&self, context: &ServiceContext) -> Result<ServiceSpec, String> {
         let vpn = self.vpn(context)?;
-        Ok(vpn.service_spec(crate::server::link::DEFAULT_PORT))
+        Ok(vpn.service_spec(self.port(context)))
     }
     fn status(&self, context: &ServiceContext) -> Result<ServiceStatus, String> {
         self.op(context, Operation::Status)
