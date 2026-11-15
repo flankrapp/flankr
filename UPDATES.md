@@ -322,3 +322,10 @@ These changes came before the program had version numbers.
 - `flankr service list|status|start|stop|restart` controls flankr and an enabled Bitmot raw-TCP relay. `serve`, `serve --stop`, `serve --restart`, `serve --foreground` and `server` remain shortcuts.
 - `[link] bitmot_endpoint` and `--bitmot-endpoint` configure a Bitmot edge node. Builds select providers with `vpn-tailscale` (default) and `vpn-bitmot`; disabled providers report the feature needed to enable them.
 - Bitmot uses `~/.local/bin/bitmot io1 relay --node <endpoint> --tcp <port>=127.0.0.1:<port>` as the persistent service `dev.flankr.vpn.bitmot`, without putting credentials in its arguments or logs.
+
+## 0.8.1 — 2026-11-14
+
+**Fixed**
+- `--vpn bitmot` now requires its edge-node endpoint even when selected on the command line.
+- Bitmot service start and restart refuse to create a public relay until the local flankr link is listening.
+- Service status names the persistence backend, and `serve --stop` removes an enabled Bitmot relay while `serve --restart` preserves it.
