@@ -5127,3 +5127,11 @@ three small operational clarifications: Bitmot service start/restart refuses
 to create a relay before the local flankr link is listening, `flankr service`
 status reports the selected persistence backend, and `serve --stop` explicitly
 cleans up an enabled Bitmot relay while `serve --restart` leaves it running.
+
+## 2026-11-14 21:35 EST — Installer feature selection
+
+Plan: persistent third-party services, with Bitmot as the first VPN provider
+(20261114_03). The owner asked for `scripts/install.sh` to accept Cargo
+feature selection so the installed binary can include optional providers such
+as Bitmot. The script will continue to install only the already-built binary
+when `--no-build` is used.
