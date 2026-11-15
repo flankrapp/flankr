@@ -143,7 +143,7 @@ impl Vpn for Bitmot {
     async fn forwards(&self, port: u16) -> Result<bool, VpnError> {
         Ok(matches!(
             self.status_sync(port)?,
-            ServiceStatus::Running { .. } | ServiceStatus::Loaded
+            ServiceStatus::Running { .. }
         ))
     }
 
