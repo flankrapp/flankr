@@ -168,6 +168,8 @@ impl LaunchdUserBackend {
     fn bootstrap(&self, spec: &ServiceSpec) -> io::Result<ServiceStatus> {
         validate_spec(spec)?;
         private_dir(&self.state_dir)?;
+        ensure_private_file(&spec.stdout)?;
+        ensure_private_file(&spec.stderr)?;
         let plist = self.plist_path(spec)?;
         write_private(&plist, &plist_text(spec)?)?;
         let domain = self.domain();
@@ -274,6 +276,15 @@ fn write_private(path: &Path, text: &str) -> io::Result<()> {
         .open(path)?;
     use std::io::Write;
     file.write_all(text.as_bytes())?;
+    file.set_permissions(fs::Permissions::from_mode(0o600))
+}
+
+fn ensure_private_file(path: &Path) -> io::Result<()> {
+    let file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .mode(0o600)
+        .open(path)?;
     file.set_permissions(fs::Permissions::from_mode(0o600))
 }
 
