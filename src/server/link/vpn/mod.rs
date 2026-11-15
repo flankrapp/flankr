@@ -4,11 +4,11 @@
 //! The link takes a `dyn Vpn`: [`tailscale::Tailscale`] in the daemon,
 //! [`fake::FakeVpn`] in tests, which never run a real VPN.
 
+#[cfg(feature = "vpn-bitmot")]
+pub mod bitmot;
 pub mod fake;
 #[cfg(feature = "vpn-tailscale")]
 pub mod tailscale;
-#[cfg(feature = "vpn-bitmot")]
-pub mod bitmot;
 
 use std::fmt;
 

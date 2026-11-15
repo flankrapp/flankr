@@ -154,11 +154,23 @@ impl LinkSettings {
     }
 
     /// Set a command-line Bitmot endpoint, replacing the configured value.
-    pub fn with_bitmot_endpoint(mut self, endpoint: Option<&str>) -> Self {
+    pub fn with_bitmot_endpoint(mut self, endpoint: Option<&str>) -> Result<Self, String> {
         if let Some(endpoint) = endpoint {
             self.bitmot_endpoint = Some(endpoint.to_string());
         }
-        self
+        #[cfg(feature = "vpn-bitmot")]
+        if matches!(self.vpn, VpnChoice::Bitmot)
+            && self
+                .bitmot_endpoint
+                .as_deref()
+                .is_none_or(|endpoint| endpoint.trim().is_empty())
+        {
+            return Err(
+                "[link] vpn = 'bitmot' requires [link] bitmot_endpoint (an edge-node name)"
+                    .to_string(),
+            );
+        }
+        Ok(self)
     }
 
     /// With the command line's `--vpn` and `--bind`s, which replace
@@ -1138,6 +1150,25 @@ mod tests {
             .is_err()
         );
         assert!(VpnChoice::None.open(None).is_none());
+    }
+
+    #[cfg(feature = "vpn-bitmot")]
+    #[test]
+    fn command_line_bitmot_selection_requires_an_endpoint() {
+        let settings = LinkSettings::from_config(&LinkConfig::default())
+            .unwrap()
+            .with_flags(Some("bitmot"), &[])
+            .unwrap();
+        let error = settings.with_bitmot_endpoint(None).unwrap_err();
+        assert!(error.contains("bitmot_endpoint"), "{error}");
+
+        let settings = LinkSettings::from_config(&LinkConfig::default())
+            .unwrap()
+            .with_flags(Some("bitmot"), &[])
+            .unwrap()
+            .with_bitmot_endpoint(Some("mynode.io1.io"))
+            .unwrap();
+        assert_eq!(settings.bitmot_endpoint.as_deref(), Some("mynode.io1.io"));
     }
 
     struct Rig {

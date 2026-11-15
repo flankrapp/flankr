@@ -8,13 +8,15 @@
 //! flankr [serve [--foreground | --stop | --restart] | server]
 //!        [--config <file>] [--transport <name> | --remote <user@host> |
 //!         --socket <herdr.sock> | --mock] [--listen <flankr.sock>] [--show-tokens]
-//!        [--vpn tailscale|none] [--bind <addr:port>]...
+//!        [--vpn tailscale|bitmot|none] [--bitmot-endpoint <node>]
+//!        [--bind <addr:port>]...
 //!        [--prompts <ADDITIONAL_PROMPTS.md>] [--suggestions <SUGGESTIONS.md>]
 //! flankr ctl [--listen <flankr.sock>] [--client <name>] [--follow] [--handle <text>]
 //!            <method> [<params as JSON>]
 //! flankr pair [--foreground] [--listen <flankr.sock>] [--name <name>] [--protocols companion,harness]
 //!             [--replace] [--code <code>] [--qr-png <file>] [--timeout <secs>]
-//!             [--vpn tailscale|none] [--bind <addr:port>]...
+//!             [--vpn tailscale|bitmot|none] [--bitmot-endpoint <node>]
+//!             [--bind <addr:port>]...
 //! flankr session tail [--listen <flankr.sock>] [--pane <id or name>] [--follow]
 //!                     [--entries N] [--history N] [--outline] [--from N] [--to N]
 //! flankr prompt [--use general_agent] [--agent <name>] [--prompts <ADDITIONAL_PROMPTS.md>]
@@ -294,7 +296,7 @@ async fn serve(args: AppArgs) -> Result<(), Box<dyn std::error::Error>> {
     // The link: its key is checked (and created) before anything listens.
     let settings = flankr::server::link::LinkSettings::from_config(&config.link)?
         .with_flags(args.vpn.as_deref(), &args.bind)?
-        .with_bitmot_endpoint(args.bitmot_endpoint.as_deref());
+        .with_bitmot_endpoint(args.bitmot_endpoint.as_deref())?;
     let link = if settings.enabled() {
         Some(flankr::server::link::Link::open(settings)?)
     } else {
@@ -401,7 +403,9 @@ async fn serve_background(
     let socket = flankr::daemon::absolute(&daemon_socket(args, &config));
     let files = daemon_files(&socket).ok_or("HOME is not set")?;
     if args.stop {
-        return Ok(flankr::daemon::stop(&socket, &files).await);
+        let code = flankr::daemon::stop(&socket, &files).await;
+        let vpn_code = stop_bitmot_service(args);
+        return Ok(if code == 0 { vpn_code } else { code });
     }
     let working_dir = std::env::current_dir()?;
     // The key in this shell, and none where the background daemon looks
@@ -466,9 +470,20 @@ fn server_flags(args: &AppArgs) -> Vec<String> {
     flags
 }
 
-fn service_context(args: &AppArgs) -> Result<flankr::service::ServiceContext, Box<dyn std::error::Error>> {
+fn service_context(
+    args: &AppArgs,
+) -> Result<flankr::service::ServiceContext, Box<dyn std::error::Error>> {
     let config_path = config_path(args);
-    let config = flankr::config::AppConfig::load_or_default(Some(&config_path));
+    let mut config = flankr::config::AppConfig::load_or_default(Some(&config_path));
+    if let Some(vpn) = &args.vpn {
+        config.link.vpn = Some(vpn.clone());
+    }
+    if let Some(endpoint) = &args.bitmot_endpoint {
+        config.link.bitmot_endpoint = Some(endpoint.clone());
+    }
+    if !args.bind.is_empty() {
+        config.link.listen = Some(args.bind.clone());
+    }
     let socket = daemon_socket(args, &config);
     Ok(flankr::service::ServiceContext {
         config,
@@ -480,10 +495,42 @@ fn service_context(args: &AppArgs) -> Result<flankr::service::ServiceContext, Bo
     })
 }
 
+fn stop_bitmot_service(args: &AppArgs) -> i32 {
+    #[cfg(feature = "vpn-bitmot")]
+    {
+        let context = match service_context(args) {
+            Ok(context) => context,
+            Err(e) => {
+                eprintln!("flankr: could not prepare vpn.bitmot stop: {e}");
+                return 1;
+            }
+        };
+        let registry = flankr::service::Registry::new(&context);
+        if !registry.ids().contains(&"vpn.bitmot") {
+            return 0;
+        }
+        match registry.stop("vpn.bitmot", &context) {
+            Ok(status) => {
+                println!("vpn.bitmot: {}", status.description());
+                0
+            }
+            Err(e) => {
+                eprintln!("flankr: could not stop vpn.bitmot: {e}");
+                1
+            }
+        }
+    }
+    #[cfg(not(feature = "vpn-bitmot"))]
+    {
+        let _ = args;
+        0
+    }
+}
+
 async fn pair(args: AppArgs) -> Result<i32, Box<dyn std::error::Error>> {
     let config = flankr::config::AppConfig::load_or_default(args.config.as_deref().map(Path::new));
     let socket = daemon_socket(&args, &config);
-    let usage = "usage: flankr pair [--foreground] [--listen <socket>] [--name <name>] [--protocols companion,harness] [--replace] [--code <code>] [--qr-png <file>] [--timeout <secs>] [--vpn tailscale|none] [--bind <addr:port>]...";
+    let usage = "usage: flankr pair [--foreground] [--listen <socket>] [--name <name>] [--protocols companion,harness] [--replace] [--code <code>] [--qr-png <file>] [--timeout <secs>] [--vpn tailscale|bitmot|none] [--bitmot-endpoint <node>] [--bind <addr:port>]...";
     // `--restart` is `serve`'s; `pair`'s `--replace` is about the paired
     // name (the 2026-11-03 11:53 EST amendment, item 4).
     if !args.positional.is_empty() || args.stop || args.restart {
@@ -632,23 +679,27 @@ const PROMPT_USAGE: &str = "usage: flankr prompt [--use general_agent] [--agent 
 const USAGE: &str = "\
 flankr version | --version | -V
 flankr service list|status|start|stop|restart [service]
+  `flankr service` controls the persistent flankr and enabled service jobs.
 flankr [serve [--foreground | --stop | --restart] | server]
        [--config <file>] [--transport <name> | --remote <user@host> |
-        --socket <herdr.sock> | --mock] [--listen <flankr.sock>] [--show-tokens]
+       --socket <herdr.sock> | --mock] [--listen <flankr.sock>] [--show-tokens]
+       [--vpn tailscale|bitmot|none] [--bitmot-endpoint <node>]
+       [--bind <addr:port>]...
        [--prompts <ADDITIONAL_PROMPTS.md>] [--suggestions <SUGGESTIONS.md>]
-  serve (the default) starts `flankr server` in the background and returns;
   log and pid in ~/.local/state/flankr/. --foreground runs it here, as
   `server` does; --stop stops it; --restart stops the daemon running on
   the socket, whichever copy it is, and starts this one in the background.
   The link listens on 127.0.0.1:7347; --bind <addr:port> (repeatable, e.g.
   0.0.0.0:7347) replaces [link] listen for the run. --vpn tailscale (the
-  default) makes Tailscale forward its port 7347 to the link, adding the
-  forward if it is missing; --vpn none runs nothing for a VPN.
+  default) makes Tailscale forward its port 7347 to the link; --vpn bitmot
+  uses --bitmot-endpoint as the Bitmot edge-node name; --vpn none runs
+  nothing for a VPN.
 flankr ctl [--listen <flankr.sock>] [--client <name>] [--follow] [--handle <text>]
            <method> [<params as JSON>]
 flankr pair [--foreground] [--listen <flankr.sock>] [--name <name>] [--protocols companion,harness]
             [--replace] [--code <code>] [--qr-png <file>] [--timeout <secs>]
-            [--vpn tailscale|none] [--bind <addr:port>]...
+            [--vpn tailscale|bitmot|none] [--bitmot-endpoint <node>]
+            [--bind <addr:port>]...
   a daemon pair starts gets its --vpn, --bind and other server flags.
 flankr session tail [--listen <flankr.sock>] [--pane <id or name>] [--follow]
                     [--entries N] [--history N] [--outline] [--from N] [--to N]
@@ -782,7 +833,11 @@ async fn run(
     background: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if command == "service" {
-        let operation = args.positional.first().map(String::as_str).unwrap_or("list");
+        let operation = args
+            .positional
+            .first()
+            .map(String::as_str)
+            .unwrap_or("list");
         let service = args.positional.get(1).map(String::as_str);
         if args.positional.len() > 2 {
             return Err("usage: flankr service list|status|start|stop|restart [service]".into());

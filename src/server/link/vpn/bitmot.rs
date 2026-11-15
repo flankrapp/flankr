@@ -109,10 +109,12 @@ impl Bitmot {
             command: self.command(port),
             message,
         })?;
-        backend.status(&self.service_spec(port)).map_err(|e| VpnError {
-            command: self.command(port),
-            message: e.to_string(),
-        })
+        backend
+            .status(&self.service_spec(port))
+            .map_err(|e| VpnError {
+                command: self.command(port),
+                message: e.to_string(),
+            })
     }
 }
 
@@ -123,10 +125,13 @@ impl Vpn for Bitmot {
     }
 
     async fn running(&self) -> Result<bool, VpnError> {
-        Ok(matches!(
-            self.status_sync(crate::server::link::DEFAULT_PORT)?,
-            ServiceStatus::Running { .. } | ServiceStatus::Loaded
-        ))
+        match self.status_sync(crate::server::link::DEFAULT_PORT)? {
+            ServiceStatus::Unsupported(message) | ServiceStatus::Failed(message) => Err(VpnError {
+                command: self.command(crate::server::link::DEFAULT_PORT),
+                message,
+            }),
+            _ => Ok(true),
+        }
     }
 
     async fn address(&self, port: u16) -> Result<Option<VpnAddress>, VpnError> {
@@ -158,7 +163,10 @@ impl Vpn for Bitmot {
                 command: self.command(port),
                 message: e.to_string(),
             })?;
-        if matches!(status, ServiceStatus::Unsupported(_) | ServiceStatus::Failed(_)) {
+        if matches!(
+            status,
+            ServiceStatus::Unsupported(_) | ServiceStatus::Failed(_)
+        ) {
             return Err(VpnError {
                 command: self.command(port),
                 message: status.description(),
@@ -193,7 +201,12 @@ mod tests {
         assert_eq!(
             bitmot.args(7347),
             vec![
-                "io1", "relay", "--node", "mynode.io1.io", "--tcp", "7347=127.0.0.1:7347"
+                "io1",
+                "relay",
+                "--node",
+                "mynode.io1.io",
+                "--tcp",
+                "7347=127.0.0.1:7347"
             ]
             .into_iter()
             .map(OsString::from)

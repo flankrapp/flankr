@@ -1,10 +1,10 @@
 //! Root service providers and the `flankr service` command seam.
 
+use flankr_daemon::{ServiceSpec, ServiceStatus, UserServiceBackend};
 use std::ffi::OsString;
 #[cfg(feature = "vpn-bitmot")]
 use std::net::{SocketAddr, TcpStream};
 use std::path::PathBuf;
-use flankr_daemon::{ServiceSpec, ServiceStatus, UserServiceBackend};
 
 use crate::config::AppConfig;
 
@@ -42,6 +42,17 @@ fn backend() -> Result<Box<dyn UserServiceBackend>, String> {
     }
 }
 
+fn backend_name() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        "launchd user"
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        "no persistent backend"
+    }
+}
+
 /// The flankr daemon itself as a persistent service.
 #[derive(Debug, Default)]
 pub struct FlankrProvider;
@@ -71,7 +82,11 @@ impl FlankrProvider {
         }
     }
 
-    fn operation(&self, context: &ServiceContext, operation: Operation) -> Result<ServiceStatus, String> {
+    fn operation(
+        &self,
+        context: &ServiceContext,
+        operation: Operation,
+    ) -> Result<ServiceStatus, String> {
         let spec = self.spec_for(context);
         let backend = backend()?;
         let result = match operation {
@@ -119,7 +134,10 @@ pub struct BitmotProvider;
 
 #[cfg(feature = "vpn-bitmot")]
 impl BitmotProvider {
-    fn vpn(&self, context: &ServiceContext) -> Result<crate::server::link::vpn::bitmot::Bitmot, String> {
+    fn vpn(
+        &self,
+        context: &ServiceContext,
+    ) -> Result<crate::server::link::vpn::bitmot::Bitmot, String> {
         let endpoint = context
             .config
             .link
@@ -145,18 +163,23 @@ impl BitmotProvider {
     fn op(&self, context: &ServiceContext, operation: Operation) -> Result<ServiceStatus, String> {
         let vpn = self.vpn(context)?;
         let port = self.port(context);
+        let spec = vpn.service_spec(port);
+        let backend = backend()?;
         if matches!(operation, Operation::Start | Operation::Restart) {
+            let current = backend.status(&spec).map_err(|e| e.to_string())?;
+            if matches!(current, ServiceStatus::Unsupported(_)) {
+                return Ok(current);
+            }
             let address: SocketAddr = format!("127.0.0.1:{port}")
                 .parse()
                 .map_err(|e| format!("vpn.bitmot local target is invalid: {e}"))?;
-            if TcpStream::connect_timeout(&address, std::time::Duration::from_millis(500)).is_err() {
+            if TcpStream::connect_timeout(&address, std::time::Duration::from_millis(500)).is_err()
+            {
                 return Err(format!(
                     "vpn.bitmot local link target 127.0.0.1:{port} is not listening; start flankr first"
                 ));
             }
         }
-        let spec = vpn.service_spec(port);
-        let backend = backend()?;
         let result = match operation {
             Operation::Status => backend.status(&spec),
             Operation::Start => backend.ensure(&spec),
@@ -198,13 +221,13 @@ pub struct Registry {
 }
 
 impl Registry {
-    pub fn new(context: &ServiceContext) -> Self {
+    pub fn new(_context: &ServiceContext) -> Self {
         Self {
             flankr: FlankrProvider,
             #[cfg(feature = "vpn-bitmot")]
-            bitmot: (context.config.link.vpn.as_deref() == Some("bitmot")
-                || context.config.link.bitmot_endpoint.is_some())
-                .then_some(BitmotProvider),
+            bitmot: (_context.config.link.vpn.as_deref() == Some("bitmot")
+                || _context.config.link.bitmot_endpoint.is_some())
+            .then_some(BitmotProvider),
         }
     }
 
@@ -212,13 +235,18 @@ impl Registry {
         match id {
             "flankr" => Some(&self.flankr),
             #[cfg(feature = "vpn-bitmot")]
-            "vpn.bitmot" if self.bitmot.is_some() => self.bitmot.as_ref().map(|p| p as &dyn ServiceProvider),
+            "vpn.bitmot" if self.bitmot.is_some() => {
+                self.bitmot.as_ref().map(|p| p as &dyn ServiceProvider)
+            }
             _ => None,
         }
     }
 
     pub fn ids(&self) -> Vec<&'static str> {
+        #[cfg(feature = "vpn-bitmot")]
         let mut ids = vec!["flankr"];
+        #[cfg(not(feature = "vpn-bitmot"))]
+        let ids = vec!["flankr"];
         #[cfg(feature = "vpn-bitmot")]
         if self.bitmot.is_some() {
             ids.push("vpn.bitmot");
@@ -247,8 +275,8 @@ impl Registry {
         // restart intentionally leaves the Bitmot relay untouched.
         if id == "flankr" {
             #[cfg(feature = "vpn-bitmot")]
-            if self.bitmot.is_some() {
-                let _ = self.bitmot.as_ref().expect("checked above").stop(context);
+            if let Some(bitmot) = &self.bitmot {
+                bitmot.stop(context)?;
             }
         }
         Ok(status)
@@ -262,25 +290,30 @@ impl Registry {
 }
 
 /// Dispatch a service operation and print one stable status line per service.
-pub fn command(operation: &str, service: Option<&str>, context: &ServiceContext) -> Result<i32, String> {
+pub fn command(
+    operation: &str,
+    service: Option<&str>,
+    context: &ServiceContext,
+) -> Result<i32, String> {
     let registry = Registry::new(context);
     match operation {
         "list" => {
             for id in registry.ids() {
                 let status = registry.status(id, context)?;
-                println!("{id}: {}", status.description());
+                println!("{id}: {} [{}]", status.description(), backend_name());
             }
             Ok(0)
         }
         "status" | "start" | "stop" | "restart" => {
-            let id = service.ok_or_else(|| format!("flankr service {operation} requires a service name"))?;
+            let id = service
+                .ok_or_else(|| format!("flankr service {operation} requires a service name"))?;
             let status = match operation {
                 "status" => registry.status(id, context)?,
                 "start" => registry.start(id, context)?,
                 "stop" => registry.stop(id, context)?,
                 _ => registry.restart(id, context)?,
             };
-            println!("{id}: {}", status.description());
+            println!("{id}: {} [{}]", status.description(), backend_name());
             Ok(0)
         }
         _ => Err("usage: flankr service list|status|start|stop|restart [service]".to_string()),
