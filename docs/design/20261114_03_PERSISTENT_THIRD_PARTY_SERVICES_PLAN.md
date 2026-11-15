@@ -428,3 +428,33 @@ amendment changes the front-matter status from `Draft` to `In implementation`
 and makes the plan immutable under AGENTS.md Rule 1.5. The requirements and
 interfaces above are the governing implementation contract; later changes
 require an owner-directed amendment.
+
+## Amendment — 2026-11-14 21:54 EST: replace pairing applies explicit VPN changes
+
+The pairing command gains a persistent configuration path for an explicit VPN
+change. When `flankr pair --replace` includes `--vpn`, it must:
+
+1. validate the requested provider and its required endpoint/configuration;
+2. update `[link].vpn` and any explicitly supplied provider setting in the
+   selected `config.toml`, preserving unrelated settings;
+3. restart the running flankr daemon with the new configuration before creating
+   the replacement pairing offer.
+
+Without `--replace`, pairing keeps its existing behavior: explicit server flags
+are used only when the command starts a missing daemon. `--replace` without an
+explicit VPN remains a pairing-record replacement only.
+
+## Amendment — 2026-11-14 22:00 EST: explicit VPN selection is independent of replace
+
+This amendment supersedes the 21:54 amendment's `--replace` condition. Any
+explicit `flankr pair --vpn <provider>` selection must:
+
+1. validate the requested provider and its required endpoint/configuration;
+2. update `[link].vpn` and any explicitly supplied provider setting in the
+   selected `config.toml`, preserving unrelated settings;
+3. restart the running flankr daemon with the new configuration before creating
+   the pairing offer.
+
+`--replace` continues to control only the pairing record. Pairing with
+`--replace` and no explicit VPN changes that record without changing the link
+configuration or restarting the daemon.

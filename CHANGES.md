@@ -5135,3 +5135,19 @@ Plan: persistent third-party services, with Bitmot as the first VPN provider
 feature selection so the installed binary can include optional providers such
 as Bitmot. The script will continue to install only the already-built binary
 when `--no-build` is used.
+
+## 2026-11-14 21:54 EST — Pair replacement applies VPN selection
+
+Plan: persistent third-party services, with Bitmot as the first VPN provider
+(20261114_03). The owner directed that `flankr pair --replace --vpn ...`
+persist the explicit link VPN selection in the selected config file and
+restart the daemon before creating the replacement pairing offer. Pairing
+without `--replace` keeps the existing non-persistent flag behavior.
+
+## 2026-11-14 22:00 EST — Pair VPN flags apply to an existing daemon
+
+Plan: persistent third-party services, with Bitmot as the first VPN provider
+(20261114_03). The owner clarified that any explicit `flankr pair --vpn ...`
+selection, with or without `--replace`, persists the link VPN in the selected
+config file and restarts the daemon before pairing. `--replace` alone remains
+pairing-record-only.

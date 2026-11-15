@@ -776,3 +776,26 @@ number): a plan named `20261028_04_…` shows as `4  10/28`.
 **In hand.** Handed to a subagent in the `yesno-cards` worktree: show it
 as one small `10/28 04`, the date then the two-digit NN as in the file
 name, recorded as an amendment to the plan that covers the plan table.
+
+## 2026-11-14 21:53 EST — Owner: replacing a pairing must apply an explicit VPN change
+
+**Report.** Running `flankr pair --vpn bitmot` produced a Tailscale address
+because an existing daemon kept its prior VPN configuration. The owner says
+that supplying `--replace` with an explicit VPN must make the new pairing use
+that VPN.
+
+**Decision.** An explicit VPN change during a replace pairing must update the
+configuration and trigger a daemon restart before the new pairing offer is
+created. The persistent third-party services plan is amended with this
+behavior.
+
+## 2026-11-14 22:00 EST — Owner: explicit VPN selection applies without replace too
+
+**Clarification.** The reported command was `flankr pair --vpn bitmot`; the
+configuration and daemon behavior must change from the explicit `--vpn` itself,
+not only when `--replace` is also present. `--replace` still controls replacing
+the pairing record.
+
+**Decision.** Any explicit VPN selection on `flankr pair` updates the selected
+configuration and restarts the daemon before the offer. A pairing replacement
+without an explicit VPN changes only the pairing record.
