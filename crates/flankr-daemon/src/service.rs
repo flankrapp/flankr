@@ -124,7 +124,10 @@ impl LaunchdUserBackend {
             || spec.id.contains('\0')
             || spec.id.chars().any(char::is_whitespace)
         {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid service id"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid service id",
+            ));
         }
         Ok(&spec.id)
     }
@@ -144,7 +147,7 @@ impl LaunchdUserBackend {
     }
 
     fn run(&self, args: &[&OsStr]) -> io::Result<std::process::Output> {
-        Command::new("launchctl").args(args).output()
+        Command::new("/bin/launchctl").args(args).output()
     }
 
     fn loaded(&self, spec: &ServiceSpec) -> io::Result<Option<ServiceStatus>> {
@@ -158,11 +161,13 @@ impl LaunchdUserBackend {
             let value = line.trim().strip_prefix("pid = ")?;
             value.parse().ok()
         });
-        Ok(Some(if pid.is_some() || text.lines().any(|line| line.trim() == "state = running") {
-            ServiceStatus::Running { pid }
-        } else {
-            ServiceStatus::Loaded
-        }))
+        Ok(Some(
+            if pid.is_some() || text.lines().any(|line| line.trim() == "state = running") {
+                ServiceStatus::Running { pid }
+            } else {
+                ServiceStatus::Loaded
+            },
+        ))
     }
 
     fn bootstrap(&self, spec: &ServiceSpec) -> io::Result<ServiceStatus> {
@@ -191,7 +196,8 @@ impl LaunchdUserBackend {
             return Err(command_error("launchctl kickstart", &output));
         }
         write_private(&self.state_path(spec)?, &fingerprint(spec))?;
-        self.loaded(spec).map(|state| state.unwrap_or(ServiceStatus::Loaded))
+        self.loaded(spec)
+            .map(|state| state.unwrap_or(ServiceStatus::Loaded))
     }
 }
 
@@ -204,7 +210,10 @@ impl UserServiceBackend for LaunchdUserBackend {
     fn ensure(&self, spec: &ServiceSpec) -> io::Result<ServiceStatus> {
         let current = self.loaded(spec)?;
         let expected = fingerprint(spec);
-        let saved = self.state_path(spec).ok().and_then(|path| fs::read_to_string(path).ok());
+        let saved = self
+            .state_path(spec)
+            .ok()
+            .and_then(|path| fs::read_to_string(path).ok());
         if current.is_some() && saved.as_deref() == Some(expected.as_str()) {
             let target = self.target(spec)?;
             let output = self.run(&[
@@ -251,7 +260,10 @@ pub fn platform_backend() -> io::Result<LaunchdUserBackend> {
 
 fn validate_spec(spec: &ServiceSpec) -> io::Result<()> {
     if spec.id.is_empty() || spec.id.contains('/') || spec.id.contains('\0') {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid service id"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid service id",
+        ));
     }
     if !spec.program.is_absolute() || !spec.working_dir.is_absolute() {
         return Err(io::Error::new(
@@ -261,7 +273,10 @@ fn validate_spec(spec: &ServiceSpec) -> io::Result<()> {
     }
     for path in [&spec.stdout, &spec.stderr] {
         if !path.is_absolute() {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "service logs must be absolute"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "service logs must be absolute",
+            ));
         }
     }
     Ok(())
@@ -314,7 +329,9 @@ fn fingerprint(spec: &ServiceSpec) -> String {
 
 #[cfg(target_os = "macos")]
 fn plist_text(spec: &ServiceSpec) -> io::Result<String> {
-    let mut out = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict>");
+    let mut out = String::from(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict>",
+    );
     field(&mut out, "Label", &spec.id)?;
     out.push_str("<key>ProgramArguments</key><array>");
     value(&mut out, &spec.program)?;
@@ -333,7 +350,11 @@ fn plist_text(spec: &ServiceSpec) -> io::Result<String> {
     field(&mut out, "StandardErrorPath", &spec.stderr)?;
     field(&mut out, "StandardInPath", Path::new("/dev/null"))?;
     out.push_str("<key>RunAtLoad</key><true/>");
-    out.push_str(if spec.keep_alive { "<key>KeepAlive</key><true/>" } else { "<key>KeepAlive</key><false/>" });
+    out.push_str(if spec.keep_alive {
+        "<key>KeepAlive</key><true/>"
+    } else {
+        "<key>KeepAlive</key><false/>"
+    });
     out.push_str("</dict></plist>\n");
     Ok(out)
 }
@@ -348,9 +369,20 @@ fn field<T: AsRef<OsStr> + ?Sized>(out: &mut String, key: &str, value_: &T) -> i
 
 #[cfg(target_os = "macos")]
 fn value<T: AsRef<OsStr> + ?Sized>(out: &mut String, value_: &T) -> io::Result<()> {
-    let text = value_.as_ref().to_str().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "service plist value is not UTF-8"))?;
-    if text.chars().any(|c| c == '\0' || (c.is_control() && c != '\n' && c != '\t')) {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "service plist value has invalid XML characters"));
+    let text = value_.as_ref().to_str().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "service plist value is not UTF-8",
+        )
+    })?;
+    if text
+        .chars()
+        .any(|c| c == '\0' || (c.is_control() && c != '\n' && c != '\t'))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "service plist value has invalid XML characters",
+        ));
     }
     out.push_str("<string>");
     for ch in text.chars() {
@@ -401,9 +433,12 @@ mod tests {
     #[test]
     fn plist_contains_fixed_process_contract() {
         let text = plist_text(&spec()).unwrap();
-        assert!(text.contains("<key>RunAtLoad</key><true/>") && text.contains("<key>KeepAlive</key><true/>") );
+        assert!(
+            text.contains("<key>RunAtLoad</key><true/>")
+                && text.contains("<key>KeepAlive</key><true/>")
+        );
         assert!(text.contains("<key>StandardInPath</key><string>/dev/null</string>"));
         assert!(text.contains("x y"));
-        assert!(text.contains("&amp;" ) || !text.contains("&"));
+        assert!(text.contains("&amp;") || !text.contains("&"));
     }
 }
