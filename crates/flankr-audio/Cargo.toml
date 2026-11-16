@@ -1,6 +1,6 @@
 [package]
 name = "flankr-audio"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 description = "Audio for the companion front ends: libvoicexn speech in and out, joined to flankr-companion"
 license = "Apache-2.0"
@@ -18,9 +18,9 @@ log = "0.4"
 # libmobile use.
 cpal = { version = "0.18.2", optional = true }
 # `morph`: libmorph's Sink and Source types, at the companion app's
-# revision (libmorph 0.6.0, tag v0.6.0). The adapters are in src/morph.rs, so
-# libvoicexn's own `morph` feature, and its older libmorph, stay off.
-libmorph = { git = "https://github.com/tmzt/libmorph", rev = "befe374c3a9da5b5a45c78f8ecc89719baa25a9f", default-features = false, optional = true }
+# libmorph 0.9.0 (libmobile 0.5.0): the camera QR worker repairs bounded
+# terminal-rendering gaps before decoding.
+libmorph = { git = "https://github.com/tmzt/libmorph", rev = "71e2e56018088da539df2789f420d41e2240bb59", default-features = false, optional = true }
 
 [features]
 default = []

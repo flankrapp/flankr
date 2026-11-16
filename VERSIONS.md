@@ -1578,3 +1578,9 @@ and `goal` through as they come.
   project with no agent.
 - **Added:** `policy::last_activity_secs(&AgentInfo)` and
   `policy::in_project(&AgentInfo, root)`.
+
+## flankr-audio 0.4.0 — 2026-11-16 (the commit tagged `flankr-audio-v0.4.0`)
+
+The camera QR repair is available through libmorph 0.9.0, which takes
+libmobile 0.5.0. **Breaking** under Critical Rule 5.5: the public `morph`
+feature depends on a new incompatible libmorph minor version.
