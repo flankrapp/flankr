@@ -895,3 +895,26 @@ reconciles the Bitmot relay before restarting the daemon. SIGHUP is a graceful
 supervisor reload: the daemon reconciles the dependent relay, exits cleanly,
 and launchd starts it again from the current config. The link remains
 startup-configured instead of becoming an in-process mutable object.
+
+## 2026-11-16 11:43 EST — Owner: Bitmot high port is blocked
+
+**Finding.** The phone resolved Bitmot's announced host
+`d1jc9964.e.io1.io`, but TCP port 7347 timed out. The same relay and local
+link were reachable through public TCP port 443. The companion correctly
+dropped the loopback address and reported that the announced address was not
+reached; the daemon therefore never saw this pairing attempt.
+
+**Decision.** Bitmot maps public TCP port 443 to the local flankr link port
+7347, and new pairing offers advertise `d1jc9964.e.io1.io:443`.
+
+## 2026-11-16 11:59 EST — Owner: Bitmot edge forward was undeclared
+
+**Finding.** A separate HTTP service on local port 9000 proved the relay
+transport works after declaring `tcp/443` on the edge node. Before that
+declaration, the public socket accepted and reset the request without
+reaching port 9000. The installed flankr relay must ensure its public TCP
+forward exists, not only start `bitmot io1 relay`.
+
+**Done.** `tcp/443` is declared for `tmzt-flankr`; the final pairing URL
+reached the phone, and the companion logged `addresses updated` for
+`d1jc9964.e.io1.io`.

@@ -477,3 +477,9 @@ These changes came before the app had version numbers.
 
 **Added**
 - Each project's title in Active tasks has an arrow at its right edge. Tap it to open the turns of the project's agent that was active most recently, as tapping that agent in All agents does. A tap anywhere else on the title still folds and unfolds the project. A project with no agent has no arrow.
+
+## 0.7.34 — 2026-11-16
+
+**Fixed**
+- Pairing links through Bitmot now connect on networks that block the
+  high-numbered local link port.

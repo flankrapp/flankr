@@ -390,3 +390,10 @@ These changes came before the program had version numbers.
   enabled services when no service name is given.
 - SIGHUP requests a graceful supervisor reload; launchd restarts the daemon
   from the current configuration after dependent services are reconciled.
+
+## 0.11.1 — 2026-11-16
+
+**Fixed**
+- Bitmot pairing now uses public TCP port 443 for the relay and maps it to
+  the local link port 7347, so phones on networks that block high-numbered
+  inbound ports can connect.

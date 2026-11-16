@@ -5222,3 +5222,23 @@ configuration changes. The implementation will add `flankr service reload`,
 reload the configured dependent services in order, and handle SIGHUP as a
 graceful supervisor reload. The daemon will restart rather than mutate its
 immutable link in place; launchd then starts it from the reloaded config.
+ 
+## 2026-11-16 11:43 EST — Use a reachable Bitmot public port
+
+Plan: persistent third-party services, with Bitmot as the first VPN provider
+(20261114_03). The owner's phone can resolve the Bitmot relay host, but TCP
+port 7347 times out from the phone's network while the same relay is reachable
+on public TCP port 443. The Bitmot forward will therefore map public port 443
+to the local link port 7347 and pairing offers will advertise the public port.
+This is a small operational departure from the plan's same-port example,
+required for the existing raw-TCP link to work on networks that block
+high-numbered inbound ports.
+
+## 2026-11-16 11:59 EST — Declare the Bitmot public forward
+
+Plan: persistent third-party services, with Bitmot as the first VPN provider
+(20261114_03). The relay announced its host but the edge node had no declared
+TCP forward, so its public socket accepted and reset connections without
+dialing the local target. Bitmot setup will ensure the public TCP forward for
+the configured port exists before starting the persistent relay; an existing
+covering TCP range is reused.

@@ -179,6 +179,7 @@ impl BitmotProvider {
                     "vpn.bitmot local link target 127.0.0.1:{port} is not listening; start flankr first"
                 ));
             }
+            vpn.ensure_public_forward().map_err(|e| e.to_string())?;
         }
         let result = match operation {
             Operation::Status => backend.status(&spec),

@@ -2,16 +2,30 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
 
 use async_trait::async_trait;
 use flankr_daemon::{ServiceSpec, ServiceStatus, UserServiceBackend};
+use serde::Deserialize;
 
 use super::{Vpn, VpnAddress, VpnError};
 
 /// Stable launchd/user-service identity.
 pub const SERVICE_ID: &str = "dev.flankr.vpn.bitmot";
+/// Public TCP port used by the relay. Port 443 is reachable on networks that
+/// block the link's local high-numbered port.
+pub const PUBLIC_PORT: u16 = 443;
 /// The default local Bitmot executable location.
 pub const DEFAULT_EXECUTABLE: &str = "~/.local/bin/bitmot";
+
+#[derive(Debug, Deserialize)]
+struct EdgeForward {
+    protocol: String,
+    #[serde(rename = "portFirst")]
+    port_first: u16,
+    #[serde(rename = "portLast")]
+    port_last: u16,
+}
 
 /// Bitmot raw relay for one edge-node name.
 #[derive(Debug, Clone)]
@@ -49,7 +63,7 @@ impl Bitmot {
         &self.executable
     }
 
-    /// The one command used by both the link driver and service registry.
+    /// Map the public Bitmot port to the local flankr link port.
     pub fn args(&self, port: u16) -> Vec<OsString> {
         vec![
             "io1".into(),
@@ -57,7 +71,7 @@ impl Bitmot {
             "--node".into(),
             self.endpoint.clone().into(),
             "--tcp".into(),
-            format!("{port}=127.0.0.1:{port}").into(),
+            format!("{PUBLIC_PORT}=127.0.0.1:{port}").into(),
         ]
     }
 
@@ -121,6 +135,67 @@ impl Bitmot {
         let log = std::fs::read_to_string(self.service_spec(port).stdout).ok()?;
         announced_host(&self.endpoint, &log)
     }
+    fn edge_forward_list(&self) -> Result<Vec<EdgeForward>, VpnError> {
+        let command = format!(
+            "{} io1 edge forward list {} --json",
+            self.executable.display(),
+            shell_quote(&self.endpoint)
+        );
+        let output = Command::new(&self.executable)
+            .args(["io1", "edge", "forward", "list"])
+            .arg(&self.endpoint)
+            .arg("--json")
+            .output()
+            .map_err(|e| VpnError {
+                command: command.clone(),
+                message: e.to_string(),
+            })?;
+        if !output.status.success() {
+            return Err(VpnError {
+                command,
+                message: output_message(&output),
+            });
+        }
+        serde_json::from_slice(&output.stdout).map_err(|e| VpnError {
+            command,
+            message: format!("invalid forward list: {e}"),
+        })
+    }
+
+    pub(crate) fn ensure_public_forward(&self) -> Result<(), VpnError> {
+        if self.edge_forward_list()?.iter().any(covers_public_forward) {
+            return Ok(());
+        }
+
+        let command = format!(
+            "{} io1 edge forward add {} tcp {} --label flankr",
+            self.executable.display(),
+            shell_quote(&self.endpoint),
+            PUBLIC_PORT
+        );
+        let output = Command::new(&self.executable)
+            .args(["io1", "edge", "forward", "add"])
+            .arg(&self.endpoint)
+            .args(["tcp", &PUBLIC_PORT.to_string(), "--label", "flankr"])
+            .output()
+            .map_err(|e| VpnError {
+                command: command.clone(),
+                message: e.to_string(),
+            })?;
+        if output.status.success() {
+            return Ok(());
+        }
+        if self
+            .edge_forward_list()
+            .is_ok_and(|forwards| forwards.iter().any(covers_public_forward))
+        {
+            return Ok(());
+        }
+        Err(VpnError {
+            command,
+            message: output_message(&output),
+        })
+    }
 }
 
 #[async_trait]
@@ -147,17 +222,21 @@ impl Vpn for Bitmot {
             command: self.command(port),
             message: "the Bitmot relay has not announced its public host yet".to_string(),
         })?;
-        Ok(Some(VpnAddress { host, port }))
+        Ok(Some(VpnAddress {
+            host,
+            port: PUBLIC_PORT,
+        }))
     }
 
     async fn forwards(&self, port: u16) -> Result<bool, VpnError> {
-        Ok(matches!(
-            self.status_sync(port)?,
-            ServiceStatus::Running { .. }
-        ))
+        if !matches!(self.status_sync(port)?, ServiceStatus::Running { .. }) {
+            return Ok(false);
+        }
+        Ok(self.edge_forward_list()?.iter().any(covers_public_forward))
     }
 
     async fn forward(&self, port: u16) -> Result<(), VpnError> {
+        self.ensure_public_forward()?;
         let backend = Self::backend().map_err(|message| VpnError {
             command: self.command(port),
             message,
@@ -183,6 +262,24 @@ impl Vpn for Bitmot {
     fn forward_command(&self, port: u16) -> String {
         self.command(port)
     }
+}
+
+fn output_message(output: &Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !stderr.is_empty() {
+        return stderr;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !stdout.is_empty() {
+        return stdout;
+    }
+    format!("command exited with {}", output.status)
+}
+
+fn covers_public_forward(forward: &EdgeForward) -> bool {
+    forward.protocol.eq_ignore_ascii_case("tcp")
+        && forward.port_first <= PUBLIC_PORT
+        && PUBLIC_PORT <= forward.port_last
 }
 
 fn announced_host(endpoint: &str, log: &str) -> Option<String> {
@@ -220,7 +317,7 @@ mod tests {
                 "--node",
                 "mynode.io1.io",
                 "--tcp",
-                "7347=127.0.0.1:7347"
+                "443=127.0.0.1:7347"
             ]
             .into_iter()
             .map(OsString::from)
@@ -230,6 +327,19 @@ mod tests {
         assert_eq!(spec.id, SERVICE_ID);
         assert_eq!(spec.args, bitmot.args(7347));
         assert!(!bitmot.command(7347).contains("--public"));
+    }
+
+    #[test]
+    fn a_declared_tcp_range_covers_the_public_port_but_udp_does_not() {
+        let forwards: Vec<EdgeForward> = serde_json::from_str(
+            r#"[
+                {"protocol":"tcp","portFirst":400,"portLast":500},
+                {"protocol":"udp","portFirst":443,"portLast":443}
+            ]"#,
+        )
+        .unwrap();
+        assert!(covers_public_forward(&forwards[0]));
+        assert!(!covers_public_forward(&forwards[1]));
     }
     #[test]
     fn announced_host_uses_the_latest_matching_relay_line() {
