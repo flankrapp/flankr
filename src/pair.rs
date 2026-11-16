@@ -86,6 +86,8 @@ pub struct Shown {
     pub url: String,
     /// The PNG of the URL's QR code.
     pub png: Vec<u8>,
+    /// The terminal rendering of the URL's QR code.
+    pub terminal: String,
     /// Whether some address can be reached from another machine.
     pub remote: bool,
     /// The daemon's fingerprint label, `3f9a 12c4`.
@@ -98,15 +100,19 @@ impl Shown {
     pub fn new(pairing: &str) -> Result<Shown, String> {
         let payload = PairingPayload::decode(pairing).map_err(|e| e.to_string())?;
         let url = payload.url().map_err(|e| e.to_string())?;
-        let png = qrcodeurl::png(&url).map_err(|e| format!("QR code: {e}"))?;
+        let qr = qrcodeurl::Qr::new(&url).map_err(|e| format!("QR code: {e}"))?;
+        let png = qr.png(qrcodeurl::Png::default());
+        let terminal = qr.terminal(qrcodeurl::Terminal::LightOnDark);
         Ok(Shown {
             url,
             png,
+            terminal,
             remote: payload.has_remote_address(),
             fingerprint: fingerprint_text(&payload.server_key),
             fingerprint_words: fingerprint_words_text(&payload.server_key),
         })
     }
+
 
     /// The line naming the daemon, printed after the QR code.
     pub fn identity(&self) -> String {
@@ -550,7 +556,8 @@ fn show(
     say(
         out,
         &format!(
-            "{}\n\n{}\n\n{}\n\n",
+            "{}\n{}\n\n{}\n\n{}\n\n",
+            shown.terminal,
             shown.url,
             shown.data_url(),
             shown.identity()
@@ -599,7 +606,11 @@ mod tests {
             format!("flankr://m4.tail1a2b3c.ts.net:7347/pair#{pairing}")
         );
         assert!(shown.remote);
-        assert_eq!(shown.png, qrcodeurl::png(&shown.url).unwrap());
+        assert_eq!(shown.png, qr.png(qrcodeurl::Png::default()));
+        assert_eq!(
+            shown.terminal,
+            qr.terminal(qrcodeurl::Terminal::LightOnDark)
+        );
         assert!(
             shown
                 .data_url()
