@@ -102,7 +102,7 @@ impl Shown {
         let url = payload.url().map_err(|e| e.to_string())?;
         let qr = qrcodeurl::Qr::new(&url).map_err(|e| format!("QR code: {e}"))?;
         let png = qr.png(qrcodeurl::Png::default());
-        let terminal = qr.terminal(qrcodeurl::Terminal::LightOnDark);
+        let terminal = qr.terminal(qrcodeurl::Terminal::DarkOnLight);
         Ok(Shown {
             url,
             png,
@@ -609,7 +609,7 @@ mod tests {
         assert_eq!(shown.png, qr.png(qrcodeurl::Png::default()));
         assert_eq!(
             shown.terminal,
-            qr.terminal(qrcodeurl::Terminal::LightOnDark)
+            qr.terminal(qrcodeurl::Terminal::DarkOnLight)
         );
         assert!(
             shown

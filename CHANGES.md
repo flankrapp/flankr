@@ -5285,3 +5285,13 @@ through adb, so the camera acceptance used the feature-gated damaged-frame QR
 decode smoke instead; it decodes the pairing payload after the bounded repair
 without recording that payload. The standalone evidence is under
 `out/qr/20261116_01_terminal_camera/`.
+ 
+## 2026-11-16 13:21 EST — Use camera-readable terminal QR contrast
+
+Plan: half-height terminal QR codes and camera-side QR row normalization
+(20261116_01). The S23 screenshot shows the terminal QR's quiet zone and
+light modules rendered as a dark field because `flankr pair` selected
+`LightOnDark`; the phone scanner does not detect that inverted presentation.
+The pair command will select the existing `DarkOnLight` renderer so the
+terminal code has dark modules and a light quiet zone, without changing the
+pairing payload or PNG/data-URL output.

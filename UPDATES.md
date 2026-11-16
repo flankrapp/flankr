@@ -404,3 +404,9 @@ These changes came before the program had version numbers.
 - `flankr pair` now prints the pairing QR directly in the terminal using
   half-height Unicode characters, while retaining the URL and data URL
   fallbacks.
+
+## 0.12.1 — 2026-11-16
+
+**Fixed**
+- The terminal QR now uses standard dark-on-light contrast so phone cameras
+  can detect it from the screen.
