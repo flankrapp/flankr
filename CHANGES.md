@@ -5185,3 +5185,13 @@ Plan: persistent third-party services, with Bitmot as the first VPN provider
 formed as `tmzt-flankr.io1.io`. The running Bitmot relay announces its actual
 public host separately, such as `d1jc9964.e.io1.io`; pairing must use that
 announced host while the relay command keeps the raw node name.
+
+## 2026-11-16 10:51 EST — Replace a detached daemon during pair restart
+
+Plan: persistent third-party services, with Bitmot as the first VPN provider
+(20261114_03). The installed daemon's persistent launchd job was repeatedly
+failing because an older detached daemon still owned the socket. `pair --vpn`
+mistook the old daemon's response for the restarted service and therefore
+continued emitting the old unreachable pairing host. An explicit VPN pairing
+restart must stop the daemon currently answering on the socket before
+restarting the persistent job, then wait for the replacement.

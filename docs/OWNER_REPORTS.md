@@ -849,3 +849,15 @@ the relay. The Bitmot service log announces the actual public host as
 **Decision.** Pairing must use Bitmot's announced public host, not
 `<node>.io1.io` inferred from the raw node name. The relay continues to use
 the raw `--node tmzt-flankr` argument.
+
+## 2026-11-16 10:51 EST — Owner: pair was using an older daemon
+
+**Finding.** `flankr pair --vpn bitmot` reported a restart, but the launchd
+job was spawn-scheduled while an older detached daemon continued owning
+`flankr.sock`. The pairing command accepted that old daemon's socket response,
+so it still emitted `tmzt-flankr.io1.io` after the announced-host fix was
+installed.
+
+**Decision.** An explicit VPN pairing restart must stop the daemon answering on
+the socket before restarting the persistent launchd job and must verify that
+the replacement answers.

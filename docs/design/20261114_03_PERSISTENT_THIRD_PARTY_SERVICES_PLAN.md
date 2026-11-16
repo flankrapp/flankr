@@ -484,3 +484,12 @@ pairing address. The `VpnAddress.host` must use `<host>` from that
 announcement; it must not infer `<node>.io1.io` when the relay announces a
 different public host. The relay command and launchd service continue to use
 the raw node name.
+
+## Amendment — 2026-11-16 10:51 EST: replace a detached daemon before pairing restart
+
+When `pair --vpn` changes the link configuration, the restart path must
+identify and stop the daemon currently answering on the configured socket
+before restarting a persistent service. A launchd job being loaded is not
+proof that its process owns the socket: an older detached daemon can still
+answer it while the launchd job repeatedly fails. The restart must wait for a
+different daemon process to answer before creating the pairing offer.

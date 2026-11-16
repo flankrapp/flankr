@@ -553,8 +553,32 @@ async fn restart_pair_daemon(args: &mut AppArgs) -> Result<(), Box<dyn std::erro
         persistent_status,
         Ok(flankr_daemon::ServiceStatus::Running { .. } | flankr_daemon::ServiceStatus::Loaded)
     ) {
-        let status = registry.restart("flankr", &context)?;
-        wait_for_daemon(&context.socket).await?;
+        let socket = flankr::daemon::absolute(&context.socket);
+        let previous = flankr::daemon::answers(&socket).await;
+        let status = if previous.is_some() {
+            let stopped = registry.stop("flankr", &context)?;
+            if let flankr_daemon::ServiceStatus::Unsupported(message)
+            | flankr_daemon::ServiceStatus::Failed(message) = stopped
+            {
+                return Err(
+                    format!("flankr: could not stop the persistent daemon: {message}").into(),
+                );
+            }
+            let files = daemon_files(&socket).ok_or("HOME is not set")?;
+            let code = flankr::daemon::stop(&socket, &files).await;
+            if code != 0 {
+                return Err("flankr: could not stop the daemon answering on its socket".into());
+            }
+            registry.start("flankr", &context)?
+        } else {
+            registry.restart("flankr", &context)?
+        };
+        wait_for_daemon(&socket).await?;
+        if let Some(previous_pid) = previous.flatten()
+            && flankr::daemon::answers(&socket).await.flatten() == Some(previous_pid)
+        {
+            return Err("flankr: persistent restart left the old daemon answering".into());
+        }
         eprintln!("flankr: daemon restarted ({})", status.description());
         return Ok(());
     }

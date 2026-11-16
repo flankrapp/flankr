@@ -363,3 +363,9 @@ These changes came before the program had version numbers.
 - Bitmot pairing links now use the public host announced by the running relay,
   so the companion connects to the relay's assigned node instead of an
   inferred hostname.
+
+## 0.10.4 — 2026-11-16
+
+**Fixed**
+- `flankr pair --vpn ...` now replaces a detached daemon that still owns the
+  socket instead of accepting that old daemon as the restarted service.
