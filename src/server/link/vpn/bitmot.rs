@@ -137,7 +137,7 @@ impl Vpn for Bitmot {
     async fn address(&self, port: u16) -> Result<Option<VpnAddress>, VpnError> {
         if self.running().await? {
             Ok(Some(VpnAddress {
-                host: self.endpoint.clone(),
+                host: pairing_host(&self.endpoint),
                 port,
             }))
         } else {
@@ -180,6 +180,13 @@ impl Vpn for Bitmot {
     }
 }
 
+fn pairing_host(endpoint: &str) -> String {
+    if endpoint.contains('.') || endpoint.parse::<std::net::IpAddr>().is_ok() {
+        endpoint.to_string()
+    } else {
+        format!("{endpoint}.io1.io")
+    }
+}
 fn shell_quote(value: &str) -> String {
     if value
         .chars()
@@ -216,5 +223,14 @@ mod tests {
         assert_eq!(spec.id, SERVICE_ID);
         assert_eq!(spec.args, bitmot.args(7347));
         assert!(!bitmot.command(7347).contains("--public"));
+    }
+    #[test]
+    fn pairing_host_defaults_the_io1_suffix_without_changing_relay_node() {
+        assert_eq!(pairing_host("mynode"), "mynode.io1.io");
+        assert_eq!(pairing_host("mynode.example"), "mynode.example");
+        assert_eq!(pairing_host("2001:db8::1"), "2001:db8::1");
+
+        let bitmot = Bitmot::at("mynode", "/Users/u/.local/bin/bitmot");
+        assert_eq!(bitmot.args(7347)[3], OsString::from("mynode"));
     }
 }

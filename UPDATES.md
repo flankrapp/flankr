@@ -350,3 +350,9 @@ These changes came before the program had version numbers.
 - Bitmot's persistent relay now starts through launchd instead of being
   rejected because its generated environment dictionary used invalid plist
   elements.
+
+## 0.10.2 — 2026-11-16
+
+**Changed**
+- Bitmot pairing addresses now append `.io1.io` to a bare node name, while
+  the relay still receives the endpoint exactly as supplied with `--node`.
