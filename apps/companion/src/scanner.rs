@@ -58,6 +58,7 @@ pub fn qr_options() -> QrOptions {
     options.mode = QrMode::Continuous;
     options.auto_zoom = true;
     options.exposure = ScreenExposure::Auto;
+    options.terminal_qr_compatibility = true;
     options.preview = Some(PreviewOptions::default());
     options
 }
@@ -628,6 +629,7 @@ mod tests {
         assert!(o.auto_zoom);
         assert_eq!(o.exposure, ScreenExposure::Auto);
         assert_eq!(o.preview, Some(PreviewOptions::default()));
+        assert!(o.terminal_qr_compatibility);
     }
 
     #[test]

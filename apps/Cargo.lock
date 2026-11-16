@@ -549,7 +549,7 @@ dependencies = [
 
 [[package]]
 name = "companion"
-version = "0.7.35"
+version = "0.7.36"
 dependencies = [
  "android_logger",
  "base64 0.22.1",
@@ -1703,8 +1703,8 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "libmobile"
-version = "0.5.0"
-source = "git+https://github.com/tmzt/libmobile?rev=a7407e0659c3c791097d8eb330b688ccf75a4df4#a7407e0659c3c791097d8eb330b688ccf75a4df4"
+version = "0.5.1"
+source = "git+https://github.com/tmzt/libmobile?rev=f95f39d29bce07a26aa3764e2b6ac0d6bd50d330#f95f39d29bce07a26aa3764e2b6ac0d6bd50d330"
 dependencies = [
  "android-activity",
  "cpal",
@@ -1721,8 +1721,8 @@ dependencies = [
 
 [[package]]
 name = "libmorph"
-version = "0.9.0"
-source = "git+https://github.com/tmzt/libmorph?rev=71e2e56018088da539df2789f420d41e2240bb59#71e2e56018088da539df2789f420d41e2240bb59"
+version = "0.9.1"
+source = "git+https://github.com/tmzt/libmorph?rev=8f00a6014448d7ba9a49646de54060ab7d43da48#8f00a6014448d7ba9a49646de54060ab7d43da48"
 dependencies = [
  "block2 0.5.1",
  "cpal",
@@ -1743,8 +1743,8 @@ dependencies = [
 
 [[package]]
 name = "libmorph-build"
-version = "0.5.0"
-source = "git+https://github.com/tmzt/libmorph?rev=757ea2fd42015efde6c6339a7cc18169c9c0dbcc#757ea2fd42015efde6c6339a7cc18169c9c0dbcc"
+version = "0.5.1"
+source = "git+https://github.com/tmzt/libmorph?rev=8b06d8313ec96e48d28c5aa02530388cf1716db0#8b06d8313ec96e48d28c5aa02530388cf1716db0"
 dependencies = [
  "libmobile",
 ]

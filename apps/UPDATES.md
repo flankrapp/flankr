@@ -489,3 +489,9 @@ These changes came before the app had version numbers.
 **Fixed**
 - The camera can now read the half-height QR printed by `flankr pair`, even
   when short bright gaps from terminal rendering split its dark rows.
+
+## 0.7.36 — 2026-11-16
+
+**Fixed**
+- Pairing QR codes with wider terminal line spacing are readable by the
+  camera.
