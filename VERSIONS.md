@@ -1584,3 +1584,8 @@ and `goal` through as they come.
 The camera QR repair is available through libmorph 0.9.0, which takes
 libmobile 0.5.0. **Breaking** under Critical Rule 5.5: the public `morph`
 feature depends on a new incompatible libmorph minor version.
+
+## flankr-audio 0.4.1 — 2026-11-16 (the commit tagged `flankr-audio-v0.4.1`)
+
+- libmorph 0.9.1 → 0.9.2 and libmobile 0.5.1 → 0.5.2; the public audio
+  API is unchanged.

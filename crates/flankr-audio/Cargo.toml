@@ -1,6 +1,6 @@
 [package]
 name = "flankr-audio"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 description = "Audio for the companion front ends: libvoicexn speech in and out, joined to flankr-companion"
 license = "Apache-2.0"
@@ -17,9 +17,9 @@ log = "0.4"
 # `cpal`: the default input and output devices; the version voicexn-tty and
 # libmobile use.
 cpal = { version = "0.18.2", optional = true }
-# `morph`: libmorph 0.9.1 (libmobile 0.5.1); the companion opts into
+# `morph`: libmorph 0.9.2 (libmobile 0.5.2); the companion opts into
 # terminal QR line-spacing compatibility for pairing codes.
-libmorph = { git = "https://github.com/tmzt/libmorph", rev = "8f00a6014448d7ba9a49646de54060ab7d43da48", default-features = false, optional = true }
+libmorph = { git = "https://github.com/tmzt/libmorph", rev = "57f786408d488ea56d0711a7f227caa132df5eb1", default-features = false, optional = true }
 
 [features]
 default = []
