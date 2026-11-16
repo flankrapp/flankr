@@ -5204,3 +5204,12 @@ persistent launchd job, launchd took longer than the normal detached-daemon
 startup window to create the replacement. The explicit VPN pairing restart
 must wait through that launchd startup interval instead of returning before the
 new daemon answers.
+
+## 2026-11-16 11:05 EST — Avoid restarting an unchanged pairing daemon
+
+Plan: persistent third-party services, with Bitmot as the first VPN provider
+(20261114_03). The owner reported that repeating
+`flankr pair --replace --vpn bitmot --bitmot-endpoint tmzt-flankr` printed
+`flankr is not running` while launchd replaced an already correctly configured
+daemon. Pairing must not restart the daemon when the requested VPN settings
+already match the active configuration and socket.

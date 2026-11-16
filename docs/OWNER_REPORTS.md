@@ -871,3 +871,15 @@ the daemon up shortly afterward.
 
 **Decision.** The persistent pair-restart path gets a launchd-sized startup
 wait, while ordinary detached startup keeps its existing timeout.
+
+## 2026-11-16 11:05 EST — Owner: repeat pairing should be idempotent
+
+**Report.** Repeating the same explicit Bitmot pairing command restarted the
+daemon unnecessarily. During the launchd replacement window it printed
+`flankr is not running on .../flankr.sock`; the owner interrupted before the
+new daemon finished starting.
+
+**Decision.** If the requested VPN and provider settings already match the
+active configuration and the daemon answers on its socket, pairing reuses that
+daemon. A restart remains required when settings changed or the daemon is not
+active.

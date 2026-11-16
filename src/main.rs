@@ -613,11 +613,16 @@ fn apply_pair_vpn_config(
     args: &AppArgs,
     config_path: &Path,
     config: &mut flankr::config::AppConfig,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<bool, Box<dyn std::error::Error>> {
     let Some(vpn) = args.vpn.as_deref() else {
-        return Ok(());
+        return Ok(false);
     };
     let vpn = vpn.trim().to_ascii_lowercase();
+    let vpn_changed = config.link.vpn.as_deref() != Some(vpn.as_str());
+    let endpoint_changed = args
+        .bitmot_endpoint
+        .as_deref()
+        .is_some_and(|endpoint| config.link.bitmot_endpoint.as_deref() != Some(endpoint));
     config.link.vpn = Some(vpn.clone());
     if let Some(endpoint) = args.bitmot_endpoint.as_deref() {
         config.link.bitmot_endpoint = Some(endpoint.to_string());
@@ -626,11 +631,11 @@ fn apply_pair_vpn_config(
         .map_err(|error| format!("flankr pair: {error}"))?;
     flankr::config::update_link_vpn(config_path, &vpn, args.bitmot_endpoint.as_deref())
         .map_err(|error| format!("flankr pair: {error}"))?;
-    Ok(())
+    Ok(vpn_changed || endpoint_changed)
 }
 
-/// Pairing replacement with an explicit VPN also changes the daemon's link
-/// configuration and restarts it before the new offer is generated.
+/// Pairing with an explicit VPN persists its link configuration and restarts
+/// the daemon only when that configuration changed or the daemon is inactive.
 async fn pair(mut args: AppArgs) -> Result<i32, Box<dyn std::error::Error>> {
     let config_path = config_path(&args);
     let mut config =
@@ -643,8 +648,15 @@ async fn pair(mut args: AppArgs) -> Result<i32, Box<dyn std::error::Error>> {
     }
     let change_vpn = args.vpn.is_some();
     if change_vpn {
-        apply_pair_vpn_config(&args, &config_path, &mut config)?;
-        restart_pair_daemon(&mut args).await?;
+        let settings_changed = apply_pair_vpn_config(&args, &config_path, &mut config)?;
+        let socket = daemon_socket(&args, &config);
+        let daemon_inactive = !args.foreground
+            && flankr::daemon::answers(&flankr::daemon::absolute(&socket))
+                .await
+                .is_none();
+        if settings_changed || daemon_inactive {
+            restart_pair_daemon(&mut args).await?;
+        }
     }
     let socket = daemon_socket(&args, &config);
     // No daemon answering: start one in the background first, as `serve`

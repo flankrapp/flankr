@@ -500,3 +500,10 @@ The persistent pair-restart path must allow the launchd backend's replacement
 job to start after the old socket owner is stopped. Its wait may exceed the
 ordinary detached-daemon startup timeout; ordinary detached startup behavior
 is unchanged.
+
+## Amendment — 2026-11-16 11:05 EST: make unchanged explicit pairing idempotent
+
+When `pair --vpn` requests the same VPN and provider settings already active
+in configuration, and the configured daemon answers on its socket, pairing
+must reuse it without restarting the persistent service. A changed setting or
+an inactive daemon still uses the restart/recovery path.

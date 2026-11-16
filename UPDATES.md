@@ -375,3 +375,9 @@ These changes came before the program had version numbers.
 **Fixed**
 - Explicit VPN pairing waits for the persistent daemon to come back after
   launchd replaces a stale socket owner.
+
+## 0.10.6 — 2026-11-16
+
+**Fixed**
+- Repeating `flankr pair --vpn ...` with the same active settings no longer
+  restarts the daemon or pauses before showing the pairing URL.
