@@ -342,7 +342,7 @@ fn plist_text(spec: &ServiceSpec) -> io::Result<String> {
     field(&mut out, "WorkingDirectory", &spec.working_dir)?;
     out.push_str("<key>EnvironmentVariables</key><dict>");
     for (key, val) in &spec.env {
-        value(&mut out, key)?;
+        plist_key(&mut out, key)?;
         value(&mut out, val)?;
     }
     out.push_str("</dict>");
@@ -361,14 +361,27 @@ fn plist_text(spec: &ServiceSpec) -> io::Result<String> {
 
 #[cfg(target_os = "macos")]
 fn field<T: AsRef<OsStr> + ?Sized>(out: &mut String, key: &str, value_: &T) -> io::Result<()> {
-    out.push_str("<key>");
-    out.push_str(key);
-    out.push_str("</key>");
+    xml_text(out, key, "<key>", "</key>")?;
     value(out, value_)
 }
 
 #[cfg(target_os = "macos")]
+fn plist_key<T: AsRef<OsStr> + ?Sized>(out: &mut String, key: &T) -> io::Result<()> {
+    xml_text(out, key, "<key>", "</key>")
+}
+
+#[cfg(target_os = "macos")]
 fn value<T: AsRef<OsStr> + ?Sized>(out: &mut String, value_: &T) -> io::Result<()> {
+    xml_text(out, value_, "<string>", "</string>")
+}
+
+#[cfg(target_os = "macos")]
+fn xml_text<T: AsRef<OsStr> + ?Sized>(
+    out: &mut String,
+    value_: &T,
+    opening: &str,
+    closing: &str,
+) -> io::Result<()> {
     let text = value_.as_ref().to_str().ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -384,7 +397,7 @@ fn value<T: AsRef<OsStr> + ?Sized>(out: &mut String, value_: &T) -> io::Result<(
             "service plist value has invalid XML characters",
         ));
     }
-    out.push_str("<string>");
+    out.push_str(opening);
     for ch in text.chars() {
         match ch {
             '&' => out.push_str("&amp;"),
@@ -395,7 +408,7 @@ fn value<T: AsRef<OsStr> + ?Sized>(out: &mut String, value_: &T) -> io::Result<(
             _ => out.push(ch),
         }
     }
-    out.push_str("</string>");
+    out.push_str(closing);
     Ok(())
 }
 
@@ -437,8 +450,10 @@ mod tests {
             text.contains("<key>RunAtLoad</key><true/>")
                 && text.contains("<key>KeepAlive</key><true/>")
         );
-        assert!(text.contains("<key>StandardInPath</key><string>/dev/null</string>"));
-        assert!(text.contains("x y"));
+        assert!(text.contains(
+            "<key>EnvironmentVariables</key><dict><key>HOME</key><string>/home/test</string></dict>"
+        ));
+        assert!(!text.contains("<string>HOME</string>"));
         assert!(text.contains("&amp;") || !text.contains("&"));
     }
 }
