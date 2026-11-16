@@ -832,3 +832,9 @@ provided.
 in the pairing URL/address. The relay command must keep the supplied raw
 endpoint for `--node`; `tmzt-flankr` must remain `--node tmzt-flankr` while
 the pairing address is `tmzt-flankr.io1.io:7347`.
+
+## 2026-11-16 10:26 EST — Owner: Bitmot pairing hostname suffix works
+
+**Done.** With the endpoint stored as `tmzt-flankr`, the installed daemon
+produced a pairing URL at `tmzt-flankr.io1.io:7347`. The loaded launchd relay
+still carries the raw `--node tmzt-flankr` argument.
