@@ -5252,3 +5252,18 @@ blank horizontal gaps from terminal rendering by merging the detected dark
 blobs down before QR processing. The plan covers the existing `qrcodeurl`
 terminal renderer, pair output, and the libmobile QR analysis stream without
 changing the pairing payload or protocol.
+
+## 2026-11-16 12:19 EST — Implement the approved terminal QR plan
+
+Plan: half-height terminal QR codes and camera-side QR row normalization
+(20261116_01). The owner approved implementation. The plan is now frozen:
+flankr will print the existing `Dense1x2` terminal QR, and libmobile will
+repair bounded blank gaps between overlapping dark blobs before QR decoding.
+
+## 2026-11-16 12:30 EST — Plan the active tasks card layout
+
+Plan: active tasks cards, project history and non-overlapping input layout
+(20261116_02). The owner requested a session-log-style scrolling card flow
+with dynamic, non-overlapping expansion and input sections, concise policy
+visibility, five recent eligible plans per project, and inactive projects
+below a dotted divider with restricted task disclosure.

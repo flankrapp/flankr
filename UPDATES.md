@@ -397,3 +397,10 @@ These changes came before the program had version numbers.
 - Bitmot pairing now uses public TCP port 443 for the relay and maps it to
   the local link port 7347, so phones on networks that block high-numbered
   inbound ports can connect.
+
+## 0.12.0 — 2026-11-16
+
+**Added**
+- `flankr pair` now prints the pairing QR directly in the terminal using
+  half-height Unicode characters, while retaining the URL and data URL
+  fallbacks.

@@ -1,7 +1,7 @@
 ---
 title: Half-height terminal QR codes and camera-side QR row normalization
 date: 2026-11-16
-status: Draft
+status: In implementation
 covers:
   - "`flankr pair` printing the pairing QR as Unicode half-height terminal
     characters, while retaining the pairing URL, data URL and optional PNG"
@@ -334,3 +334,10 @@ landed together in the flankr implementation cutover.
    terminal frame, the next option is a decoder-local crop/retry, not a change
    to the companion protocol or a second QR format. That is outside this plan
    unless the device smoke proves it necessary.
+
+## Amendment — 2026-11-16 12:19 EST: implementation approved and started
+
+The owner approved implementation of this plan. The status is now `In
+implementation`, and the document is immutable under AGENTS.md Rule 1.5.
+The terminal output and camera-side row normalization decisions above are
+frozen; later implementation results are recorded as amendments.

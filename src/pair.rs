@@ -113,7 +113,6 @@ impl Shown {
         })
     }
 
-
     /// The line naming the daemon, printed after the QR code.
     pub fn identity(&self) -> String {
         format!(
@@ -601,6 +600,7 @@ mod tests {
     fn the_url_names_the_tailscale_address_and_the_png_carries_it() {
         let pairing = pairing(&["m4.tail1a2b3c.ts.net:7347", "127.0.0.1:7347"]);
         let shown = Shown::new(&pairing).unwrap();
+        let qr = qrcodeurl::Qr::new(&shown.url).unwrap();
         assert_eq!(
             shown.url,
             format!("flankr://m4.tail1a2b3c.ts.net:7347/pair#{pairing}")

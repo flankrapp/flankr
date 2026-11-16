@@ -1041,18 +1041,20 @@ mod pair_mode {
         let waiting = format!("{WAITING}{secs} s.\n");
         let text = out.until_contains(&waiting).await;
         let text = &text[..text.find(&waiting).unwrap() + waiting.len()];
-        let url = text.lines().next().unwrap();
+        let url = text
+            .lines()
+            .find(|line| line.starts_with("flankr://"))
+            .unwrap();
         let payload = PairingPayload::decode(url).unwrap();
         let shown = flankr::pair::Shown::new(url).unwrap();
-        let server = env.link.public_key();
         assert_eq!(
             text,
             format!(
-                "{}\n\n{}\n\nDaemon fingerprint: {} ({})\n\n{WAITING}{secs} s.\n",
+                "{}\n{}\n\n{}\n\n{}\n\n{WAITING}{secs} s.\n",
+                shown.terminal,
                 shown.url,
                 shown.data_url(),
-                libflankr_proto::link::fingerprint_text(&server),
-                libflankr_proto::link::fingerprint_words_text(&server),
+                shown.identity(),
             )
         );
         Run {
