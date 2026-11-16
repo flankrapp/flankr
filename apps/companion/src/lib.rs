@@ -113,8 +113,8 @@ use libcontrols::{DrawContext, DrawerLayers};
 use libflankr_proto::common::AgentInfo;
 use libmorph::camera::{CameraEvent, Fit, ScanId, Viewfinder, ViewfinderOptions};
 use libmorph::{
-    AudioSetup, Frame, Key, KeyStatus, LimitsRequest, MorphApp, MorphContext, Touch, TouchPhase,
-    wgpu,
+    AudioSetup, Frame, Key, KeyStatus, LimitsRequest, MorphApp, MorphContext, RenderStatus, Touch,
+    TouchPhase, wgpu,
 };
 use libmsdf::GpuSdfRenderer;
 use libmsdf::drawlist::{AtlasId, AtlasSet, DrawList};
@@ -5217,6 +5217,7 @@ impl MorphApp for App {
 
     fn init(ctx: &mut MorphContext) -> Self {
         let parse = |bytes| FontAtlas::from_bytes(bytes).expect("bundled atlas parses");
+        let gpu = ctx.gpu().expect("init runs with a GPU");
         let (text, page) = (parse(NOTO_SANS_MONO_ATLAS), parse(TERMINAL_SYMBOLS_ATLAS));
         let terminal = TerminalShaper::new(&text, &page).expect("bundled terminal atlases agree");
         let mut fonts = AtlasSet::new();
@@ -5251,8 +5252,8 @@ impl MorphApp for App {
             },
             px_range: BUNDLED_ATLAS_PX_RANGE,
         });
-        let sdf = GpuSdfRenderer::new_with_atlas_set(ctx.device(), ctx.surface_format(), &fonts);
-        sdf.upload_atlas_set(ctx.queue(), &fonts);
+        let sdf = GpuSdfRenderer::new_with_atlas_set(&gpu.device, ctx.surface_format(), &fonts);
+        sdf.upload_atlas_set(&gpu.queue, &fonts);
 
         let args = Args::parse(ctx.args());
         let audio_config = audio_config(ctx, &args);
@@ -5298,7 +5299,7 @@ impl MorphApp for App {
             .cloned()
             .collect();
         let panel_shader = Some(overview::PanelShader::new(
-            ctx.device(),
+            &gpu.device,
             ctx.surface_format(),
         ));
         let mut overview = Overview::new();
@@ -5844,8 +5845,9 @@ impl MorphApp for App {
         }
     }
 
-    fn render(&mut self, ctx: &mut MorphContext, frame: &Frame<'_>) {
+    fn render(&mut self, ctx: &mut MorphContext, frame: &Frame<'_>) -> RenderStatus {
         let font = |id| self.fonts.atlas(id).expect("registered in this set");
+        let gpu = ctx.gpu().expect("render runs with a GPU");
         let mut draw = DrawContext {
             px_range: BUNDLED_ATLAS_PX_RANGE,
             ..DrawContext::new(Some(font(self.roboto).atlas), Some(&self.shaper))
@@ -5983,8 +5985,8 @@ impl MorphApp for App {
         let plan = if self.drawer.is_visible() || self.layers.is_some() {
             let layers = self
                 .layers
-                .get_or_insert_with(|| DrawerLayers::new(ctx.device(), ctx.surface_format()));
-            Some(layers.prepare(ctx.device(), self.drawer.layout().drawer(), (w, h), 1.0))
+                .get_or_insert_with(|| DrawerLayers::new(&gpu.device, ctx.surface_format()));
+            Some(layers.prepare(&gpu.device, self.drawer.layout().drawer(), (w, h), 1.0))
         } else {
             None
         };
@@ -6007,8 +6009,8 @@ impl MorphApp for App {
             self.drawer
                 .draw_sheet(&mut sheet, &draw, Some(&term), self.started.elapsed());
             layers.render_sheet(
-                ctx.device(),
-                ctx.queue(),
+                &gpu.device,
+                &gpu.queue,
                 &self.sdf,
                 &sheet,
                 Some(&self.fonts),
@@ -6023,14 +6025,15 @@ impl MorphApp for App {
         }
         if let Some(l) = layers {
             l.composite(
-                ctx.device(),
-                ctx.queue(),
+                &gpu.device,
+                &gpu.queue,
                 frame.view,
                 self.drawer.layout().drawer(),
                 1.0,
             );
             self.layers = Some(l);
         }
+        RenderStatus::Drawn
     }
 }
 
@@ -6047,13 +6050,14 @@ impl App {
         s: f32,
         shown: Shown,
     ) {
+        let gpu = ctx.gpu().expect("render runs with a GPU");
         let frame = RenderTarget { view: target };
         if shown == Shown::Overview && self.panel_shader.is_some() {
             let panels = self.overview.panel_instances();
             if let Some(shader) = &mut self.panel_shader {
                 shader.draw(
-                    ctx.device(),
-                    ctx.queue(),
+                    &gpu.device,
+                    &gpu.queue,
                     frame.view,
                     ctx.surface_format(),
                     w,
@@ -6064,11 +6068,11 @@ impl App {
                 );
             }
             let frame_sdf = self.list.lower_with(&self.fonts);
-            self.sdf.upload_chars(ctx.queue(), &frame_sdf.char_buffer);
-            self.sdf.upload_params(ctx.queue(), &frame_sdf.param_bank);
+            self.sdf.upload_chars(&gpu.queue, &frame_sdf.char_buffer);
+            self.sdf.upload_params(&gpu.queue, &frame_sdf.param_bank);
             self.sdf.render_full_scaled_load(
-                ctx.device(),
-                ctx.queue(),
+                &gpu.device,
+                &gpu.queue,
                 frame.view,
                 w,
                 h,
@@ -6087,11 +6091,11 @@ impl App {
             // The pairing window's camera (plan 20261028_02, decision 17):
             // one pass clears to the background and draws the viewfinder
             // into the area, then the list goes over it, kept.
-            let mut encoder =
-                ctx.device()
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("pairing viewfinder"),
-                    });
+            let mut encoder = gpu
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("pairing viewfinder"),
+                });
             {
                 let bg = theme().bg;
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -6120,13 +6124,13 @@ impl App {
                     viewfinder.draw(ctx, &mut pass, [area.x, area.y, area.w, area.h], &options);
                 }
             }
-            ctx.queue().submit([encoder.finish()]);
+            gpu.queue.submit([encoder.finish()]);
             let frame_sdf = self.list.lower_with(&self.fonts);
-            self.sdf.upload_chars(ctx.queue(), &frame_sdf.char_buffer);
-            self.sdf.upload_params(ctx.queue(), &frame_sdf.param_bank);
+            self.sdf.upload_chars(&gpu.queue, &frame_sdf.char_buffer);
+            self.sdf.upload_params(&gpu.queue, &frame_sdf.param_bank);
             self.sdf.render_full_scaled_load(
-                ctx.device(),
-                ctx.queue(),
+                &gpu.device,
+                &gpu.queue,
                 frame.view,
                 w,
                 h,
@@ -6139,8 +6143,8 @@ impl App {
             );
         } else {
             self.sdf.render_draw_list_in(
-                ctx.device(),
-                ctx.queue(),
+                &gpu.device,
+                &gpu.queue,
                 frame.view,
                 w,
                 h,
@@ -6156,10 +6160,10 @@ impl App {
             let layout = self.layout;
             if let Some((generation, img, rect, clip)) = self.preview.image(&layout) {
                 let quad = self.image_quad.get_or_insert_with(|| {
-                    preview::gpu::ImageQuad::new(ctx.device(), ctx.surface_format())
+                    preview::gpu::ImageQuad::new(&gpu.device, ctx.surface_format())
                 });
-                quad.upload(ctx.device(), ctx.queue(), generation, img);
-                quad.draw(ctx.device(), ctx.queue(), frame.view, (w, h), rect, clip);
+                quad.upload(&gpu.device, &gpu.queue, generation, img);
+                quad.draw(&gpu.device, &gpu.queue, frame.view, (w, h), rect, clip);
             }
         }
     }

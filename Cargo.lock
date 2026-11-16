@@ -1409,7 +1409,7 @@ dependencies = [
 
 [[package]]
 name = "flankr-audio"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "cpal",
  "env_logger",
@@ -2333,7 +2333,7 @@ checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 [[package]]
 name = "libdevice"
 version = "0.1.3"
-source = "git+https://github.com/tmzt/libdevice#948f9247bb2a4aaaa3b7bc7c95db67563734026c"
+source = "git+https://github.com/tmzt/libdevice?tag=v0.1.3#e4a3a15f919906b1702459ebebe9a91d62c775e6"
 dependencies = [
  "objc2 0.5.3",
  "objc2-app-kit",
@@ -2440,8 +2440,8 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "libmorph"
-version = "0.6.0"
-source = "git+https://github.com/tmzt/libmorph?rev=befe374c3a9da5b5a45c78f8ecc89719baa25a9f#befe374c3a9da5b5a45c78f8ecc89719baa25a9f"
+version = "0.9.0"
+source = "git+https://github.com/tmzt/libmorph?rev=71e2e56018088da539df2789f420d41e2240bb59#71e2e56018088da539df2789f420d41e2240bb59"
 dependencies = [
  "block2 0.5.1",
  "libdevice",

@@ -5267,3 +5267,11 @@ Plan: active tasks cards, project history and non-overlapping input layout
 with dynamic, non-overlapping expansion and input sections, concise policy
 visibility, five recent eligible plans per project, and inactive projects
 below a dotted divider with restricted task disclosure.
+
+## 2026-11-16 12:51 EST — Cut the app onto the camera QR release
+
+Plan: half-height terminal QR codes and camera-side QR row normalization
+(20261116_01), steps 5 and 7. The daemon and camera libraries landed first
+so their own release checks could run independently; this addendum records the
+required companion dependency cutover, app version `0.7.35`, and app changelog
+entry after libmorph's GPU callback API migration was completed.

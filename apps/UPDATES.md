@@ -483,3 +483,9 @@ These changes came before the app had version numbers.
 **Fixed**
 - Pairing links through Bitmot now connect on networks that block the
   high-numbered local link port.
+
+## 0.7.35 — 2026-11-16
+
+**Fixed**
+- The camera can now read the half-height QR printed by `flankr pair`, even
+  when short bright gaps from terminal rendering split its dark rows.
