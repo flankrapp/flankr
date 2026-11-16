@@ -5242,3 +5242,13 @@ TCP forward, so its public socket accepted and reset connections without
 dialing the local target. Bitmot setup will ensure the public TCP forward for
 the configured port exists before starting the persistent relay; an existing
 covering TCP range is reused.
+
+## 2026-11-16 12:14 EST — Restore the terminal QR and normalize camera rows
+
+Plan: half-height terminal QR codes and camera-side QR row normalization
+(20261116_01). The owner asked for `flankr pair` to show a QR using Unicode
+half-height terminal characters, and for the phone's QR pipeline to correct
+blank horizontal gaps from terminal rendering by merging the detected dark
+blobs down before QR processing. The plan covers the existing `qrcodeurl`
+terminal renderer, pair output, and the libmobile QR analysis stream without
+changing the pairing payload or protocol.
