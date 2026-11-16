@@ -883,3 +883,15 @@ new daemon finished starting.
 active configuration and the daemon answers on its socket, pairing reuses that
 daemon. A restart remains required when settings changed or the daemon is not
 active.
+
+## 2026-11-16 11:16 EST — Owner: support HUP and affected-service reloads
+
+**Request.** HUP/reload should be supported when the VPN configuration
+changes, with affected persistent services reloaded rather than requiring a
+manual full service sequence.
+
+**Decision.** Add `flankr service reload [service]`. Reloading `flankr`
+reconciles the Bitmot relay before restarting the daemon. SIGHUP is a graceful
+supervisor reload: the daemon reconciles the dependent relay, exits cleanly,
+and launchd starts it again from the current config. The link remains
+startup-configured instead of becoming an in-process mutable object.

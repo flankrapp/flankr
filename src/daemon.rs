@@ -561,18 +561,29 @@ pub async fn stop(socket: &Path, files: &DaemonFiles) -> i32 {
     0
 }
 
-/// Wait for SIGTERM or SIGINT; the signal's name.
-pub async fn termination() -> &'static str {
+/// Why the daemon's top-level loop ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Termination {
+    /// A normal stop request.
+    Stop(&'static str),
+    /// A configuration reload request.
+    Reload,
+}
+
+/// Wait for SIGTERM, SIGINT or SIGHUP; the requested action.
+pub async fn termination() -> Termination {
     use tokio::signal::unix::{SignalKind, signal};
-    let (Ok(mut term), Ok(mut int)) = (
+    let (Ok(mut term), Ok(mut int), Ok(mut hup)) = (
         signal(SignalKind::terminate()),
         signal(SignalKind::interrupt()),
+        signal(SignalKind::hangup()),
     ) else {
         return std::future::pending().await;
     };
     tokio::select! {
-        _ = term.recv() => "SIGTERM",
-        _ = int.recv() => "SIGINT",
+        _ = term.recv() => Termination::Stop("SIGTERM"),
+        _ = int.recv() => Termination::Stop("SIGINT"),
+        _ = hup.recv() => Termination::Reload,
     }
 }
 

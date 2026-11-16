@@ -367,7 +367,17 @@ async fn serve(args: AppArgs) -> Result<(), Box<dyn std::error::Error>> {
     // A clean exit removes the pid file; exit at once rather than wait for
     // the runtime's blocking tasks.
     if let Some(signal) = signal {
-        log::info!("flankr server stopping on {signal}");
+        match signal {
+            flankr::daemon::Termination::Stop(signal) => {
+                log::info!("flankr server stopping on {signal}");
+            }
+            flankr::daemon::Termination::Reload => {
+                log::info!("flankr server reloading configuration");
+                if let Err(error) = reload_dependent_services(&args) {
+                    log::warn!("flankr could not reload dependent services: {error}");
+                }
+            }
+        }
     }
     drop(pid_file);
     std::process::exit(0)
@@ -493,6 +503,25 @@ fn service_context(
         socket,
         server_args: server_flags(args).into_iter().map(Into::into).collect(),
     })
+}
+
+fn reload_dependent_services(args: &AppArgs) -> Result<(), String> {
+    let config_path = config_path(args);
+    let config = flankr::config::AppConfig::load_or_default(Some(&config_path));
+    let socket = daemon_socket(args, &config);
+    let context = flankr::service::ServiceContext {
+        config,
+        config_path,
+        executable: std::env::current_exe().map_err(|e| e.to_string())?,
+        working_dir: std::env::current_dir().map_err(|e| e.to_string())?,
+        socket,
+        server_args: Vec::new(),
+    };
+    let registry = flankr::service::Registry::new(&context);
+    if registry.ids().contains(&"vpn.bitmot") {
+        registry.reload("vpn.bitmot", &context)?;
+    }
+    Ok(())
 }
 
 fn stop_bitmot_service(args: &AppArgs) -> i32 {
@@ -801,7 +830,7 @@ const PROMPT_USAGE: &str = "usage: flankr prompt [--use general_agent] [--agent 
 
 const USAGE: &str = "\
 flankr version | --version | -V
-flankr service list|status|start|stop|restart [service]
+flankr service list|status|start|stop|restart|reload [service]
   `flankr service` controls the persistent flankr and enabled service jobs.
 flankr [serve [--foreground | --stop | --restart] | server]
        [--config <file>] [--transport <name> | --remote <user@host> |
@@ -963,7 +992,9 @@ async fn run(
             .unwrap_or("list");
         let service = args.positional.get(1).map(String::as_str);
         if args.positional.len() > 2 {
-            return Err("usage: flankr service list|status|start|stop|restart [service]".into());
+            return Err(
+                "usage: flankr service list|status|start|stop|restart|reload [service]".into(),
+            );
         }
         let context = service_context(&args)?;
         let code = flankr::service::command(operation, service, &context)?;

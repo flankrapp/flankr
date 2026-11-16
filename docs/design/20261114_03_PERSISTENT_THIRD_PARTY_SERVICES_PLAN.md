@@ -507,3 +507,12 @@ When `pair --vpn` requests the same VPN and provider settings already active
 in configuration, and the configured daemon answers on its socket, pairing
 must reuse it without restarting the persistent service. A changed setting or
 an inactive daemon still uses the restart/recovery path.
+
+## Amendment — 2026-11-16 11:16 EST: support HUP and service reload
+
+Add `flankr service reload [service]`. Reloading `flankr` first reconciles
+the configured Bitmot relay, then restarts the daemon. With no service name,
+reload all enabled services in dependency order. SIGHUP is handled as a
+graceful reload request: the daemon reconciles the dependent relay, exits, and
+the persistent supervisor starts it from the current configuration. This is a
+supervisor restart, not an in-process mutation of the link's startup settings.

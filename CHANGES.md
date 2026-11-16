@@ -5213,3 +5213,12 @@ Plan: persistent third-party services, with Bitmot as the first VPN provider
 `flankr is not running` while launchd replaced an already correctly configured
 daemon. Pairing must not restart the daemon when the requested VPN settings
 already match the active configuration and socket.
+
+## 2026-11-16 11:16 EST — Add configuration reload for persistent services
+
+Plan: persistent third-party services, with Bitmot as the first VPN provider
+(20261114_03). The owner asked why HUP/reload cannot be supported when VPN
+configuration changes. The implementation will add `flankr service reload`,
+reload the configured dependent services in order, and handle SIGHUP as a
+graceful supervisor reload. The daemon will restart rather than mutate its
+immutable link in place; launchd then starts it from the reloaded config.

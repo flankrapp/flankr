@@ -287,6 +287,39 @@ impl Registry {
             .ok_or_else(|| format!("unknown service '{id}'; use flankr or vpn.bitmot"))?
             .restart(context)
     }
+
+    /// Reload a service from the current configuration, including the
+    /// configured Bitmot dependency before the daemon itself.
+    pub fn reload(&self, id: &str, context: &ServiceContext) -> Result<ServiceStatus, String> {
+        match id {
+            "flankr" => {
+                self.reload_bitmot(context)?;
+                self.flankr.restart(context).map_err(|e| e.to_string())
+            }
+            "vpn.bitmot" => self.reload_bitmot(context)?.ok_or_else(|| {
+                "unknown service 'vpn.bitmot'; use flankr or vpn.bitmot".to_string()
+            }),
+            _ => Err(format!("unknown service '{id}'; use flankr or vpn.bitmot")),
+        }
+    }
+
+    #[cfg(feature = "vpn-bitmot")]
+    fn reload_bitmot(&self, context: &ServiceContext) -> Result<Option<ServiceStatus>, String> {
+        let Some(bitmot) = &self.bitmot else {
+            return Ok(None);
+        };
+        let status = if context.config.link.vpn.as_deref() == Some("bitmot") {
+            bitmot.restart(context)?
+        } else {
+            bitmot.stop(context)?
+        };
+        Ok(Some(status))
+    }
+
+    #[cfg(not(feature = "vpn-bitmot"))]
+    fn reload_bitmot(&self, _context: &ServiceContext) -> Result<Option<ServiceStatus>, String> {
+        Ok(None)
+    }
 }
 
 /// Dispatch a service operation and print one stable status line per service.
@@ -316,7 +349,22 @@ pub fn command(
             println!("{id}: {} [{}]", status.description(), backend_name());
             Ok(0)
         }
-        _ => Err("usage: flankr service list|status|start|stop|restart [service]".to_string()),
+        "reload" => {
+            if let Some(id) = service {
+                let status = registry.reload(id, context)?;
+                println!("{id}: {} [{}]", status.description(), backend_name());
+            } else {
+                registry.reload("flankr", context)?;
+                for id in registry.ids() {
+                    let status = registry.status(id, context)?;
+                    println!("{id}: {} [{}]", status.description(), backend_name());
+                }
+            }
+            Ok(0)
+        }
+        _ => {
+            Err("usage: flankr service list|status|start|stop|restart|reload [service]".to_string())
+        }
     }
 }
 

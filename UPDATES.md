@@ -381,3 +381,12 @@ These changes came before the program had version numbers.
 **Fixed**
 - Repeating `flankr pair --vpn ...` with the same active settings no longer
   restarts the daemon or pauses before showing the pairing URL.
+
+## 0.11.0 — 2026-11-16
+
+**Added**
+- `flankr service reload [service]` reloads the current configuration,
+  reconciles the Bitmot relay before restarting the daemon, and reloads all
+  enabled services when no service name is given.
+- SIGHUP requests a graceful supervisor reload; launchd restarts the daemon
+  from the current configuration after dependent services are reconciled.
