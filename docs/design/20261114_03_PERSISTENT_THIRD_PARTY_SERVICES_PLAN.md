@@ -458,3 +458,19 @@ explicit `flankr pair --vpn <provider>` selection must:
 `--replace` continues to control only the pairing record. Pairing with
 `--replace` and no explicit VPN changes that record without changing the link
 configuration or restarting the daemon.
+
+## Amendment — 2026-11-16 10:19 EST: default the Bitmot endpoint hostname
+
+When Bitmot receives a bare endpoint node name without a domain suffix, it
+must normalize it by appending `.io1.io` before constructing the relay
+command, launchd service specification, or pairing address. An endpoint that
+already contains a domain suffix is used unchanged. The normalized endpoint
+is what pairing persists in `[link].bitmot_endpoint`.
+
+## Amendment — 2026-11-16 10:20 EST: suffix only the pairing hostname
+
+This amendment supersedes the 10:19 amendment's relay-command requirement.
+The raw endpoint remains unchanged for Bitmot's `--node` argument and for
+the launchd service specification. Only the `VpnAddress.host` used to build a
+pairing URL gains `.io1.io` when the endpoint is a bare node name. A supplied
+endpoint that already contains a domain suffix remains unchanged.

@@ -818,3 +818,17 @@ add a regression test before retrying the Bitmot pairing.
 **Done.** After the launchd plist writer fix, the same command produced a
 `flankr://tmzt-flankr:7347/pair#...` offer and a QR code. The daemon log no
 longer reported the launchd bootstrap failure.
+
+## 2026-11-16 10:19 EST — Owner: Bitmot endpoint defaults to io1.io
+
+**Decision.** A Bitmot endpoint supplied as a bare node name must default to
+the `.io1.io` suffix. `tmzt-flankr` therefore means
+`tmzt-flankr.io1.io`; an endpoint that already has a domain suffix is kept as
+provided.
+
+## 2026-11-16 10:20 EST — Owner: Bitmot relay keeps the raw node name
+
+**Clarification.** The `.io1.io` suffix belongs only in the hostname emitted
+in the pairing URL/address. The relay command must keep the supplied raw
+endpoint for `--node`; `tmzt-flankr` must remain `--node tmzt-flankr` while
+the pairing address is `tmzt-flankr.io1.io:7347`.

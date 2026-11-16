@@ -5162,3 +5162,18 @@ generated launchd plist emitted environment-variable names as `<string>`
 elements instead of plist dictionary `<key>` elements. The plist writer will
 emit valid launchd environment dictionaries and cover the shape with a
 regression test.
+
+## 2026-11-16 10:19 EST — Default Bitmot endpoint hostname
+
+Plan: persistent third-party services, with Bitmot as the first VPN provider
+(20261114_03). The owner directed that a Bitmot endpoint supplied without a
+domain suffix use the `.io1.io` hostname suffix, so `tmzt-flankr` resolves as
+`tmzt-flankr.io1.io`. An endpoint that already has a suffix remains unchanged.
+
+## 2026-11-16 10:20 EST — Bitmot suffix belongs only in pairing addresses
+
+Plan: persistent third-party services, with Bitmot as the first VPN provider
+(20261114_03). The owner clarified that the `.io1.io` suffix must be added
+only to the hostname emitted in the pairing URL/address. The Bitmot relay
+command's `--node` argument must continue using the endpoint exactly as
+supplied.
