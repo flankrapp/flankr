@@ -1,7 +1,7 @@
 ---
 title: Half-height terminal QR codes and camera-side QR row normalization
 date: 2026-11-16
-status: In implementation
+status: Implemented
 covers:
   - "`flankr pair` printing the pairing QR as Unicode half-height terminal
     characters, while retaining the pairing URL, data URL and optional PNG"
@@ -341,3 +341,37 @@ The owner approved implementation of this plan. The status is now `In
 implementation`, and the document is immutable under AGENTS.md Rule 1.5.
 The terminal output and camera-side row normalization decisions above are
 frozen; later implementation results are recorded as amendments.
+
+## Amendment — 2026-11-16 12:59 EST: implementation complete
+
+All seven implementation steps are complete. The daemon prints the existing
+`qrcodeurl` LightOnDark `Dense1x2` terminal rendering before the unchanged URL,
+data URL and fingerprint output; the camera worker adaptively repairs bounded
+overlapping dark-row gaps and retains the original-frame fallback.
+
+Implementation records:
+
+- Step 1 and step 2: flankr commit `e08b962` (`v0.12.0`), including the
+  terminal fixture and pair-mode output assertions.
+- Step 3: libmobile commit `a7407e0` (`v0.5.0`) plus formatting commit
+  `5adf926`; the QR analysis tests cover ordinary frames, bounded repair,
+  non-overlapping and over-limit gaps, and a damaged pairing payload.
+- Step 4: libmorph `0.9.0` commit `1891863` (`v0.9.0`), libmorph-build
+  `0.5.0` commit `7db31e6` (`libmorph-build-v0.5.0`), and their full-revision
+  metadata commits `71e2e56` and `757ea2f`; libmorph's GPU callback API
+  migration is completed in the companion.
+- Step 5: flankr-audio commit `4c1ed83` (`flankr-audio-v0.4.0`) and companion
+  app commit `27576d4` (`flankr-app-v0.7.35`), with both lockfiles and
+  user-facing changelogs updated.
+- Step 6: the Android release APK built, installed and launched. The
+  feature-gated scripted camera smoke decoded a damaged terminal-style frame
+  back to its pairing payload after repair; no payload was recorded. The
+  standalone evidence is `out/qr/20261116_01_terminal_camera/`.
+- Step 7: the release records, dependency pins, affected callers, tests and
+  README decision row now agree with the shipped behavior.
+
+Verification: `cargo fmt`, clippy and tests pass for libmobile, libmorph,
+libmorph-build, flankr-audio and the companion; the terminal pair-mode smoke
+passes. The full flankr test suite has one pre-existing macOS launchd failure:
+the background test cannot find `dev.flankr.server` in the user launchd
+domain. The failure is unrelated to pairing output.

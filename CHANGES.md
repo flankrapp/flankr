@@ -5275,3 +5275,13 @@ Plan: half-height terminal QR codes and camera-side QR row normalization
 so their own release checks could run independently; this addendum records the
 required companion dependency cutover, app version `0.7.35`, and app changelog
 entry after libmorph's GPU callback API migration was completed.
+
+## 2026-11-16 12:59 EST — Record the camera smoke boundary
+
+Plan: half-height terminal QR codes and camera-side QR row normalization
+(20261116_01), step 6. The Android release APK built, installed and launched
+on the connected test phone. A physical lens cannot be pointed at the terminal
+through adb, so the camera acceptance used the feature-gated damaged-frame QR
+decode smoke instead; it decodes the pairing payload after the bounded repair
+without recording that payload. The standalone evidence is under
+`out/qr/20261116_01_terminal_camera/`.
