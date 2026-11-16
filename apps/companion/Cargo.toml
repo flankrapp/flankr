@@ -25,11 +25,11 @@ libflankr_term = { path = "../../crates/libflankr_term" }
 flankr-audio = { path = "../../crates/flankr-audio" }
 # `StaticKey`, which the key store's Noise key implements.
 libflankr_proto = { path = "../../crates/libflankr_proto", features = ["link"] }
-# libmorph 0.9.1 (tag v0.9.1): the key store, secure store, camera,
+# libmorph 0.9.2 (tag v0.9.2): the key store, secure store, camera,
 # media, system events, foreground service, battery and clipboard APIs
 # already used by the app; its QR options opt into wider terminal spacing
 # for the pairing code.
-libmorph = { git = "https://github.com/tmzt/libmorph", rev = "8f00a6014448d7ba9a49646de54060ab7d43da48", default-features = false, features = ["secure-store"] }
+libmorph = { git = "https://github.com/tmzt/libmorph", rev = "57f786408d488ea56d0711a7f227caa132df5eb1", default-features = false, features = ["secure-store"] }
 # The revision libcontrols pins, so the graph holds one libmsdf (as voicexn).
 # 0.6.0 (with libcontrols 0.7.0): the terminal face and symbol page for the
 # agent view (plan 20261022_03, decision 9), with cell boxes and Claude
@@ -78,19 +78,18 @@ libc = "0.2"
 flankr-audio = { path = "../../crates/flankr-audio", features = ["cpal"] }
 env_logger = "0.11"
 
-# Android: libmorph 0.9.1 with libmobile 0.5.1 keeps the existing audio,
+# Android: libmorph 0.9.2 with libmobile 0.5.2 keeps the existing audio,
 # camera QR, media, foreground-service and system-event features. The camera
 # decoder opts into the terminal QR repair for `flankr pair`.
 [target.'cfg(target_os = "android")'.dependencies]
-flankr-audio = { path = "../../crates/flankr-audio", features = ["morph"] }
-libmorph = { git = "https://github.com/tmzt/libmorph", rev = "8f00a6014448d7ba9a49646de54060ab7d43da48", default-features = false, features = ["audio", "mobile", "secure-store", "mobile-foreground-service", "mobile-system-events", "mobile-battery", "mobile-camera-qr", "mobile-clipboard", "mobile-media-request"] }
+libmorph = { git = "https://github.com/tmzt/libmorph", rev = "57f786408d488ea56d0711a7f227caa132df5eb1", default-features = false, features = ["audio", "mobile", "secure-store", "mobile-foreground-service", "mobile-system-events", "mobile-battery", "mobile-camera-qr", "mobile-clipboard", "mobile-media-request"] }
 android_logger = "0.14"
 
 # Generates the Gradle project when building for Android; a no-op on the
-# host. libmorph-build 0.5.1 (tag libmorph-build-v0.5.1) consumes
-# libmobile 0.5.1, matching libmorph 0.9.1.
+# host. libmorph-build 0.5.2 (tag libmorph-build-v0.5.2) consumes
+# libmobile 0.5.2, matching libmorph 0.9.2.
 [build-dependencies]
-libmorph-build = { git = "https://github.com/tmzt/libmorph", rev = "8b06d8313ec96e48d28c5aa02530388cf1716db0" }
+libmorph-build = { git = "https://github.com/tmzt/libmorph", rev = "6a2b19461bf71a1bd710c13db622c5d7da2a363f" }
 # copy/*.md, read into copy.rs (plan 20261024_04, decision
 # 6), at the revision the root crate pins for ADDITIONAL_PROMPTS.md.
 libtypedmd = { git = "https://github.com/tmzt/libtypedmd", rev = "a61c091e6420a1dfc40e89b8600cd26e628e5f7a" }
@@ -100,7 +99,7 @@ toml = { version = "0.8", features = ["preserve_order"] }
 
 # The key tests use libdevice's memory vault, through libmorph's `script`.
 [target.'cfg(not(target_os = "android"))'.dev-dependencies]
-libmorph = { git = "https://github.com/tmzt/libmorph", rev = "8f00a6014448d7ba9a49646de54060ab7d43da48", default-features = false, features = ["secure-store", "script"] }
+libmorph = { git = "https://github.com/tmzt/libmorph", rev = "57f786408d488ea56d0711a7f227caa132df5eb1", default-features = false, features = ["secure-store", "script"] }
 
 # The settings tests write settings.toml and delete data in a scratch directory.
 [dev-dependencies]
