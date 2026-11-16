@@ -799,3 +799,22 @@ the pairing record.
 **Decision.** Any explicit VPN selection on `flankr pair` updates the selected
 configuration and restarts the daemon before the offer. A pairing replacement
 without an explicit VPN changes only the pairing record.
+
+## 2026-11-16 10:01 EST — Owner: Bitmot relay launchd bootstrap fails
+
+**Report.** After running `flankr pair --replace --vpn bitmot
+--bitmot-endpoint tmzt-flankr`, flankr restarted and saved the Bitmot
+selection, but the pairing remained loopback-only. The Bitmot relay failed
+with `launchctl bootstrap failed: Bootstrap failed: 5: Input/output error`.
+
+**Finding.** The generated launchd plist writes environment-variable names as
+string values instead of dictionary keys, so launchd rejects the relay job.
+
+**In hand.** Fix the plist writer to emit valid environment dictionaries and
+add a regression test before retrying the Bitmot pairing.
+
+## 2026-11-16 10:07 EST — Owner: Bitmot pairing works after plist fix
+
+**Done.** After the launchd plist writer fix, the same command produced a
+`flankr://tmzt-flankr:7347/pair#...` offer and a QR code. The daemon log no
+longer reported the launchd bootstrap failure.

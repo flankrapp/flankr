@@ -5151,3 +5151,14 @@ Plan: persistent third-party services, with Bitmot as the first VPN provider
 selection, with or without `--replace`, persists the link VPN in the selected
 config file and restarts the daemon before pairing. `--replace` alone remains
 pairing-record-only.
+
+## 2026-11-16 10:01 EST — Fix persistent service launchd plist
+
+Plan: persistent third-party services, with Bitmot as the first VPN provider
+(20261114_03). The owner reported that explicit Bitmot pairing now updates and
+restarts flankr, but launchd rejects the Bitmot relay with
+`Bootstrap failed: 5: Input/output error`. Investigation found that the
+generated launchd plist emitted environment-variable names as `<string>`
+elements instead of plist dictionary `<key>` elements. The plist writer will
+emit valid launchd environment dictionaries and cover the shape with a
+regression test.
