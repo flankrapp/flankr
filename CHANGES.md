@@ -5295,3 +5295,8 @@ light modules rendered as a dark field because `flankr pair` selected
 The pair command will select the existing `DarkOnLight` renderer so the
 terminal code has dark modules and a light quiet zone, without changing the
 pairing payload or PNG/data-URL output.
+
+## 2026-11-16 15:27 EST — Follow the camera QR feature build fix
+
+`flankr-audio` now consumes libmorph 0.9.2 and libmobile 0.5.2. Its public
+audio API and runtime behavior are unchanged.
