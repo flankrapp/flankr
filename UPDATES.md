@@ -343,3 +343,10 @@ These changes came before the program had version numbers.
   daemon with that configuration, and then creates the pairing offer.
 - `--replace` still controls only replacement of the pairing record; using it
   without `--vpn` does not change the link configuration or restart the daemon.
+
+## 0.10.1 — 2026-11-16
+
+**Fixed**
+- Bitmot's persistent relay now starts through launchd instead of being
+  rejected because its generated environment dictionary used invalid plist
+  elements.
