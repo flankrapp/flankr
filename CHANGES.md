@@ -5177,3 +5177,11 @@ Plan: persistent third-party services, with Bitmot as the first VPN provider
 only to the hostname emitted in the pairing URL/address. The Bitmot relay
 command's `--node` argument must continue using the endpoint exactly as
 supplied.
+
+## 2026-11-16 10:40 EST — Use Bitmot's announced public pairing host
+
+Plan: persistent third-party services, with Bitmot as the first VPN provider
+(20261114_03). The owner reported that the app cannot reach the pairing URL
+formed as `tmzt-flankr.io1.io`. The running Bitmot relay announces its actual
+public host separately, such as `d1jc9964.e.io1.io`; pairing must use that
+announced host while the relay command keeps the raw node name.

@@ -474,3 +474,13 @@ The raw endpoint remains unchanged for Bitmot's `--node` argument and for
 the launchd service specification. Only the `VpnAddress.host` used to build a
 pairing URL gains `.io1.io` when the endpoint is a bare node name. A supplied
 endpoint that already contains a domain suffix remains unchanged.
+
+## Amendment — 2026-11-16 10:40 EST: use Bitmot's announced public host
+
+This amendment supersedes the prior inferred-host pairing behavior. For the
+raw `--node` relay, Bitmot's startup announcement
+`relay: edge node '<node>' is live on <host>` is authoritative for the
+pairing address. The `VpnAddress.host` must use `<host>` from that
+announcement; it must not infer `<node>.io1.io` when the relay announces a
+different public host. The relay command and launchd service continue to use
+the raw node name.

@@ -116,6 +116,11 @@ impl Bitmot {
                 message: e.to_string(),
             })
     }
+
+    fn announced_host(&self, port: u16) -> Option<String> {
+        let log = std::fs::read_to_string(self.service_spec(port).stdout).ok()?;
+        announced_host(&self.endpoint, &log)
+    }
 }
 
 #[async_trait]
@@ -135,14 +140,14 @@ impl Vpn for Bitmot {
     }
 
     async fn address(&self, port: u16) -> Result<Option<VpnAddress>, VpnError> {
-        if self.running().await? {
-            Ok(Some(VpnAddress {
-                host: pairing_host(&self.endpoint),
-                port,
-            }))
-        } else {
-            Ok(None)
+        if !self.running().await? {
+            return Ok(None);
         }
+        let host = self.announced_host(port).ok_or_else(|| VpnError {
+            command: self.command(port),
+            message: "the Bitmot relay has not announced its public host yet".to_string(),
+        })?;
+        Ok(Some(VpnAddress { host, port }))
     }
 
     async fn forwards(&self, port: u16) -> Result<bool, VpnError> {
@@ -180,12 +185,14 @@ impl Vpn for Bitmot {
     }
 }
 
-fn pairing_host(endpoint: &str) -> String {
-    if endpoint.contains('.') || endpoint.parse::<std::net::IpAddr>().is_ok() {
-        endpoint.to_string()
-    } else {
-        format!("{endpoint}.io1.io")
-    }
+fn announced_host(endpoint: &str, log: &str) -> Option<String> {
+    let prefix = format!("relay: edge node '{endpoint}' is live on ");
+    log.lines().rev().find_map(|line| {
+        line.strip_prefix(&prefix)
+            .and_then(|rest| rest.split_whitespace().next())
+            .filter(|host| !host.is_empty())
+            .map(str::to_string)
+    })
 }
 fn shell_quote(value: &str) -> String {
     if value
@@ -225,12 +232,16 @@ mod tests {
         assert!(!bitmot.command(7347).contains("--public"));
     }
     #[test]
-    fn pairing_host_defaults_the_io1_suffix_without_changing_relay_node() {
-        assert_eq!(pairing_host("mynode"), "mynode.io1.io");
-        assert_eq!(pairing_host("mynode.example"), "mynode.example");
-        assert_eq!(pairing_host("2001:db8::1"), "2001:db8::1");
-
-        let bitmot = Bitmot::at("mynode", "/Users/u/.local/bin/bitmot");
-        assert_eq!(bitmot.args(7347)[3], OsString::from("mynode"));
+    fn announced_host_uses_the_latest_matching_relay_line() {
+        let log = "\
+relay: edge node 'other' is live on other.e.io1.io
+relay: edge node 'mynode' is live on old.e.io1.io
+relay: edge node 'mynode' is live on current.e.io1.io
+";
+        assert_eq!(
+            announced_host("mynode", log).as_deref(),
+            Some("current.e.io1.io")
+        );
+        assert_eq!(announced_host("missing", log), None);
     }
 }

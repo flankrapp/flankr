@@ -838,3 +838,14 @@ the pairing address is `tmzt-flankr.io1.io:7347`.
 **Done.** With the endpoint stored as `tmzt-flankr`, the installed daemon
 produced a pairing URL at `tmzt-flankr.io1.io:7347`. The loaded launchd relay
 still carries the raw `--node tmzt-flankr` argument.
+
+## 2026-11-16 10:40 EST — Owner: the Bitmot pairing host is unreachable
+
+**Report.** The app cannot reach the pairing URL using
+`tmzt-flankr.io1.io`. DNS resolves it, but the TCP connection does not reach
+the relay. The Bitmot service log announces the actual public host as
+`d1jc9964.e.io1.io`.
+
+**Decision.** Pairing must use Bitmot's announced public host, not
+`<node>.io1.io` inferred from the raw node name. The relay continues to use
+the raw `--node tmzt-flankr` argument.

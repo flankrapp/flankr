@@ -356,3 +356,10 @@ These changes came before the program had version numbers.
 **Changed**
 - Bitmot pairing addresses now append `.io1.io` to a bare node name, while
   the relay still receives the endpoint exactly as supplied with `--node`.
+
+## 0.10.3 — 2026-11-16
+
+**Fixed**
+- Bitmot pairing links now use the public host announced by the running relay,
+  so the companion connects to the relay's assigned node instead of an
+  inferred hostname.
