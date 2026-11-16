@@ -493,3 +493,10 @@ before restarting a persistent service. A launchd job being loaded is not
 proof that its process owns the socket: an older detached daemon can still
 answer it while the launchd job repeatedly fails. The restart must wait for a
 different daemon process to answer before creating the pairing offer.
+
+## Amendment — 2026-11-16 10:56 EST: allow launchd replacement startup
+
+The persistent pair-restart path must allow the launchd backend's replacement
+job to start after the old socket owner is stopped. Its wait may exceed the
+ordinary detached-daemon startup timeout; ordinary detached startup behavior
+is unchanged.

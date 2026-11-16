@@ -31,7 +31,7 @@
 
 use flankr::transport::{HerdrClient, HerdrTransport, RemoteSshConfig};
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 struct AppArgs {
     config: Option<String>,
@@ -527,9 +527,14 @@ fn stop_bitmot_service(args: &AppArgs) -> i32 {
     }
 }
 
-async fn wait_for_daemon(socket: &Path) -> Result<(), Box<dyn std::error::Error>> {
+const PERSISTENT_START_WAIT: Duration = Duration::from_secs(15);
+
+async fn wait_for_daemon_for(
+    socket: &Path,
+    timeout: Duration,
+) -> Result<(), Box<dyn std::error::Error>> {
     let socket = flankr::daemon::absolute(socket);
-    let deadline = Instant::now() + flankr::daemon::START_WAIT;
+    let deadline = Instant::now() + timeout;
     loop {
         if flankr::daemon::answers(&socket).await.is_some() {
             return Ok(());
@@ -573,7 +578,7 @@ async fn restart_pair_daemon(args: &mut AppArgs) -> Result<(), Box<dyn std::erro
         } else {
             registry.restart("flankr", &context)?
         };
-        wait_for_daemon(&socket).await?;
+        wait_for_daemon_for(&socket, PERSISTENT_START_WAIT).await?;
         if let Some(previous_pid) = previous.flatten()
             && flankr::daemon::answers(&socket).await.flatten() == Some(previous_pid)
         {

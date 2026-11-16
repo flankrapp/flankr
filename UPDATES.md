@@ -369,3 +369,9 @@ These changes came before the program had version numbers.
 **Fixed**
 - `flankr pair --vpn ...` now replaces a detached daemon that still owns the
   socket instead of accepting that old daemon as the restarted service.
+
+## 0.10.5 — 2026-11-16
+
+**Fixed**
+- Explicit VPN pairing waits for the persistent daemon to come back after
+  launchd replaces a stale socket owner.

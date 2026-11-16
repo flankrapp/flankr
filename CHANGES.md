@@ -5195,3 +5195,12 @@ mistook the old daemon's response for the restarted service and therefore
 continued emitting the old unreachable pairing host. An explicit VPN pairing
 restart must stop the daemon currently answering on the socket before
 restarting the persistent job, then wait for the replacement.
+
+## 2026-11-16 10:56 EST — Wait for launchd to replace the daemon
+
+Plan: persistent third-party services, with Bitmot as the first VPN provider
+(20261114_03). After stopping the stale socket owner and starting the
+persistent launchd job, launchd took longer than the normal detached-daemon
+startup window to create the replacement. The explicit VPN pairing restart
+must wait through that launchd startup interval instead of returning before the
+new daemon answers.

@@ -861,3 +861,13 @@ installed.
 **Decision.** An explicit VPN pairing restart must stop the daemon answering on
 the socket before restarting the persistent launchd job and must verify that
 the replacement answers.
+
+## 2026-11-16 10:56 EST — Owner: launchd restart needs a longer wait
+
+**Finding.** The stale daemon was stopped successfully, but the launchd
+replacement took longer than the normal five-second detached-daemon wait. The
+pair command returned before the replacement answered; launchd then brought
+the daemon up shortly afterward.
+
+**Decision.** The persistent pair-restart path gets a launchd-sized startup
+wait, while ordinary detached startup keeps its existing timeout.
