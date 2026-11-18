@@ -867,3 +867,64 @@ waiting modal's Fingerprint row) and item 3 stand.
    press does.
 5. **The app's version** is 0.7.6, a patch, on the owner's instruction to
    keep the same version series.
+
+## Amendment — 2026-11-18 11:42 EST: pasting a link into the field, and the paste button inside it
+
+The owner, verbatim: "review current work including imp for link pasting
+support, finish implementing. should detect flankr:// url in add remote
+paste link screen as well as add paste glyph as right side button in paste
+a link input".
+
+This adds to decision 14 (the paste fallback), whose field and **Pair**
+otherwise stand, and replaces the glyph the app's 0.8.0 put in the **Paste
+a link** button's label. The plan's status stays `In implementation`. The
+CHANGES.md addendum of 2026-11-18 10:36 EST, which recorded item 1 as a
+departure, is covered by this amendment from here on.
+
+1. **Prefill on opening.** When **Paste a link** opens the field and the
+   field is empty, the text clipboard is read once, and the field is filled
+   only when the clipboard holds a valid `flankr://` pairing URL
+   (`remotes::clipboard_pairing_link`: the first whitespace-separated part
+   containing `flankr://`, from there, with trailing `. , ; : ! ? ) ] }`
+   dropped, that `LinkRead::of` accepts). Only that URL goes in the field,
+   never the text around it.
+2. **The paste button inside the field.** At the field's right end,
+   inside it: a square button the field's height (48 pt), its own control
+   (`Hit::PasteField`, found before `Hit::Field`), with a 1 pt divider in
+   the band colour at its left (10 pt in from the top and bottom) and a
+   clipboard drawn as strokes in the muted colour (a board 14 × 18 pt, its
+   clip a filled bar 8 × 4 pt across the top edge, two lines of text,
+   stroke 1.8 pt; `square_button::clipboard_glyph`), as the keyboard,
+   terminal and + are drawn, since the faces have no clipboard character.
+   The field's text is fitted to the field's width less the button's, so
+   it never runs under it. The button shows wherever the field does (the
+   camera window after **Paste a link**, and the paste screen without a
+   camera) and not while a pairing waits.
+3. **Its tap** reads the text clipboard on that tap (libmorph
+   `clipboard_text`, served in `serve_clipboard` with the other clipboard
+   reads) and fills the field with the pairing URL found in it as in
+   item 1, replacing what the field held, and clears the screen's note. With
+   no pairing URL in it, the field is left as it is and the screen's note
+   (`App::note`, as "pairing…" is shown) reads `pairing_clipboard_no_link`:
+   "The clipboard has no flankr pairing link." in the warning colour.
+   Pairing stays an explicit tap on **Pair**.
+4. **Detection in the field.** When a character typed into the field (or
+   pasted through the keyboard) leaves its text holding a valid pairing URL
+   among other text, the field is reduced to just that URL
+   (`remotes::reduce_to_pairing_link`, by the same test as item 1). A field
+   holding only the URL, or no complete one, is left as typed.
+5. **The Paste a link label.** U+2398 (⎘), which 0.8.0 put before "Paste
+   a link", is not on the context's face (Roboto, ASCII subset: the
+   `TextShaper::covers` test says so) and drew the missing-glyph box. The
+   label is "Paste a link" alone; the clipboard glyph is the field's
+   button's (item 2).
+6. **The app's version** is 0.8.1, a patch.
+
+**Done when:** the field shows the stroke-drawn paste button at its right
+end and its text stops short of it; a tap on it with a clipboard holding a
+pairing URL among other text fills the field with just the URL, and with
+none leaves the field and shows "The clipboard has no flankr pairing link.";
+typed text holding a pairing URL among other text becomes just the URL;
+**Paste a link** still prefills from the clipboard on opening; the **Paste
+a link** label has only characters its face has; and the companion's
+tests for each pass.
