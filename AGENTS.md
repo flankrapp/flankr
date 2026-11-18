@@ -199,6 +199,13 @@ These rules are flankr's own, beside the critical rules above.
    user would notice changing, bumps the minor version (`0.x.y` to
    `0.(x+1).0`); only fixes and small polish bump the patch version
    (`0.x.y` to `0.x.(y+1)`). Changes landed together may share one bump.
+   A change counts as a new feature only when it gives the user something
+   they could not do before, or changes how they do an existing task. A
+   new control, glyph, gesture or shortcut for something already
+   possible, a layout or wording change, a prefill or a default, and any
+   fix are polish and bump the patch version. When in doubt, patch. While
+   a version is listed in "Held versions" below, every bump of it is a
+   patch, whatever this item would otherwise give.
 5. An entry is headed `## <version> — YYYY-MM-DD` and lists its items
    under **Added**, **Changed**, **Fixed** and **Removed**, one short line
    each, in plain user language: no commit hashes, crate or protocol
@@ -238,6 +245,21 @@ These rules are flankr's own, beside the critical rules above.
    logs, each in its own reader's terms, and bumps both versions.
 5. The commit that bumps the daemon's version is tagged `v<version>`, as
    Critical Rule 5.1 says for a crate, following the existing `v0.1.0`.
+
+### Held versions
+
+The owner may hold a version to its current series for a time: while it
+is listed here, it takes patch bumps only (`0.x.y` to `0.x.(y+1)`), under
+FLANKR RULES 1 and 2 and, for crates and plugins, in place of Critical
+Rule 5.4's minor bump. A change that would break a public API is raised
+with the owner before it lands. Only the owner adds or removes a row.
+
+| What | Where its version is kept | Held series | Since |
+| --- | --- | --- | --- |
+| The companion app | `version` in `apps/companion/Cargo.toml` | 0.8.x | 2026-11-18 |
+| The daemon and CLI | `version` in the root `Cargo.toml` | 0.12.x | 2026-11-18 |
+| flankr-companion | `version` in `crates/flankr-companion/Cargo.toml` | 0.8.x | 2026-11-18 |
+| The daemon's plugins | each plugin's `PluginVersion::Semver` in `src/plugins/` | 0.1.x | 2026-11-18 |
 
 ---
 
