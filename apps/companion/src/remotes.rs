@@ -546,6 +546,32 @@ pub fn clipboard_pairing_link(text: &str) -> Option<String> {
     })
 }
 
+/// The paste button in the pairing field: `field` becomes the pairing URL
+/// found in `clipboard` (read on the tap), and `true`; with none found,
+/// `field` is left as it is, and `false`.
+pub fn paste_pairing_link(field: &mut String, clipboard: Option<&str>) -> bool {
+    match clipboard.and_then(clipboard_pairing_link) {
+        Some(link) => {
+            *field = link;
+            true
+        }
+        None => false,
+    }
+}
+
+/// The pairing field's text, typed or pasted through the keyboard: when
+/// it holds a valid pairing URL among other text, it is reduced to just
+/// that URL. Returns whether it changed.
+pub fn reduce_to_pairing_link(field: &mut String) -> bool {
+    match clipboard_pairing_link(field) {
+        Some(link) if link != *field => {
+            *field = link;
+            true
+        }
+        _ => false,
+    }
+}
+
 /// Whether `text` is a pairing link, `flankr://<host>:<port>/pair#…`:
 /// the test an opened link and a scanned QR code both pass before they
 /// are acted on (plan 20261028_02, decision 8). Only the part before the
@@ -592,6 +618,47 @@ mod tests {
             clipboard_pairing_link("flankr://m4.ts.net:7347/pair#flankr1abc"),
             None
         );
+    }
+
+    fn a_pairing_url() -> String {
+        libflankr_proto::link::PairingPayload {
+            server_key: [7; 32],
+            addresses: vec!["m4.ts.net:7347".into()],
+            offer: Some([1; libflankr_proto::link::OFFER_LEN]),
+        }
+        .url()
+        .unwrap()
+    }
+
+    #[test]
+    fn the_paste_button_fills_the_field_with_just_the_link() {
+        let url = a_pairing_url();
+        let mut field = "typed".to_string();
+        let clipboard = format!("Run this on your phone:\n{url}\nthanks");
+        assert!(paste_pairing_link(&mut field, Some(&clipboard)));
+        assert_eq!(field, url);
+    }
+
+    #[test]
+    fn the_paste_button_without_a_link_leaves_the_field() {
+        let mut field = "typed".to_string();
+        assert!(!paste_pairing_link(&mut field, Some("https://example.com")));
+        assert!(!paste_pairing_link(&mut field, None));
+        assert_eq!(field, "typed");
+    }
+
+    #[test]
+    fn typed_text_holding_a_link_is_reduced_to_the_link() {
+        let url = a_pairing_url();
+        let mut field = format!("pair with {url} please");
+        assert!(reduce_to_pairing_link(&mut field));
+        assert_eq!(field, url);
+        // Just the link, or no complete link yet: left as typed.
+        assert!(!reduce_to_pairing_link(&mut field));
+        let mut partial = format!("x {}", &url[..url.len() - 3]);
+        let before = partial.clone();
+        assert!(!reduce_to_pairing_link(&mut partial));
+        assert_eq!(partial, before);
     }
 
     const PHONE: Layout = Layout {

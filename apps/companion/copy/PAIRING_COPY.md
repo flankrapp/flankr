@@ -234,6 +234,13 @@ instead; `pairing_retry` is the line after a failed pairing.
 
 - text: Paste a link
 
+`pairing_clipboard_no_link` is the note under the field when its paste
+button finds no pairing link in the clipboard; the field is left as it is.
+
+# [Copy] pairing_clipboard_no_link
+
+- text: The clipboard has no flankr pairing link.
+
 `pairing_local_only` and `pairing_unreachable` take the place of
 `pairing_retry` when a link cannot be paired at all from this phone, with
 no device code offered (plan 20261028_01, the 2026-11-03 00:07 EST

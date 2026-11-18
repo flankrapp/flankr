@@ -172,6 +172,36 @@ pub(crate) fn mic_glyph(list: &mut DrawList, rect: Rect, s: f32, color: [f32; 4]
     list.push_line([cx - 5.0 * s, base], [cx + 5.0 * s, base], t, color);
 }
 
+/// A clipboard drawn as strokes centred in `rect`, with no background (the
+/// pairing field's paste button, plan 20261028_02): a board 14 × 18 pt,
+/// its clip a bar 8 × 4 pt across the top edge, and two lines of text.
+/// Stroke 1.8 pt. The faces have no clipboard character.
+pub(crate) fn clipboard_glyph(list: &mut DrawList, rect: Rect, s: f32, color: [f32; 4]) {
+    let [cx, cy] = rect.center();
+    let (w, h) = (14.0 * s, 18.0 * s);
+    let (x0, y0) = (cx - w * 0.5, cy - h * 0.5 + 1.0 * s);
+    let (x1, y1) = (x0 + w, y0 + h);
+    let t = 1.8 * s;
+    for (a, b) in [
+        ([x0, y0], [x1, y0]),
+        ([x1, y0], [x1, y1]),
+        ([x1, y1], [x0, y1]),
+        ([x0, y1], [x0, y0]),
+    ] {
+        list.push_line(a, b, t, color);
+    }
+    fill(
+        list,
+        Rect::new(cx - 4.0 * s, y0 - 2.0 * s, 8.0 * s, 4.0 * s),
+        color,
+        1.0 * s,
+    );
+    for k in [0.42, 0.68] {
+        let y = y0 + h * k;
+        list.push_line([x0 + 3.5 * s, y], [x1 - 3.5 * s, y], t, color);
+    }
+}
+
 /// A + centred in `rect` (plan 20261028_06, decision 8): two 2 pt strokes
 /// 18 pt long.
 pub(crate) fn plus_glyph(list: &mut DrawList, rect: Rect, s: f32, color: [f32; 4]) {
