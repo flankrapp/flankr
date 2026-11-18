@@ -5300,3 +5300,11 @@ pairing payload or PNG/data-URL output.
 
 `flankr-audio` now consumes libmorph 0.9.2 and libmobile 0.5.2. Its public
 audio API and runtime behavior are unchanged.
+
+## 2026-11-18 10:36 EST — Prefill pairing links from the clipboard
+
+Plan: [Scanning flankr pair's QR code in the pairing window](docs/design/20261028_02_PAIRING_QR_SCAN_PLAN.md), owner-requested departure from
+the paste-link behavior. When **Paste a link** opens, the companion reads
+text clipboard content and pre-fills the pairing field only when it contains
+a valid `flankr://` pairing URL. Pairing remains an explicit action through
+**Pair**.
