@@ -349,6 +349,9 @@ pub struct App {
     note: Option<(String, Role)>,
     field: String,
     field_focused: bool,
+    /// The paste-link mode was just opened: read the text clipboard once and
+    /// prefill only with a valid `flankr://` pairing URL.
+    pair_clipboard_wanted: bool,
     /// `hello` was answered on the current connection.
     online: bool,
     /// The agents, as last listed, and the panes waiting for an approval.
@@ -2083,6 +2086,15 @@ impl App {
     /// What waited for the clipboard: the + menu opened, Paste text
     /// enabled while it holds text; and a Paste text done.
     fn serve_clipboard(&mut self, ctx: &MorphContext) {
+        if std::mem::take(&mut self.pair_clipboard_wanted)
+            && self.field.is_empty()
+            && let Some(text) = ctx
+                .clipboard_text()
+                .and_then(|text| remotes::clipboard_pairing_link(&text))
+        {
+            self.field = text;
+            self.screen.invalidate();
+        }
         if let Some(kind) = self.attach_wanted.take() {
             let has_text = ctx.clipboard_has_text();
             self.show_attach_menu(kind, has_text);
@@ -4567,6 +4579,7 @@ impl App {
             Some(Hit::PasteLink) => {
                 let stop = self.scanner.paste_link();
                 self.call_camera(stop);
+                self.pair_clipboard_wanted = true;
             }
             Some(Hit::OpenSettings) => self.open_app_settings = true,
             Some(Hit::Done) => self.finish_pairing(),
@@ -5345,6 +5358,7 @@ impl MorphApp for App {
             note: None,
             field: String::new(),
             field_focused: false,
+            pair_clipboard_wanted: false,
             online: false,
             agents: Vec::new(),
             pending: Vec::new(),

@@ -32,6 +32,8 @@ use crate::theme::{theme, with_alpha};
 /// The add mode's back glyph: ASCII, as the pairing screen's face has no
 /// "‹".
 const BACK_GLYPH: &str = "<";
+/// The paste-link action's clipboard glyph.
+const PASTE_GLYPH: &str = "\u{2398}";
 /// The check glyph's disc, in points.
 const CHECK_PT: f32 = 44.0;
 /// The reticle (plan 20261028_02, decision 2): corner marks of this
@@ -594,7 +596,13 @@ impl Screen {
         let done = router.add(None, button(copy::PAIRING_DONE.text, theme().message));
         let prompt = router.add(None, label("", 20.0, theme().text, TextAlign::Center));
         let zoom = router.add(None, label("", 18.0, theme().text, TextAlign::Right));
-        let paste_link = router.add(None, button(copy::PAIRING_PASTE_LINK.text, theme().back));
+        let paste_link = router.add(
+            None,
+            button(
+                &format!("{PASTE_GLYPH} {}", copy::PAIRING_PASTE_LINK.text),
+                theme().back,
+            ),
+        );
         let open_settings = router.add(
             None,
             button(copy::PAIRING_OPEN_SETTINGS.text, theme().message),
@@ -1488,6 +1496,19 @@ mod tests {
         assert_eq!(screen.hit(pair.x + 1.0, pair.y + 1.0), Some(Hit::Pair));
         // The middle of the screen is no control: a tap.
         assert_eq!(screen.hit(540.0, 1200.0), None);
+    }
+
+    #[test]
+    fn the_paste_link_button_has_a_clipboard_glyph() {
+        let screen = Screen::new();
+        let button = screen
+            .router
+            .get::<Button>(screen.paste_link)
+            .expect("the Paste a link button");
+        assert_eq!(
+            button.text,
+            format!("{PASTE_GLYPH} {}", copy::PAIRING_PASTE_LINK.text)
+        );
     }
 
     #[test]

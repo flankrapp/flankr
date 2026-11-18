@@ -533,6 +533,19 @@ pub fn delete_all(remotes: &[RemoteInfo]) -> Vec<Input> {
         .collect()
 }
 
+/// Whether `text` contains a valid `flankr://` pairing URL. Clipboard text
+/// may include a label or sentence around the URL; only a complete pairing
+/// URL accepted by [`LinkRead::of`] is returned.
+pub fn clipboard_pairing_link(text: &str) -> Option<String> {
+    text.split_whitespace().find_map(|part| {
+        let start = part.find("flankr://")?;
+        let candidate = part[start..].trim_end_matches(|c: char| {
+            matches!(c, '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}')
+        });
+        LinkRead::of(candidate).map(|_| candidate.to_string())
+    })
+}
+
 /// Whether `text` is a pairing link, `flankr://<host>:<port>/pair#…`:
 /// the test an opened link and a scanned QR code both pass before they
 /// are acted on (plan 20261028_02, decision 8). Only the part before the
@@ -559,6 +572,26 @@ mod tests {
         assert!(!is_pairing_link("flankr://m4:7347/other#flankr1abc"));
         assert!(!is_pairing_link("flankr://m4:7347/x#/pair"));
         assert!(!is_pairing_link(""));
+    }
+
+    #[test]
+    fn clipboard_pairing_link_extracts_only_a_valid_url() {
+        let url = libflankr_proto::link::PairingPayload {
+            server_key: [7; 32],
+            addresses: vec!["m4.ts.net:7347".into()],
+            offer: Some([1; libflankr_proto::link::OFFER_LEN]),
+        }
+        .url()
+        .unwrap();
+        assert_eq!(
+            clipboard_pairing_link(&format!("Copy this: {url}.")),
+            Some(url.clone())
+        );
+        assert_eq!(clipboard_pairing_link("https://example.com"), None);
+        assert_eq!(
+            clipboard_pairing_link("flankr://m4.ts.net:7347/pair#flankr1abc"),
+            None
+        );
     }
 
     const PHONE: Layout = Layout {

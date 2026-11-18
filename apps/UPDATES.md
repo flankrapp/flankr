@@ -495,3 +495,10 @@ These changes came before the app had version numbers.
 **Fixed**
 - Pairing QR codes with wider terminal line spacing are readable by the
   camera.
+
+## 0.8.0 — 2026-11-18
+
+**Added**
+- The pairing screen's **Paste a link** action shows a clipboard glyph and
+  recognizes a valid `flankr://` pairing URL already in the text clipboard,
+  filling the field while leaving **Pair** as an explicit tap.
