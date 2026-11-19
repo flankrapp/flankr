@@ -5308,3 +5308,12 @@ the paste-link behavior. When **Paste a link** opens, the companion reads
 text clipboard content and pre-fills the pairing field only when it contains
 a valid `flankr://` pairing URL. Pairing remains an explicit action through
 **Pair**.
+
+## 2026-11-19 17:12 EST — Extract the link, pairing, remotes and VPN code into libhardline
+
+Plan: [Extracting the link, pairing, remotes and VPN code into libhardline as sans-IO crates, with the wire unchanged](docs/design/20261119_02_LIBHARDLINE_EXTRACTION_PLAN.md).
+A new private project, `~/src/libhardline`, takes the Noise link, pairing,
+device codes, the remotes list, the daemon's pairing server and the VPN
+providers as nine sans-IO crates behind a facade with opt-in features.
+flankr then moves onto it crate by crate with its wire and tests unchanged
+and at most patch bumps.

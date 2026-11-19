@@ -1,7 +1,7 @@
 ---
 title: Extracting the link, pairing, remotes and VPN code into libhardline as sans-IO crates, with the wire unchanged
 date: 2026-11-19
-status: Draft
+status: In implementation
 covers:
   - "A new project, ~/src/libhardline, set up under the critical rules
     (~/src/rules): AGENTS.md, CHANGES.md, docs/design/, README with its
@@ -616,3 +616,11 @@ No flankr crate reaches libhardline only through `libflankr_proto`.
     `libflankr_proto`'s and any flankr-companion tag in flankr). **Done
     when:** flankr's `Cargo.lock` points at a libhardline rev that
     exists on `github.com/tmzt/libhardline`.
+
+## Amendment — 2026-11-19 17:12 EST: approved by the owner; implementation started, and this document is now immutable
+
+The owner approved this plan on 2026-11-19 ("approve and complete the
+20261119_02_LIBHARDLINE_EXTRACTION_PLAN extraction plan, use up to 3
+agents as needed at a time"). Implementation starts with steps 1 and 2 in
+`~/src/libhardline`. From now on this document changes only by
+amendments, on the owner's explicit instruction (Rule 1.5).
