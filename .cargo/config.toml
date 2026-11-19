@@ -1,0 +1,4 @@
+# Fetch git dependencies with the git CLI, so the private libhardline
+# repository authenticates through the configured credential helper.
+[net]
+git-fetch-with-cli = true

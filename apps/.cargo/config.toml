@@ -9,3 +9,8 @@ rustflags = [
   "-C", "target-feature=+dotprod,+fp16",
   "-C", "link-arg=-Wl,-z,max-page-size=16384",
 ]
+
+# Fetch git dependencies with the git CLI, so the private libhardline
+# repository authenticates through the configured credential helper.
+[net]
+git-fetch-with-cli = true
