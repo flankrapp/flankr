@@ -52,18 +52,28 @@
 //!
 //! The handshake functions do not time out; callers wrap them in
 //! `tokio::time::timeout` as they see fit.
+//!
+//! Since 0.5.17 this module is a set of wrappers over libhardline's tokio
+//! adapter and wire format, fixed to [`FLANKR_PROFILE`]
+//! (docs/design/20261119_02_LIBHARDLINE_EXTRACTION_PLAN.md, decisions 9
+//! and 10): every path, constant, type and signature is as before, and the
+//! wire is unchanged. The message kinds 0, 1 and 2 are libhardline's
+//! protocol numbers 0, 1 and 2; any other is refused as before.
 
 mod handshake;
 mod identity;
 mod keys;
 mod pair_mode;
 mod pairing;
-mod resolver;
 mod stream;
 mod words;
 
 #[cfg(test)]
 mod tests;
+
+use std::sync::LazyLock;
+
+use libhardline::proto::{self as hl, Profile};
 
 pub use handshake::{Accepted, accept, reconnect};
 pub use identity::{REMOTE_ID_LEN, fingerprint, fingerprint_text, remote_id};
@@ -85,31 +95,45 @@ pub use words::{
     pairing_words_text,
 };
 
-use std::fmt;
+/// Why a link operation failed: libhardline's error, with every variant
+/// this crate had and, after them, those libhardline adds. After any error
+/// but [`LinkError::MessageTooLarge`] from a send, the connection is
+/// finished and should be dropped.
+pub use libhardline::{LinkError, NoiseError};
+
+/// flankr's libhardline profile: the scheme `flankr`, and from it the
+/// prefixes `flankr1` and `flankrkey1`, the prologue `flankr.link/1`, the
+/// static-key marker and the pairing words' context, all as before.
+pub static FLANKR_PROFILE: LazyLock<Profile> = LazyLock::new(|| {
+    Profile::builder()
+        .url_scheme("flankr")
+        .build()
+        .expect("flankr's profile is valid")
+});
 
 /// An X25519 public or private key.
-pub const KEY_LEN: usize = 32;
+pub const KEY_LEN: usize = hl::KEY_LEN;
 
 /// The handshake.
-pub const RECONNECT_PATTERN: &str = "Noise_IK_25519_ChaChaPoly_BLAKE2s";
+pub const RECONNECT_PATTERN: &str = hl::RECONNECT_PATTERN;
 /// The prologue, before the mode byte.
 pub const PROLOGUE_PREFIX: &[u8] = b"flankr.link/1";
 
 /// The client's first byte: `IK`. The pairing request's is
 /// [`MODE_PAIR`].
-pub const MODE_RECONNECT: u8 = 0x02;
+pub const MODE_RECONNECT: u8 = hl::MODE_RECONNECT;
 
 /// The largest Noise message, and so the largest frame body.
-pub const MAX_FRAME: usize = 65535;
+pub const MAX_FRAME: usize = hl::MAX_FRAME;
 /// The largest chunk of a message in one frame: the frame less the AEAD tag
 /// and the flag byte.
-pub const MAX_CHUNK: usize = MAX_FRAME - TAG_LEN - 1;
+pub const MAX_CHUNK: usize = hl::MAX_CHUNK;
 /// The largest message, reassembled.
-pub const MAX_MESSAGE: usize = 1 << 20;
+pub const MAX_MESSAGE: usize = hl::MAX_MESSAGE;
 /// The largest first message carried inside a handshake: the frame less the
 /// largest handshake overhead (`IK`'s first message: ephemeral key,
 /// encrypted static key and the payload's tag).
-pub const MAX_FIRST_MESSAGE: usize = MAX_FRAME - (KEY_LEN + KEY_LEN + TAG_LEN + TAG_LEN);
+pub const MAX_FIRST_MESSAGE: usize = hl::MAX_FIRST_MESSAGE;
 
 /// The kind nibble of a JSON-RPC message: the high nibble of the flag
 /// byte.
@@ -122,109 +146,3 @@ pub const KIND_BINARY: u8 = 0x2;
 /// The kind nibble that says the kind continues in the next byte.
 /// Reserved: a frame with it is [`LinkError::BadFrame`] today.
 pub const KIND_EXTENDED: u8 = 0xF;
-
-const TAG_LEN: usize = 16;
-/// The flag nibble's *more* bit.
-const FLAG_MORE: u8 = 0x01;
-/// The flag nibble's reserved bits, which must be zero.
-const FLAG_RESERVED: u8 = 0x0E;
-
-/// Why a link operation failed. After any error but
-/// [`LinkError::MessageTooLarge`] from a send, the connection is finished
-/// and should be dropped.
-#[derive(Debug)]
-#[non_exhaustive]
-pub enum LinkError {
-    /// The underlying stream failed.
-    Io(std::io::Error),
-    /// The peer closed the connection, or the stream was already closed by
-    /// an earlier error.
-    Closed,
-    /// The Noise handshake or a decryption failed (for example, a client
-    /// that has the wrong server key).
-    Noise(NoiseError),
-    /// The client's first byte was not a known mode.
-    UnknownMode(u8),
-    /// The client's static key was not authorized. The
-    /// server sent nothing back.
-    Unauthorized,
-    /// A message is larger than [`MAX_MESSAGE`] (sending), or was
-    /// reassembled past it (receiving, which closes the connection).
-    MessageTooLarge,
-    /// A first message longer than [`MAX_FIRST_MESSAGE`].
-    FirstMessageTooLarge,
-    /// A frame's plaintext was empty, or its flag byte was not one the
-    /// receive accepts: a reserved flag bit set, a reserved or extended
-    /// kind, a kind other than JSON-RPC to [`LinkStream::recv_message`],
-    /// or a kind that changed mid-message. For `recv_message` that is any
-    /// flag byte but `0x00`/`0x01`, as before.
-    BadFrame,
-    /// A pairing request's message could not be read or written.
-    Pairing(PairMessageError),
-}
-
-/// A Noise failure, kept opaque so `snow`'s types are not part of this
-/// crate's API.
-#[derive(Debug)]
-pub struct NoiseError(snow::Error);
-
-impl fmt::Display for NoiseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-impl std::error::Error for NoiseError {}
-
-impl fmt::Display for LinkError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            LinkError::Io(e) => write!(f, "link i/o: {e}"),
-            LinkError::Closed => f.write_str("link closed"),
-            LinkError::Noise(e) => write!(f, "noise: {e}"),
-            LinkError::UnknownMode(m) => write!(f, "unknown link mode byte 0x{m:02x}"),
-            LinkError::Unauthorized => f.write_str("client key not authorized"),
-            LinkError::MessageTooLarge => {
-                write!(f, "message larger than {MAX_MESSAGE} bytes")
-            }
-            LinkError::FirstMessageTooLarge => {
-                write!(f, "first message larger than {MAX_FIRST_MESSAGE} bytes")
-            }
-            LinkError::BadFrame => f.write_str("malformed link frame"),
-            LinkError::Pairing(e) => e.fmt(f),
-        }
-    }
-}
-
-impl std::error::Error for LinkError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            LinkError::Io(e) => Some(e),
-            LinkError::Noise(e) => Some(e),
-            LinkError::Pairing(e) => Some(e),
-            _ => None,
-        }
-    }
-}
-
-impl From<std::io::Error> for LinkError {
-    fn from(e: std::io::Error) -> Self {
-        if e.kind() == std::io::ErrorKind::UnexpectedEof {
-            LinkError::Closed
-        } else {
-            LinkError::Io(e)
-        }
-    }
-}
-
-impl From<PairMessageError> for LinkError {
-    fn from(e: PairMessageError) -> Self {
-        LinkError::Pairing(e)
-    }
-}
-
-impl From<snow::Error> for LinkError {
-    fn from(e: snow::Error) -> Self {
-        LinkError::Noise(NoiseError(e))
-    }
-}

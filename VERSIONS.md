@@ -1589,3 +1589,31 @@ feature depends on a new incompatible libmorph minor version.
 
 - libmorph 0.9.1 → 0.9.2 and libmobile 0.5.1 → 0.5.2; the public audio
   API is unchanged.
+
+## libflankr_proto 0.5.17 — 2026-11-19 (the commit tagged `libflankr_proto-v0.5.17`)
+
+Plan 20261119_02 (the libhardline extraction), step 7. No breaking
+change: every public path, constant, type, field and signature is as in
+0.5.16, and the wire is unchanged. `link` and `envelope` are now wrappers
+over libhardline (pinned by git rev), fixed to flankr's profile.
+
+- **Added:** `link::FLANKR_PROFILE`, libhardline's `Profile` for the
+  scheme `flankr` (prefixes `flankr1` and `flankrkey1`, prologue
+  `flankr.link/1`), which every wrapper uses.
+- **Added:** `link::LinkError` (now libhardline's, re-exported, as is
+  `link::NoiseError`) has the variants `Protocol`, `NotReady`, `Vault` and
+  `CannotPair` after the old ones; it is `#[non_exhaustive]`, as before.
+- **Added:** `From` conversions between `link::PairingPayload`,
+  `link::DeviceCode`, `link::PairingStringError` and libhardline's types,
+  and from libhardline's tokio `Accepted` to `link::Accepted`.
+- **Changed (not breaking):** `LinkStream::recv`, `recv_message` and the
+  `LinkReader` methods are cancel-safe. On a pairing session the result is
+  sent once and the session is then closed; `into_split` of a pairing
+  session gives closed halves. `recv_message` refuses a message of another
+  kind once it is whole rather than at its first frame (a message of
+  another kind over 1 MiB is now `MessageTooLarge`, not `BadFrame`).
+- The envelope's `V2`, `Id`, `Request`, `Notification`, `Response`,
+  `ErrorObject` and `Incoming` are libhardline-jsonrpc's, re-exported; they
+  serialise as before. Builds without `link` now depend on libhardline's
+  core as well. The crate no longer depends on snow, bs58, blake2 or bip39
+  directly.

@@ -39,266 +39,28 @@
 //! The result travels as one message on the stream (the kind nibble is
 //! JSON-RPC's, `0`, though the bytes are this encoding: a pairing session
 //! carries nothing else).
+//!
+//! The messages are libhardline-proto's, re-exported; the handshakes are
+//! libhardline's tokio adapter, fixed to [`FLANKR_PROFILE`]. libhardline
+//! gives the two sessions as their own types; here each is a
+//! [`LinkStream`], as before.
 
-use snow::Builder;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use libhardline::tokio as hlt;
+use tokio::io::{AsyncRead, AsyncWrite};
 
-use super::handshake::{Accepted, accept_after_mode, builder, prologue, read_frame, write_frame};
-use super::{
-    DeviceCode, KEY_LEN, LinkError, LinkStream, MAX_FRAME, MODE_RECONNECT, OFFER_LEN, StaticKey,
+use super::handshake::Accepted;
+use super::{FLANKR_PROFILE, KEY_LEN, LinkError, LinkStream, StaticKey};
+
+pub use libhardline::proto::{
+    MODE_PAIR, PAIR_MESSAGE_VERSION, PAIR_PATTERN, PairAck, PairMessageError, PairRefusal,
+    PairRequest, PairResult,
 };
+pub use libhardline::{PAIR_TIMEOUT_DEFAULT_SECS, PAIR_TIMEOUT_MAX_SECS};
 
-/// The pairing request's handshake.
-pub const PAIR_PATTERN: &str = "Noise_NK_25519_ChaChaPoly_BLAKE2s";
-/// The client's first byte for a pairing request: `NK`.
-pub const MODE_PAIR: u8 = 0x03;
-/// The first byte of every pairing message.
-pub const PAIR_MESSAGE_VERSION: u8 = 1;
-/// How long a `flankr pair` run's offer lasts by default, in seconds.
-pub const PAIR_TIMEOUT_DEFAULT_SECS: u16 = 60;
-/// The longest a `flankr pair` run's offer may last, in seconds.
-pub const PAIR_TIMEOUT_MAX_SECS: u16 = 300;
-
-const ACK_ACCEPTED: u8 = 0x00;
-const ACK_REFUSED: u8 = 0x01;
-
-/// What the phone asks the daemon in the first handshake message.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PairRequest {
-    /// The device's new static X25519 public key, `D`.
-    pub device_key: [u8; KEY_LEN],
-    /// The device's name, as [`DeviceCode::valid_name`] allows.
-    pub name: String,
-    /// The offer from the link the phone was given.
-    pub offer: [u8; OFFER_LEN],
-}
-
-/// The daemon's answer to a [`PairRequest`], in the second handshake
-/// message.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PairAck {
-    /// The request is held; both sides now show the pairing words. The
-    /// offer has this many seconds left; the owner's **yes** must come
-    /// within them.
-    Accepted { expires_in_secs: u16 },
-    /// The request was refused at once and does not count as the run's
-    /// attempt; the daemon closes the connection.
-    Refused(PairRefusal),
-}
-
-/// Why the daemon refused a [`PairRequest`] at once.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum PairRefusal {
-    /// The offer is not the current `flankr pair` run's (or no run is in
-    /// pair mode).
-    WrongOffer,
-    /// The run's offer has expired.
-    Expired,
-    /// The run already holds a request.
-    Busy,
-    /// The request could not be read (a bad name, a short message).
-    Malformed,
-}
-
-impl PairRefusal {
-    /// The reason's byte in an ack.
-    pub fn code(self) -> u8 {
-        match self {
-            PairRefusal::WrongOffer => 1,
-            PairRefusal::Expired => 2,
-            PairRefusal::Busy => 3,
-            PairRefusal::Malformed => 4,
-        }
-    }
-
-    /// The reason a byte names.
-    pub fn from_code(code: u8) -> Option<PairRefusal> {
-        match code {
-            1 => Some(PairRefusal::WrongOffer),
-            2 => Some(PairRefusal::Expired),
-            3 => Some(PairRefusal::Busy),
-            4 => Some(PairRefusal::Malformed),
-            _ => None,
-        }
-    }
-}
-
-/// How an accepted request ended, sent by the daemon once over the open
-/// session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum PairResult {
-    /// The owner typed **yes**: `D` is in `auth.toml`. The phone stores the
-    /// remote and connects with `IK`.
-    Added,
-    /// The owner answered anything but **yes**: nothing was added.
-    Refused,
-    /// The offer expired before **yes**: nothing was added.
-    Expired,
-}
-
-impl PairResult {
-    /// The result's byte.
-    pub fn code(self) -> u8 {
-        match self {
-            PairResult::Added => 0,
-            PairResult::Refused => 1,
-            PairResult::Expired => 2,
-        }
-    }
-
-    /// The result a byte names.
-    pub fn from_code(code: u8) -> Option<PairResult> {
-        match code {
-            0 => Some(PairResult::Added),
-            1 => Some(PairResult::Refused),
-            2 => Some(PairResult::Expired),
-            _ => None,
-        }
-    }
-
-    /// The message's bytes.
-    pub fn to_bytes(self) -> Vec<u8> {
-        vec![PAIR_MESSAGE_VERSION, self.code()]
-    }
-
-    /// Reads a result message.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, PairMessageError> {
-        match bytes {
-            [PAIR_MESSAGE_VERSION, code] => {
-                PairResult::from_code(*code).ok_or(PairMessageError::UnknownCode(*code))
-            }
-            [v, ..] if *v != PAIR_MESSAGE_VERSION => Err(PairMessageError::UnknownVersion(*v)),
-            _ => Err(PairMessageError::Malformed),
-        }
-    }
-}
-
-/// Why a pairing message could not be read or written.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum PairMessageError {
-    /// Truncated, or with trailing bytes.
-    Malformed,
-    /// A first byte other than [`PAIR_MESSAGE_VERSION`].
-    UnknownVersion(u8),
-    /// An ack, refusal reason or result byte this crate does not know.
-    UnknownCode(u8),
-    /// A device name that [`DeviceCode::valid_name`] refuses.
-    BadName,
-}
-
-impl std::fmt::Display for PairMessageError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PairMessageError::Malformed => f.write_str("malformed pairing message"),
-            PairMessageError::UnknownVersion(v) => {
-                write!(f, "pairing message of unknown version {v}")
-            }
-            PairMessageError::UnknownCode(c) => write!(f, "pairing message with unknown code {c}"),
-            PairMessageError::BadName => {
-                f.write_str("the device name is not 1 to 32 ASCII letters, digits, '-', '_' or '.'")
-            }
-        }
-    }
-}
-
-impl std::error::Error for PairMessageError {}
-
-impl PairRequest {
-    /// The message's bytes. A name [`DeviceCode::valid_name`] refuses is
-    /// [`PairMessageError::BadName`].
-    pub fn to_bytes(&self) -> Result<Vec<u8>, PairMessageError> {
-        if !DeviceCode::valid_name(&self.name) {
-            return Err(PairMessageError::BadName);
-        }
-        let mut out = Vec::with_capacity(1 + KEY_LEN + 1 + self.name.len() + OFFER_LEN);
-        out.push(PAIR_MESSAGE_VERSION);
-        out.extend_from_slice(&self.device_key);
-        out.push(self.name.len() as u8);
-        out.extend_from_slice(self.name.as_bytes());
-        out.extend_from_slice(&self.offer);
-        Ok(out)
-    }
-
-    /// Reads a request message.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, PairMessageError> {
-        let (&version, rest) = bytes.split_first().ok_or(PairMessageError::Malformed)?;
-        if version != PAIR_MESSAGE_VERSION {
-            return Err(PairMessageError::UnknownVersion(version));
-        }
-        let (device_key, rest) = split_array::<KEY_LEN>(rest)?;
-        let (&len, rest) = rest.split_first().ok_or(PairMessageError::Malformed)?;
-        let len = usize::from(len);
-        if rest.len() != len + OFFER_LEN {
-            return Err(PairMessageError::Malformed);
-        }
-        let (name, offer) = rest.split_at(len);
-        let name = std::str::from_utf8(name).map_err(|_| PairMessageError::BadName)?;
-        if !DeviceCode::valid_name(name) {
-            return Err(PairMessageError::BadName);
-        }
-        Ok(PairRequest {
-            device_key,
-            name: name.to_string(),
-            offer: split_array::<OFFER_LEN>(offer)?.0,
-        })
-    }
-}
-
-impl PairAck {
-    /// The message's bytes.
-    pub fn to_bytes(self) -> Vec<u8> {
-        match self {
-            PairAck::Accepted { expires_in_secs } => {
-                let [hi, lo] = expires_in_secs.to_be_bytes();
-                vec![PAIR_MESSAGE_VERSION, ACK_ACCEPTED, hi, lo]
-            }
-            PairAck::Refused(reason) => vec![PAIR_MESSAGE_VERSION, ACK_REFUSED, reason.code()],
-        }
-    }
-
-    /// Reads an ack message.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, PairMessageError> {
-        match bytes {
-            [PAIR_MESSAGE_VERSION, ACK_ACCEPTED, hi, lo] => Ok(PairAck::Accepted {
-                expires_in_secs: u16::from_be_bytes([*hi, *lo]),
-            }),
-            [PAIR_MESSAGE_VERSION, ACK_REFUSED, code] => PairRefusal::from_code(*code)
-                .map(PairAck::Refused)
-                .ok_or(PairMessageError::UnknownCode(*code)),
-            [PAIR_MESSAGE_VERSION, ACK_ACCEPTED | ACK_REFUSED, ..] => {
-                Err(PairMessageError::Malformed)
-            }
-            [PAIR_MESSAGE_VERSION, code, ..] => Err(PairMessageError::UnknownCode(*code)),
-            [v, ..] if *v != PAIR_MESSAGE_VERSION => Err(PairMessageError::UnknownVersion(*v)),
-            _ => Err(PairMessageError::Malformed),
-        }
-    }
-}
-
-fn split_array<const N: usize>(bytes: &[u8]) -> Result<([u8; N], &[u8]), PairMessageError> {
-    if bytes.len() < N {
-        return Err(PairMessageError::Malformed);
-    }
-    let (head, tail) = bytes.split_at(N);
-    Ok((
-        head.try_into().map_err(|_| PairMessageError::Malformed)?,
-        tail,
-    ))
-}
-
-/// A new random offer for a `flankr pair` run, from snow's random source
-/// (the operating system's).
-pub fn generate_offer() -> Result<[u8; OFFER_LEN], LinkError> {
-    use snow::resolvers::{CryptoResolver, DefaultResolver};
-    let mut rng = DefaultResolver
-        .resolve_rng()
-        .ok_or(snow::Error::Init(snow::error::InitStage::GetRngImpl))?;
-    let mut offer = [0u8; OFFER_LEN];
-    rng.try_fill_bytes(&mut offer)?;
-    Ok(offer)
+/// A new random offer for a `flankr pair` run, from the operating system's
+/// random source.
+pub fn generate_offer() -> Result<[u8; super::OFFER_LEN], LinkError> {
+    libhardline::generate_offer()
 }
 
 /// What the phone has after [`request_pairing`]: the daemon's ack, and the
@@ -307,48 +69,39 @@ pub struct PairResponse<S> {
     /// The daemon's answer.
     pub ack: PairAck,
     /// The session. Its [`peer_key`](LinkStream::peer_key) is the daemon's
-    /// key, which NK authenticated. After a refusal, drop it.
+    /// key, which NK authenticated. After a refusal, drop it: it is closed.
     pub stream: LinkStream<S>,
 }
 
 /// Phone: sends a pairing request to the daemon whose static key is
 /// `server_key` (from the link), over `NK`, and reads its ack.
 ///
-/// A daemon with another key cannot read the request, and its reply fails
-/// to decrypt as [`LinkError::Noise`]; a daemon that is not in pair mode
-/// closes the connection with no reply ([`LinkError::Closed`]). A message
-/// that does not read is [`LinkError::Pairing`].
+/// A daemon with another key cannot read the request, and a daemon that is
+/// not in pair mode, both close the connection with no reply
+/// ([`LinkError::Closed`]); a reply that does not decrypt is
+/// [`LinkError::Noise`]. A message that does not read is
+/// [`LinkError::Pairing`].
 pub async fn request_pairing<S: AsyncRead + AsyncWrite + Unpin>(
-    mut io: S,
+    io: S,
     server_key: &[u8; KEY_LEN],
     request: &PairRequest,
 ) -> Result<PairResponse<S>, LinkError> {
-    let body = request.to_bytes()?;
-    let prologue = prologue(MODE_PAIR);
-    let mut hs = Builder::new(PAIR_PATTERN.parse()?)
-        .remote_public_key(server_key)?
-        .prologue(&prologue)?
-        .build_initiator()?;
-    let mut buf = vec![0u8; MAX_FRAME];
-
-    // -> mode, e, es (+ request)
-    let n = hs.write_message(&body, &mut buf)?;
-    let mut head = vec![MODE_PAIR];
-    head.extend_from_slice(&(n as u16).to_be_bytes());
-    head.extend_from_slice(&buf[..n]);
-    io.write_all(&head).await?;
-    io.flush().await?;
-
-    // <- e, ee (+ ack)
-    let msg = read_frame(&mut io).await?;
-    let n = hs.read_message(&msg, &mut buf)?;
-    let ack = PairAck::from_bytes(&buf[..n])?;
-
-    let transport = hs.into_stateless_transport_mode()?;
-    Ok(PairResponse {
-        ack,
-        stream: LinkStream::new(io, transport, *server_key),
-    })
+    // As before: a request that does not encode is refused before sending.
+    request.to_bytes()?;
+    Ok(
+        match hlt::request_pairing_over(io, &FLANKR_PROFILE, server_key, request).await? {
+            hlt::PairAnswer::Accepted(pending) => PairResponse {
+                ack: PairAck::Accepted {
+                    expires_in_secs: pending.expires_in_secs(),
+                },
+                stream: LinkStream::pair_pending(pending, *server_key),
+            },
+            hlt::PairAnswer::Refused(reason) => PairResponse {
+                ack: PairAck::Refused(reason),
+                stream: LinkStream::closed(*server_key),
+            },
+        },
+    )
 }
 
 /// Phone: waits for the daemon's [`PairResult`] on an accepted session.
@@ -359,7 +112,8 @@ pub async fn recv_pair_result<S: AsyncRead + AsyncWrite + Unpin>(
     Ok(PairResult::from_bytes(&msg)?)
 }
 
-/// Daemon: tells the phone how its accepted request ended.
+/// Daemon: tells the phone how its accepted request ended. The session is
+/// closed afterwards.
 pub async fn send_pair_result<S: AsyncRead + AsyncWrite + Unpin>(
     stream: &mut LinkStream<S>,
     result: PairResult,
@@ -371,64 +125,49 @@ pub async fn send_pair_result<S: AsyncRead + AsyncWrite + Unpin>(
 /// with [`respond`](Self::respond), or drop it to close the connection with
 /// no reply (as when no `flankr pair` run is in pair mode).
 pub struct PairIncoming<S> {
-    io: S,
-    hs: snow::HandshakeState,
+    inner: hlt::PairIncoming<S>,
     /// The request, or why it could not be read: answer that with
     /// [`PairRefusal::Malformed`].
     pub request: Result<PairRequest, PairMessageError>,
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> PairIncoming<S> {
+    fn new(inner: hlt::PairIncoming<S>) -> Self {
+        let request = inner.request.clone().map(|r| PairRequest {
+            device_key: r.key,
+            name: r.device,
+            offer: r.offer,
+        });
+        PairIncoming { inner, request }
+    }
+
     /// Sends `ack` in the second handshake message and returns the
     /// session. After [`PairAck::Accepted`], keep it to
     /// [`send_pair_result`] and to notice the phone closing (its Cancel);
-    /// after a refusal, drop it.
+    /// after a refusal, drop it: it is closed.
     ///
     /// The session's [`peer_key`](LinkStream::peer_key) is all zeros: NK
     /// does not authenticate the phone. Its claimed key is the request's
     /// `device_key`.
-    pub async fn respond(mut self, ack: PairAck) -> Result<LinkStream<S>, LinkError> {
-        let mut buf = vec![0u8; MAX_FRAME];
-        let n = self.hs.write_message(&ack.to_bytes(), &mut buf)?;
-        write_frame(&mut self.io, &buf[..n]).await?;
-        let transport = self.hs.into_stateless_transport_mode()?;
-        Ok(LinkStream::new(self.io, transport, [0u8; KEY_LEN]))
+    pub async fn respond(self, ack: PairAck) -> Result<LinkStream<S>, LinkError> {
+        Ok(match self.inner.respond(ack).await? {
+            Some(held) => LinkStream::pair_held(held),
+            None => LinkStream::closed([0u8; KEY_LEN]),
+        })
     }
 }
 
 /// Daemon: accepts one pairing request. Reads the mode byte, which must be
 /// [`MODE_PAIR`] (any other is [`LinkError::UnknownMode`]), then the NK
 /// first message with the request.
-pub async fn accept_pair<S, K>(mut io: S, local: &K) -> Result<PairIncoming<S>, LinkError>
+pub async fn accept_pair<S, K>(io: S, local: &K) -> Result<PairIncoming<S>, LinkError>
 where
     S: AsyncRead + AsyncWrite + Unpin,
     K: StaticKey + Clone,
 {
-    let mode = io.read_u8().await?;
-    if mode != MODE_PAIR {
-        return Err(LinkError::UnknownMode(mode));
-    }
-    accept_pair_after_mode(io, local).await
-}
-
-async fn accept_pair_after_mode<S, K>(mut io: S, local: &K) -> Result<PairIncoming<S>, LinkError>
-where
-    S: AsyncRead + AsyncWrite + Unpin,
-    K: StaticKey + Clone,
-{
-    let prologue = prologue(MODE_PAIR);
-    let mut hs = builder(PAIR_PATTERN, local)?
-        .prologue(&prologue)?
-        .build_responder()?;
-    let mut buf = vec![0u8; MAX_FRAME];
-    // -> e, es (+ request)
-    let msg = read_frame(&mut io).await?;
-    let n = hs.read_message(&msg, &mut buf)?;
-    Ok(PairIncoming {
-        io,
-        hs,
-        request: PairRequest::from_bytes(&buf[..n]),
-    })
+    Ok(PairIncoming::new(
+        hlt::accept_pair(io, &FLANKR_PROFILE, local.clone()).await?,
+    ))
 }
 
 /// A connection the daemon accepted on a listener that takes both kinds.
@@ -440,12 +179,12 @@ pub enum Incoming<S> {
 }
 
 /// Daemon: accepts one connection of either kind, by its mode byte:
-/// [`MODE_RECONNECT`] as [`accept`](super::accept) (with `authorize`),
-/// [`MODE_PAIR`] as [`accept_pair`]. Any other byte is
+/// [`MODE_RECONNECT`](super::MODE_RECONNECT) as [`accept`](super::accept)
+/// (with `authorize`), [`MODE_PAIR`] as [`accept_pair`]. Any other byte is
 /// [`LinkError::UnknownMode`]. A daemon not in pair mode drops a
 /// [`Incoming::Pair`] unanswered.
 pub async fn accept_incoming<S, K, A>(
-    mut io: S,
+    io: S,
     local: &K,
     authorize: A,
 ) -> Result<Incoming<S>, LinkError>
@@ -454,13 +193,10 @@ where
     K: StaticKey + Clone,
     A: FnOnce(&[u8; KEY_LEN]) -> bool,
 {
-    match io.read_u8().await? {
-        MODE_RECONNECT => Ok(Incoming::Link(
-            accept_after_mode(io, local, authorize).await?,
-        )),
-        MODE_PAIR => Ok(Incoming::Pair(Box::new(
-            accept_pair_after_mode(io, local).await?,
-        ))),
-        mode => Err(LinkError::UnknownMode(mode)),
-    }
+    Ok(
+        match hlt::accept_incoming(io, &FLANKR_PROFILE, local.clone(), authorize).await? {
+            hlt::Incoming::Link(a) => Incoming::Link(a.into()),
+            hlt::Incoming::Pair(p) => Incoming::Pair(Box::new(PairIncoming::new(*p))),
+        },
+    )
 }

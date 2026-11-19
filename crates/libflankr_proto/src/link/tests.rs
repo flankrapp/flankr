@@ -189,25 +189,6 @@ async fn one_mib_round_trips_in_chunks() {
 }
 
 #[tokio::test]
-async fn one_mib_plus_one_byte_closes_the_connection() {
-    let (mut a, mut b) = connected().await;
-    let msg = vec![1u8; MAX_MESSAGE + 1];
-
-    // The sender refuses it outright.
-    assert!(matches!(
-        a.send_message(&msg).await,
-        Err(LinkError::MessageTooLarge)
-    ));
-
-    // A sender that does not check is cut off by the receiver.
-    let (sent, got) = tokio::join!(a.send_unchecked(&msg), b.recv_message());
-    sent.unwrap();
-    assert!(matches!(got, Err(LinkError::MessageTooLarge)));
-    assert!(matches!(b.recv_message().await, Err(LinkError::Closed)));
-    assert!(matches!(a.recv_message().await, Err(LinkError::Closed)));
-}
-
-#[tokio::test]
 async fn split_halves_carry_messages() {
     let (a, mut b) = connected().await;
     let (mut ar, mut aw) = a.into_split();
@@ -267,88 +248,7 @@ async fn a_json_message_through_recv_is_json() {
     assert_eq!(b.recv_message().await.unwrap(), b"j");
 }
 
-#[tokio::test]
-async fn kinds_are_the_high_nibble_and_json_is_unchanged() {
-    // The raw bytes a sender writes are the bytes the old layout wrote
-    // for kind 0, and 0x10/0x11 for a terminal frame.
-    let (mut a, mut b) = connected().await;
-    a.send_raw_frames(&[(0x01, b"ab"), (0x00, b"c")])
-        .await
-        .unwrap();
-    assert_eq!(b.recv_message().await.unwrap(), b"abc");
-    a.send_raw_frames(&[(0x11, b"ab"), (0x10, b"c")])
-        .await
-        .unwrap();
-    assert_eq!(b.recv().await.unwrap(), Message::Terminal(b"abc".to_vec()));
-    assert_eq!(Kind::Json.nibble(), KIND_JSON);
-    assert_eq!(Kind::Terminal.nibble(), KIND_TERMINAL);
-    assert_eq!(Kind::from_nibble(KIND_EXTENDED), None);
-}
-
-/// Sends `frames` raw and expects `BadFrame` from `recv` (or from
-/// `recv_message` when `json_only`), then a closed stream.
-async fn expect_bad_frame(frames: &[(u8, &[u8])], json_only: bool) {
-    let (mut a, mut b) = connected().await;
-    a.send_raw_frames(frames).await.unwrap();
-    let got = if json_only {
-        b.recv_message().await.map(Message::Json)
-    } else {
-        b.recv().await
-    };
-    assert!(
-        matches!(got, Err(LinkError::BadFrame)),
-        "{frames:?}: {got:?}"
-    );
-    assert!(matches!(b.recv().await, Err(LinkError::Closed)));
-}
-
-#[tokio::test]
-async fn reserved_flag_bits_are_bad_frame() {
-    for flag in [0x02, 0x04, 0x08, 0x0E, 0x03, 0x12, 0x18] {
-        expect_bad_frame(&[(flag, b"x")], false).await;
-        expect_bad_frame(&[(flag, b"x")], true).await;
-    }
-    // On a later frame of a message, too.
-    expect_bad_frame(&[(0x01, b"a"), (0x04, b"b")], false).await;
-    expect_bad_frame(&[(0x11, b"a"), (0x12, b"b")], false).await;
-}
-
-#[tokio::test]
-async fn reserved_and_extended_kinds_are_bad_frame() {
-    // Kind 2 is binary since plan 20261028_05 (decision 3.1): `recv`
-    // reads it, `recv_message` still refuses it.
-    for kind in (2u8..=15).chain([1]) {
-        for more in [0u8, 1] {
-            let flag = kind << 4 | more;
-            if kind != 1 && kind != 2 {
-                expect_bad_frame(&[(flag, b"x")], false).await;
-            }
-            expect_bad_frame(&[(flag, b"x")], true).await;
-        }
-    }
-}
-
 // Plan 20261028_05, step 1: kind 2, binary transfer messages.
-
-#[tokio::test]
-async fn a_binary_message_round_trips_with_flag_bytes_0x20_and_0x21() {
-    let (mut a, mut b) = connected().await;
-    a.send_binary(b"\x01blob").await.unwrap();
-    let got = b.recv().await.unwrap();
-    assert_eq!(got.kind(), Kind::Binary);
-    assert_eq!(got, Message::Binary(b"\x01blob".to_vec()));
-    assert_eq!(Kind::Binary.nibble(), KIND_BINARY);
-    assert_eq!(Kind::from_nibble(KIND_BINARY), Some(Kind::Binary));
-    // The raw flag bytes: 0x21 more, 0x20 last.
-    a.send_raw_frames(&[(0x21, b"ab"), (0x20, b"c")])
-        .await
-        .unwrap();
-    assert_eq!(b.recv().await.unwrap(), Message::Binary(b"abc".to_vec()));
-    // Kinds 3-14 and 15 stay reserved.
-    for nibble in 3u8..=15 {
-        assert_eq!(Kind::from_nibble(nibble), None, "{nibble}");
-    }
-}
 
 #[tokio::test]
 async fn a_1_mib_binary_message_spans_frames_and_interleaves_whole() {
@@ -381,15 +281,6 @@ async fn a_binary_message_through_recv_message_is_bad_frame() {
 }
 
 #[tokio::test]
-async fn a_kind_changing_to_or_from_binary_mid_message_is_bad_frame() {
-    expect_bad_frame(&[(0x21, b"a"), (0x00, b"b")], false).await;
-    expect_bad_frame(&[(0x21, b"a"), (0x10, b"b")], false).await;
-    expect_bad_frame(&[(0x01, b"a"), (0x20, b"b")], false).await;
-    expect_bad_frame(&[(0x11, b"a"), (0x20, b"b")], false).await;
-    expect_bad_frame(&[(0x01, b"a"), (0x20, b"b")], true).await;
-}
-
-#[tokio::test]
 async fn split_halves_carry_binary_messages() {
     let (a, b) = connected().await;
     let (mut ar, mut aw) = a.into_split();
@@ -403,15 +294,6 @@ async fn split_halves_carry_binary_messages() {
     );
     bw.send_binary(b"x").await.unwrap();
     assert!(matches!(ar.recv_message().await, Err(LinkError::BadFrame)));
-}
-
-#[tokio::test]
-async fn a_kind_changing_mid_message_is_bad_frame() {
-    expect_bad_frame(&[(0x01, b"a"), (0x10, b"b")], false).await;
-    expect_bad_frame(&[(0x11, b"a"), (0x00, b"b")], false).await;
-    expect_bad_frame(&[(0x11, b"a"), (0x01, b"b"), (0x00, b"c")], false).await;
-    // recv_message refuses the terminal frame that follows.
-    expect_bad_frame(&[(0x01, b"a"), (0x10, b"b")], true).await;
 }
 
 #[tokio::test]

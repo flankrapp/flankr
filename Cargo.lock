@@ -945,6 +945,7 @@ dependencies = [
  "fiat-crypto",
  "rustc_version",
  "subtle",
+ "zeroize",
 ]
 
 [[package]]
@@ -2350,11 +2351,12 @@ dependencies = [
 
 [[package]]
 name = "libflankr_proto"
-version = "0.5.16"
+version = "0.5.17"
 dependencies = [
  "bip39",
  "blake2",
  "bs58",
+ "libhardline",
  "serde",
  "serde_json",
  "snow",
@@ -2366,6 +2368,89 @@ name = "libflankr_term"
 version = "0.1.2"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "libhardline"
+version = "0.1.0"
+source = "git+https://github.com/tmzt/libhardline?rev=cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f#cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f"
+dependencies = [
+ "libhardline-core",
+ "libhardline-jsonrpc",
+ "libhardline-tokio",
+]
+
+[[package]]
+name = "libhardline-core"
+version = "0.1.0"
+source = "git+https://github.com/tmzt/libhardline?rev=cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f#cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f"
+dependencies = [
+ "base64 0.22.1",
+ "curve25519-dalek",
+ "getrandom 0.2.17",
+ "libhardline-proto",
+ "log",
+ "serde",
+ "snow",
+ "toml 0.8.23",
+ "zeroize",
+]
+
+[[package]]
+name = "libhardline-jsonrpc"
+version = "0.1.0"
+source = "git+https://github.com/tmzt/libhardline?rev=cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f#cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "libhardline-proto"
+version = "0.1.0"
+source = "git+https://github.com/tmzt/libhardline?rev=cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f#cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f"
+dependencies = [
+ "bip39",
+ "blake2",
+ "bs58",
+]
+
+[[package]]
+name = "libhardline-server"
+version = "0.1.0"
+source = "git+https://github.com/tmzt/libhardline?rev=cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f#cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f"
+dependencies = [
+ "base64 0.22.1",
+ "libc",
+ "libhardline-core",
+ "libhardline-proto",
+ "log",
+ "serde",
+ "toml 0.8.23",
+ "zeroize",
+]
+
+[[package]]
+name = "libhardline-tokio"
+version = "0.1.0"
+source = "git+https://github.com/tmzt/libhardline?rev=cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f#cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f"
+dependencies = [
+ "libc",
+ "libhardline-core",
+ "libhardline-server",
+ "libhardline-vpn",
+ "log",
+ "socket2",
+ "tokio",
+]
+
+[[package]]
+name = "libhardline-vpn"
+version = "0.1.0"
+source = "git+https://github.com/tmzt/libhardline?rev=cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f#cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

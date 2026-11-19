@@ -23,13 +23,17 @@
 //! the BIP-39 specification, SHA-256 of its text file
 //! `2f5eed53a4727b4bf8880d8f3f199efc90e58503646d9ff8eff3a2ed3b24dbda`). It
 //! is used only for these words, never for keys.
+//!
+//! The words are libhardline-proto's; [`pairing_words`] and
+//! [`pairing_words_text`] keep their old signatures, fixed to
+//! [`FLANKR_PROFILE`](super::FLANKR_PROFILE), whose words context is
+//! [`PAIRING_WORDS_CONTEXT`].
 
-use blake2::{Blake2s256, Digest};
+use libhardline::proto as hl;
 
-use super::{KEY_LEN, OFFER_LEN, fingerprint};
+use super::{FLANKR_PROFILE, KEY_LEN, OFFER_LEN};
 
-/// The number of words in a pairing or fingerprint phrase.
-pub const WORD_COUNT: usize = 6;
+pub use libhardline::proto::{WORD_COUNT, fingerprint_words, fingerprint_words_text};
 
 /// What the pairing words' hash starts with, before the keys and the offer.
 pub const PAIRING_WORDS_CONTEXT: &[u8] = b"flankr.pair.words/1";
@@ -42,12 +46,7 @@ pub fn pairing_words(
     offer: &[u8; OFFER_LEN],
     device_key: &[u8; KEY_LEN],
 ) -> [&'static str; WORD_COUNT] {
-    let mut hasher = Blake2s256::new();
-    hasher.update(PAIRING_WORDS_CONTEXT);
-    hasher.update(server_key);
-    hasher.update(offer);
-    hasher.update(device_key);
-    words_of(&hasher.finalize().into())
+    hl::pairing_words(&FLANKR_PROFILE, server_key, offer, device_key)
 }
 
 /// [`pairing_words`] joined by single spaces.
@@ -56,21 +55,12 @@ pub fn pairing_words_text(
     offer: &[u8; OFFER_LEN],
     device_key: &[u8; KEY_LEN],
 ) -> String {
-    pairing_words(server_key, offer, device_key).join(" ")
+    hl::pairing_words_text(&FLANKR_PROFILE, server_key, offer, device_key)
 }
 
-/// The daemon's fingerprint as six words: the first 66 bits of
-/// [`fingerprint`] as six BIP-39 English words.
-pub fn fingerprint_words(key: &[u8; KEY_LEN]) -> [&'static str; WORD_COUNT] {
-    words_of(&fingerprint(key))
-}
-
-/// [`fingerprint_words`] joined by single spaces.
-pub fn fingerprint_words_text(key: &[u8; KEY_LEN]) -> String {
-    fingerprint_words(key).join(" ")
-}
-
-/// The digest's first 66 bits as six words.
+/// The digest's first 66 bits as six words: the reference the tests check
+/// libhardline's words against.
+#[cfg(test)]
 fn words_of(digest: &[u8; 32]) -> [&'static str; WORD_COUNT] {
     let list = bip39::Language::English.word_list();
     let mut head = [0u8; 16];

@@ -15,34 +15,18 @@
 //!   are the same hash's first 66 bits as six BIP-39 words (the 14:37 EDT
 //!   amendment's item 3); see the `words` module.
 //!
-//! None of these is a secret: each is computed from a public key.
+//! None of these is a secret: each is computed from a public key. They are
+//! libhardline-proto's, which take no profile, re-exported.
 
+pub use libhardline::proto::{REMOTE_ID_LEN, fingerprint, fingerprint_text, remote_id};
+
+#[cfg(test)]
+use super::KEY_LEN;
+#[cfg(test)]
 use blake2::{Blake2s256, Digest};
 
-use super::KEY_LEN;
-
-/// The number of bytes of [`fingerprint`] in a remote's id.
-pub const REMOTE_ID_LEN: usize = 8;
-
-/// BLAKE2s-256 over a link static public key.
-pub fn fingerprint(key: &[u8; KEY_LEN]) -> [u8; 32] {
-    Blake2s256::digest(key).into()
-}
-
-/// The remote's id: [`fingerprint`]'s first 8 bytes as 16 lower-case hex
-/// digits.
-pub fn remote_id(key: &[u8; KEY_LEN]) -> String {
-    hex(&fingerprint(key)[..REMOTE_ID_LEN])
-}
-
-/// The fingerprint label: the id's first 8 hex digits in two groups of
-/// four, `3f9a 12c4`. A label for telling remotes apart, not for checking a
-/// daemon's identity: that is [`fingerprint_words`](super::fingerprint_words).
-pub fn fingerprint_text(key: &[u8; KEY_LEN]) -> String {
-    let digits = hex(&fingerprint(key)[..4]);
-    format!("{} {}", &digits[..4], &digits[4..])
-}
-
+/// Lower-case hex, for the tests' vectors.
+#[cfg(test)]
 fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write;
     bytes.iter().fold(String::new(), |mut out, b| {

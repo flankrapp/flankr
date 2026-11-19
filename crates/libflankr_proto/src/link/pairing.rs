@@ -26,36 +26,32 @@
 //! **server's** public key, then every field before it. The text form is
 //! `flankrkey1` and base58. Because the checksum covers the server's key, a
 //! code made for another server, or mistyped, fails it.
+//!
+//! The encodings are libhardline-proto's. [`PairingPayload`] and
+//! [`DeviceCode`] keep their fields and their methods' old signatures, fixed
+//! to [`FLANKR_PROFILE`](super::FLANKR_PROFILE), and convert to and from
+//! libhardline's types with `From`. [`PairingStringError`] keeps its
+//! variants and its messages, which name flankr's prefixes.
 
 use std::fmt;
 
-use blake2::{Blake2s256, Digest};
+use libhardline::proto as hl;
 
-use super::KEY_LEN;
+use super::{FLANKR_PROFILE, KEY_LEN};
+
+pub use libhardline::proto::{
+    DEVICE_CODE_VERSION, DEVICE_NAME_MAX, OFFER_LEN, PAIRING_VERSION, PAIRING_VERSION_NO_OFFER,
+};
 
 /// The pairing string's prefix.
 pub const PAIRING_PREFIX: &str = "flankr1";
 /// The pairing URL's scheme.
 pub const PAIRING_URL_SCHEME: &str = "flankr";
-/// The pairing URL's path.
-const PAIRING_URL_PATH: &str = "/pair";
-
-/// The pairing payload version this crate writes for a payload with an
-/// offer, and reads.
-pub const PAIRING_VERSION: u8 = 3;
-/// The pairing payload version without an offer, which this crate writes
-/// for a payload whose `offer` is `None`, and reads.
-pub const PAIRING_VERSION_NO_OFFER: u8 = 2;
-/// The length of a pairing offer.
-pub const OFFER_LEN: usize = 16;
 
 /// The device code's prefix.
 pub const DEVICE_CODE_PREFIX: &str = "flankrkey1";
-/// The device code version this crate writes and reads.
-pub const DEVICE_CODE_VERSION: u8 = 1;
-/// The longest device name, in bytes.
-pub const DEVICE_NAME_MAX: usize = 32;
 
+#[cfg(test)]
 const CHECKSUM_LEN: usize = 4;
 
 /// What a pairing string carries: the server's key and where to reach it.
@@ -134,29 +130,69 @@ impl fmt::Display for PairingStringError {
 
 impl std::error::Error for PairingStringError {}
 
+impl From<hl::PairingStringError> for PairingStringError {
+    fn from(e: hl::PairingStringError) -> Self {
+        match e {
+            hl::PairingStringError::BadPrefix => PairingStringError::BadPrefix,
+            hl::PairingStringError::BadBase58 => PairingStringError::BadBase58,
+            hl::PairingStringError::BadChecksum => PairingStringError::BadChecksum,
+            hl::PairingStringError::UnknownVersion(v) => PairingStringError::UnknownVersion(v),
+            hl::PairingStringError::TooManyAddresses => PairingStringError::TooManyAddresses,
+            hl::PairingStringError::AddressTooLong => PairingStringError::AddressTooLong,
+            hl::PairingStringError::BadUrl => PairingStringError::BadUrl,
+            hl::PairingStringError::BadName => PairingStringError::BadName,
+            // `Malformed`, and any error a later libhardline adds.
+            _ => PairingStringError::Malformed,
+        }
+    }
+}
+
+impl From<PairingPayload> for hl::PairingPayload {
+    fn from(p: PairingPayload) -> Self {
+        hl::PairingPayload {
+            server_key: p.server_key,
+            addresses: p.addresses,
+            offer: p.offer,
+        }
+    }
+}
+
+impl From<hl::PairingPayload> for PairingPayload {
+    fn from(p: hl::PairingPayload) -> Self {
+        PairingPayload {
+            server_key: p.server_key,
+            addresses: p.addresses,
+            offer: p.offer,
+        }
+    }
+}
+
+impl From<DeviceCode> for hl::DeviceCode {
+    fn from(d: DeviceCode) -> Self {
+        hl::DeviceCode {
+            key: d.key,
+            name: d.name,
+        }
+    }
+}
+
+impl From<hl::DeviceCode> for DeviceCode {
+    fn from(d: hl::DeviceCode) -> Self {
+        DeviceCode {
+            key: d.key,
+            name: d.name,
+        }
+    }
+}
+
 impl PairingPayload {
+    fn hl(&self) -> hl::PairingPayload {
+        self.clone().into()
+    }
+
     /// The binary payload, with its checksum.
     pub fn to_bytes(&self) -> Result<Vec<u8>, PairingStringError> {
-        let mut out = Vec::with_capacity(1 + KEY_LEN + 64 + OFFER_LEN);
-        out.push(match self.offer {
-            Some(_) => PAIRING_VERSION,
-            None => PAIRING_VERSION_NO_OFFER,
-        });
-        out.extend_from_slice(&self.server_key);
-        let count =
-            u8::try_from(self.addresses.len()).map_err(|_| PairingStringError::TooManyAddresses)?;
-        out.push(count);
-        for addr in &self.addresses {
-            let len = u8::try_from(addr.len()).map_err(|_| PairingStringError::AddressTooLong)?;
-            out.push(len);
-            out.extend_from_slice(addr.as_bytes());
-        }
-        if let Some(offer) = &self.offer {
-            out.extend_from_slice(offer);
-        }
-        let sum = blake2s_prefix(&[&out]);
-        out.extend_from_slice(&sum);
-        Ok(out)
+        Ok(self.hl().to_bytes()?)
     }
 
     /// Reads a binary payload: checksum first, then version, then fields.
@@ -164,36 +200,12 @@ impl PairingPayload {
     /// version, such as 1 (with a secret), is
     /// [`PairingStringError::UnknownVersion`].
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, PairingStringError> {
-        let mut r = Reader(checked(bytes, &[])?);
-        let version = r.u8()?;
-        if version != PAIRING_VERSION && version != PAIRING_VERSION_NO_OFFER {
-            return Err(PairingStringError::UnknownVersion(version));
-        }
-        let server_key = r.array()?;
-        let count = r.u8()?;
-        let addresses = (0..count)
-            .map(|_| r.string())
-            .collect::<Result<Vec<_>, _>>()?;
-        let offer = if version == PAIRING_VERSION {
-            Some(r.array()?)
-        } else {
-            None
-        };
-        r.end()?;
-        Ok(PairingPayload {
-            server_key,
-            addresses,
-            offer,
-        })
+        Ok(hl::PairingPayload::from_bytes(bytes)?.into())
     }
 
     /// The text form: `flankr1` and the payload in base58.
     pub fn encode(&self) -> Result<String, PairingStringError> {
-        let bytes = self.to_bytes()?;
-        Ok(format!(
-            "{PAIRING_PREFIX}{}",
-            bs58::encode(bytes).into_string()
-        ))
+        Ok(self.hl().encode(&FLANKR_PROFILE)?)
     }
 
     /// The pairing URL: `flankr://<host>:<port>/pair#<string>`, where
@@ -201,47 +213,19 @@ impl PairingPayload {
     /// `tailscale serve`, the Tailscale name), or the first address if all
     /// are.
     pub fn url(&self) -> Result<String, PairingStringError> {
-        let address = self
-            .addresses
-            .iter()
-            .find(|a| !is_loopback(a))
-            .or_else(|| self.addresses.first())
-            .ok_or(PairingStringError::BadUrl)?;
-        Ok(format!(
-            "{PAIRING_URL_SCHEME}://{address}{PAIRING_URL_PATH}#{}",
-            self.encode()?
-        ))
+        Ok(self.hl().url(&FLANKR_PROFILE)?)
     }
 
     /// Whether any address can be reached from another machine.
     pub fn has_remote_address(&self) -> bool {
-        self.addresses.iter().any(|a| !is_loopback(a))
+        self.hl().has_remote_address()
     }
 
     /// Reads the text form or the pairing URL. Surrounding whitespace, as
     /// from a paste or a scan, is ignored. A URL's host must be one of the
     /// payload's addresses.
     pub fn decode(s: &str) -> Result<Self, PairingStringError> {
-        let s = s.trim();
-        let Some(rest) = s
-            .strip_prefix(PAIRING_URL_SCHEME)
-            .and_then(|r| r.strip_prefix("://"))
-        else {
-            return Self::decode_string(s);
-        };
-        let (before, string) = rest.split_once('#').ok_or(PairingStringError::BadUrl)?;
-        let address = before
-            .strip_suffix(PAIRING_URL_PATH)
-            .ok_or(PairingStringError::BadUrl)?;
-        let payload = Self::decode_string(string)?;
-        if !payload.addresses.iter().any(|a| a == address) {
-            return Err(PairingStringError::BadUrl);
-        }
-        Ok(payload)
-    }
-
-    fn decode_string(s: &str) -> Result<Self, PairingStringError> {
-        Self::from_bytes(&from_base58(s, PAIRING_PREFIX)?)
+        Ok(hl::PairingPayload::decode(&FLANKR_PROFILE, s)?.into())
     }
 }
 
@@ -257,63 +241,26 @@ impl DeviceCode {
     /// Whether `name` may be a device's name: 1 to 32 bytes of ASCII
     /// letters, digits, `-`, `_` or `.`.
     pub fn valid_name(name: &str) -> bool {
-        (1..=DEVICE_NAME_MAX).contains(&name.len())
-            && name
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+        hl::DeviceCode::valid_name(name)
     }
 
     /// The text form for the server whose key is `server_key`:
     /// `flankrkey1` and the code in base58.
     pub fn encode(&self, server_key: &[u8; KEY_LEN]) -> Result<String, PairingStringError> {
-        if !Self::valid_name(&self.name) {
-            return Err(PairingStringError::BadName);
-        }
-        let mut out = Vec::with_capacity(1 + KEY_LEN + 1 + self.name.len() + CHECKSUM_LEN);
-        out.push(DEVICE_CODE_VERSION);
-        out.extend_from_slice(&self.key);
-        out.push(self.name.len() as u8);
-        out.extend_from_slice(self.name.as_bytes());
-        let sum = blake2s_prefix(&[server_key, &out]);
-        out.extend_from_slice(&sum);
-        Ok(format!(
-            "{DEVICE_CODE_PREFIX}{}",
-            bs58::encode(out).into_string()
-        ))
+        Ok(hl::DeviceCode::from(self.clone()).encode(&FLANKR_PROFILE, server_key)?)
     }
 
     /// Reads the text form, checking it against `server_key`.
     /// Surrounding whitespace is ignored. A code made for another server
     /// fails as [`PairingStringError::BadChecksum`].
     pub fn decode(s: &str, server_key: &[u8; KEY_LEN]) -> Result<Self, PairingStringError> {
-        let bytes = from_base58(s.trim(), DEVICE_CODE_PREFIX)?;
-        let mut r = Reader(checked(&bytes, server_key)?);
-        let version = r.u8()?;
-        if version != DEVICE_CODE_VERSION {
-            return Err(PairingStringError::UnknownVersion(version));
-        }
-        let key = r.array()?;
-        let name = r.string()?;
-        r.end()?;
-        if !Self::valid_name(&name) {
-            return Err(PairingStringError::BadName);
-        }
-        Ok(DeviceCode { key, name })
+        Ok(hl::DeviceCode::decode(&FLANKR_PROFILE, s, server_key)?.into())
     }
 }
 
-/// The base58 after `prefix`.
-fn from_base58(s: &str, prefix: &str) -> Result<Vec<u8>, PairingStringError> {
-    let rest = s
-        .strip_prefix(prefix)
-        .ok_or(PairingStringError::BadPrefix)?;
-    bs58::decode(rest)
-        .into_vec()
-        .map_err(|_| PairingStringError::BadBase58)
-}
-
 /// The body of `bytes`, once its trailing checksum matches BLAKE2s-256 of
-/// `salt` then the body.
+/// `salt` then the body: the reference the tests check libhardline against.
+#[cfg(test)]
 fn checked<'a>(bytes: &'a [u8], salt: &[u8]) -> Result<&'a [u8], PairingStringError> {
     if bytes.len() < 1 + CHECKSUM_LEN {
         return Err(PairingStringError::Malformed);
@@ -325,19 +272,10 @@ fn checked<'a>(bytes: &'a [u8], salt: &[u8]) -> Result<&'a [u8], PairingStringEr
     Ok(body)
 }
 
-/// Whether `host:port` names this machine only: `localhost`, `127.0.0.0/8`
-/// or `[::1]`.
-fn is_loopback(address: &str) -> bool {
-    let host = address.rsplit_once(':').map_or(address, |(host, _)| host);
-    let host = host.trim_start_matches('[').trim_end_matches(']');
-    host.eq_ignore_ascii_case("localhost")
-        || host
-            .parse::<std::net::IpAddr>()
-            .is_ok_and(|ip| ip.is_loopback())
-}
-
 /// The first 4 bytes of BLAKE2s-256 over `parts`, in order.
+#[cfg(test)]
 fn blake2s_prefix(parts: &[&[u8]]) -> [u8; CHECKSUM_LEN] {
+    use blake2::{Blake2s256, Digest};
     let mut hasher = Blake2s256::new();
     for part in parts {
         hasher.update(part);
@@ -346,8 +284,10 @@ fn blake2s_prefix(parts: &[&[u8]]) -> [u8; CHECKSUM_LEN] {
     [digest[0], digest[1], digest[2], digest[3]]
 }
 
+#[cfg(test)]
 struct Reader<'a>(&'a [u8]);
 
+#[cfg(test)]
 impl Reader<'_> {
     fn take(&mut self, n: usize) -> Result<&[u8], PairingStringError> {
         if self.0.len() < n {

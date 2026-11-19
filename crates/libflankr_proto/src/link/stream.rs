@@ -1,14 +1,15 @@
-//! The established link: framing, chunking and the 1 MiB limit.
+//! The established link: libhardline's tokio `LinkStream`, with flankr's
+//! message kinds over its protocol numbers.
+//!
+//! A [`LinkStream`] is a link, or the session of a pairing request (which
+//! carries one [`PairResult`] and nothing else): libhardline gives the two
+//! as different types, which this one keeps behind the old methods.
 
-use std::sync::Arc;
+use libhardline::tokio as hlt;
+use libhardline::{CloseReason, proto::PairResult};
+use tokio::io::{AsyncRead, AsyncWrite, ReadHalf, WriteHalf};
 
-use snow::StatelessTransportState;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
-
-use super::{
-    FLAG_MORE, FLAG_RESERVED, KEY_LEN, KIND_BINARY, KIND_JSON, KIND_TERMINAL, LinkError, MAX_CHUNK,
-    MAX_FRAME, MAX_MESSAGE,
-};
+use super::{KEY_LEN, KIND_BINARY, KIND_JSON, KIND_TERMINAL, LinkError};
 
 /// A message's kind, as the high nibble of its frames' flag byte carries
 /// it (see the [module](super) header). Open: later kinds are additive.
@@ -82,7 +83,7 @@ impl Message {
         }
     }
 
-    fn new(kind: Kind, bytes: Vec<u8>) -> Message {
+    pub(super) fn new(kind: Kind, bytes: Vec<u8>) -> Message {
         match kind {
             Kind::Json => Message::Json(bytes),
             Kind::Terminal => Message::Terminal(bytes),
@@ -97,37 +98,91 @@ impl Message {
 /// `send_message`, [`send_terminal`](Self::send_terminal) or
 /// [`send_binary`](Self::send_binary) is one [`recv`](Self::recv).
 ///
-/// `recv_message` and `recv` are not cancel-safe: a message half read when its future
-/// is dropped is lost and the stream is out of step. To read and write at
+/// Since 0.5.17 `recv_message` and `recv` are cancel-safe, as libhardline's
+/// are: a message is taken only when it is returned. To read and write at
 /// once, [`into_split`](Self::into_split) the stream.
+///
+/// The session of a pairing request ([`PairResponse::stream`](super::PairResponse)
+/// on the phone, [`PairIncoming::respond`](super::PairIncoming::respond)'s
+/// on the daemon) is a `LinkStream` too. It carries the one
+/// [`PairResult`](super::PairResult): [`send_pair_result`](super::send_pair_result)
+/// sends it, [`recv_pair_result`](super::recv_pair_result) reads it, and on
+/// the daemon `recv_message` waits for the phone to close the session. It
+/// cannot be split: [`into_split`](Self::into_split) gives closed halves.
 pub struct LinkStream<S> {
-    io: S,
-    transport: Arc<StatelessTransportState>,
-    send_nonce: u64,
-    recv_nonce: u64,
+    inner: Inner<S>,
     peer_key: [u8; KEY_LEN],
-    closed: bool,
+}
+
+enum Inner<S> {
+    /// An `IK` link.
+    Link(Box<hlt::LinkStream<S>>),
+    /// The phone's side of an accepted pairing request.
+    PairPending(Box<hlt::PairPending<S>>),
+    /// The daemon's side of an accepted pairing request.
+    PairHeld(Box<hlt::PairHeld<S>>),
+    /// Closed: a refused pairing request, a pairing session after its
+    /// result, or a stream shut down.
+    Closed,
+}
+
+/// The error a closed pairing session reports: its own error, or
+/// [`LinkError::Closed`].
+pub(super) fn close_error(reason: CloseReason) -> LinkError {
+    match reason {
+        CloseReason::Error(e) => e,
+        CloseReason::Unreachable { last: Some(last) } => close_error(*last),
+        _ => LinkError::Closed,
+    }
+}
+
+/// The message a protocol number carries, if it is a kind this crate
+/// reads.
+fn message(protocol: u16, bytes: Vec<u8>) -> Option<Message> {
+    let kind = Kind::from_nibble(u8::try_from(protocol).ok()?)?;
+    Some(Message::new(kind, bytes))
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> LinkStream<S> {
-    pub(super) fn new(io: S, transport: StatelessTransportState, peer_key: [u8; KEY_LEN]) -> Self {
+    pub(super) fn link(stream: hlt::LinkStream<S>) -> Self {
+        let peer_key = *stream.peer();
         LinkStream {
-            io,
-            transport: Arc::new(transport),
-            send_nonce: 0,
-            recv_nonce: 0,
+            inner: Inner::Link(Box::new(stream)),
             peer_key,
-            closed: false,
+        }
+    }
+
+    pub(super) fn pair_pending(pending: hlt::PairPending<S>, peer_key: [u8; KEY_LEN]) -> Self {
+        LinkStream {
+            inner: Inner::PairPending(Box::new(pending)),
+            peer_key,
+        }
+    }
+
+    pub(super) fn pair_held(held: hlt::PairHeld<S>) -> Self {
+        LinkStream {
+            inner: Inner::PairHeld(Box::new(held)),
+            peer_key: [0u8; KEY_LEN],
+        }
+    }
+
+    pub(super) fn closed(peer_key: [u8; KEY_LEN]) -> Self {
+        LinkStream {
+            inner: Inner::Closed,
+            peer_key,
         }
     }
 
     /// The peer's static X25519 public key, authenticated by the handshake.
+    /// On the daemon's side of a pairing session it is all zeros: `NK` does
+    /// not authenticate the phone.
     pub fn peer_key(&self) -> &[u8; KEY_LEN] {
         &self.peer_key
     }
 
     /// Sends one message, in as many frames as it needs. A message over
-    /// [`MAX_MESSAGE`] is refused without sending anything.
+    /// [`MAX_MESSAGE`](super::MAX_MESSAGE) is refused without sending
+    /// anything.
     pub async fn send_message(&mut self, msg: &[u8]) -> Result<(), LinkError> {
         self.send_kind(Kind::Json, msg).await
     }
@@ -146,148 +201,141 @@ impl<S: AsyncRead + AsyncWrite + Unpin> LinkStream<S> {
         self.send_kind(Kind::Binary, msg).await
     }
 
-    /// Sends one message of `kind`. A message over [`MAX_MESSAGE`] is
-    /// refused without sending anything.
+    /// Sends one message of `kind`. A message over
+    /// [`MAX_MESSAGE`](super::MAX_MESSAGE) is refused without sending
+    /// anything.
+    ///
+    /// On the daemon's side of a pairing session the only message is the
+    /// result: a JSON-RPC message whose bytes are a [`PairResult`]'s, sent
+    /// once, after which the session is closed. Anything else there, and
+    /// anything sent on the phone's side, is refused: a message that is not
+    /// a result is [`LinkError::Pairing`], and a session that cannot send
+    /// is [`LinkError::Closed`].
     pub async fn send_kind(&mut self, kind: Kind, msg: &[u8]) -> Result<(), LinkError> {
-        if msg.len() > MAX_MESSAGE {
+        if msg.len() > super::MAX_MESSAGE {
             return Err(LinkError::MessageTooLarge);
         }
-        self.send_unchecked_kind(kind, msg).await
-    }
-
-    #[cfg(test)]
-    pub(super) async fn send_unchecked(&mut self, msg: &[u8]) -> Result<(), LinkError> {
-        self.send_unchecked_kind(Kind::Json, msg).await
-    }
-
-    async fn send_unchecked_kind(&mut self, kind: Kind, msg: &[u8]) -> Result<(), LinkError> {
-        if self.closed {
-            return Err(LinkError::Closed);
+        match &mut self.inner {
+            Inner::Link(s) => s.send(u16::from(kind.nibble()), msg).await,
+            Inner::PairHeld(_) if kind == Kind::Json => {
+                let result = PairResult::from_bytes(msg)?;
+                let Inner::PairHeld(held) = std::mem::replace(&mut self.inner, Inner::Closed)
+                else {
+                    unreachable!("matched above")
+                };
+                held.send_result(result).await
+            }
+            Inner::PairHeld(_) | Inner::PairPending(_) | Inner::Closed => Err(LinkError::Closed),
         }
-        let r = write_message(
-            &mut self.io,
-            &self.transport,
-            &mut self.send_nonce,
-            kind,
-            msg,
-        )
-        .await;
-        if r.is_err() {
-            self.close().await;
-        }
-        r
     }
 
-    /// Sends frames with the given flag bytes and chunks as they are, for
-    /// tests of the receiver's checks.
-    #[cfg(test)]
-    pub(super) async fn send_raw_frames(
-        &mut self,
-        frames: &[(u8, &[u8])],
-    ) -> Result<(), LinkError> {
-        let mut out = vec![0u8; 2 + MAX_FRAME];
-        for &(flag, chunk) in frames {
-            let mut plain = vec![flag];
-            plain.extend_from_slice(chunk);
-            let n = self
-                .transport
-                .write_message(self.send_nonce, &plain, &mut out[2..])?;
-            self.send_nonce += 1;
-            out[..2].copy_from_slice(&(n as u16).to_be_bytes());
-            self.io.write_all(&out[..2 + n]).await?;
-        }
-        self.io.flush().await?;
-        Ok(())
-    }
-
-    /// Receives one whole JSON-RPC message. A frame of any other kind is
+    /// Receives one whole JSON-RPC message. A message of any other kind is
     /// [`LinkError::BadFrame`]. On any error, including a message
-    /// reassembled past [`MAX_MESSAGE`], the connection is closed.
+    /// reassembled past [`MAX_MESSAGE`](super::MAX_MESSAGE), the connection
+    /// is closed.
     pub async fn recv_message(&mut self) -> Result<Vec<u8>, LinkError> {
-        self.recv_accepting(false).await.map(Message::into_bytes)
+        match &mut self.inner {
+            Inner::Link(s) => s.recv_message().await,
+            Inner::PairPending(p) => {
+                let r = p.wait().await;
+                self.inner = Inner::Closed;
+                r.map(PairResult::to_bytes)
+            }
+            Inner::PairHeld(h) => {
+                let reason = h.closed().await;
+                self.inner = Inner::Closed;
+                Err(close_error(reason))
+            }
+            Inner::Closed => Err(LinkError::Closed),
+        }
     }
 
     /// Receives one whole message of any known kind. Errors as
     /// [`recv_message`](Self::recv_message) does, but a terminal frame is
-    /// [`Message::Terminal`] and a binary message [`Message::Binary`].
+    /// [`Message::Terminal`] and a binary message [`Message::Binary`]; a
+    /// message of a reserved kind (3 to 14) is [`LinkError::BadFrame`] and
+    /// closes the connection.
     pub async fn recv(&mut self) -> Result<Message, LinkError> {
-        self.recv_accepting(true).await
-    }
-
-    async fn recv_accepting(&mut self, all_kinds: bool) -> Result<Message, LinkError> {
-        if self.closed {
-            return Err(LinkError::Closed);
+        let Inner::Link(s) = &mut self.inner else {
+            return self.recv_message().await.map(Message::Json);
+        };
+        let (protocol, bytes) = s.recv().await?;
+        match message(protocol, bytes) {
+            Some(m) => Ok(m),
+            None => {
+                let _ = s.close().await;
+                Err(LinkError::BadFrame)
+            }
         }
-        let r = read_message(
-            &mut self.io,
-            &self.transport,
-            &mut self.recv_nonce,
-            all_kinds,
-        )
-        .await;
-        if r.is_err() {
-            self.close().await;
-        }
-        r
     }
 
     /// Shuts the stream down; the peer then reads end of stream.
     pub async fn shutdown(&mut self) -> Result<(), LinkError> {
-        self.closed = true;
-        self.io.shutdown().await?;
-        Ok(())
+        match std::mem::replace(&mut self.inner, Inner::Closed) {
+            Inner::Link(mut s) => {
+                let r = s.close().await;
+                self.inner = Inner::Link(s);
+                r
+            }
+            Inner::PairPending(p) => {
+                p.cancel().await;
+                Ok(())
+            }
+            // Dropping the session closes the connection.
+            Inner::PairHeld(_) | Inner::Closed => Ok(()),
+        }
     }
 
     /// Splits the stream into halves that can be used from different tasks.
+    /// A pairing session's halves are closed.
     pub fn into_split(self) -> (LinkReader<ReadHalf<S>>, LinkWriter<WriteHalf<S>>) {
-        let (r, w) = tokio::io::split(self.io);
-        (
-            LinkReader {
-                io: r,
-                transport: self.transport.clone(),
-                nonce: self.recv_nonce,
-                closed: self.closed,
-            },
-            LinkWriter {
-                io: w,
-                transport: self.transport,
-                nonce: self.send_nonce,
-                closed: self.closed,
-            },
-        )
-    }
-
-    async fn close(&mut self) {
-        self.closed = true;
-        let _ = self.io.shutdown().await;
+        match self.inner {
+            Inner::Link(s) => {
+                let (r, w) = (*s).into_split();
+                (
+                    LinkReader {
+                        inner: Some(r),
+                        closed: false,
+                    },
+                    LinkWriter { inner: Some(w) },
+                )
+            }
+            _ => (
+                LinkReader {
+                    inner: None,
+                    closed: true,
+                },
+                LinkWriter { inner: None },
+            ),
+        }
     }
 }
 
 /// The receiving half of a [`LinkStream`]. After an error, drop it and the
 /// writer: the reader cannot shut the stream down by itself.
 pub struct LinkReader<R> {
-    io: R,
-    transport: Arc<StatelessTransportState>,
-    nonce: u64,
+    inner: Option<hlt::LinkReader<R>>,
     closed: bool,
 }
 
 impl<R: AsyncRead + Unpin> LinkReader<R> {
-    /// As [`LinkStream::recv_message`]. Not cancel-safe.
+    /// As [`LinkStream::recv_message`]. Cancel-safe.
     pub async fn recv_message(&mut self) -> Result<Vec<u8>, LinkError> {
-        self.recv_accepting(false).await.map(Message::into_bytes)
+        let r = match (&mut self.inner, self.closed) {
+            (Some(r), false) => r.recv_message().await,
+            _ => return Err(LinkError::Closed),
+        };
+        self.closed = r.is_err();
+        r
     }
 
-    /// As [`LinkStream::recv`]. Not cancel-safe.
+    /// As [`LinkStream::recv`]. Cancel-safe.
     pub async fn recv(&mut self) -> Result<Message, LinkError> {
-        self.recv_accepting(true).await
-    }
-
-    async fn recv_accepting(&mut self, all_kinds: bool) -> Result<Message, LinkError> {
-        if self.closed {
-            return Err(LinkError::Closed);
-        }
-        let r = read_message(&mut self.io, &self.transport, &mut self.nonce, all_kinds).await;
+        let r = match (&mut self.inner, self.closed) {
+            (Some(r), false) => r.recv().await,
+            _ => return Err(LinkError::Closed),
+        };
+        let r = r.and_then(|(protocol, bytes)| message(protocol, bytes).ok_or(LinkError::BadFrame));
         self.closed = r.is_err();
         r
     }
@@ -295,10 +343,7 @@ impl<R: AsyncRead + Unpin> LinkReader<R> {
 
 /// The sending half of a [`LinkStream`].
 pub struct LinkWriter<W> {
-    io: W,
-    transport: Arc<StatelessTransportState>,
-    nonce: u64,
-    closed: bool,
+    inner: Option<hlt::LinkWriter<W>>,
 }
 
 impl<W: AsyncWrite + Unpin> LinkWriter<W> {
@@ -319,98 +364,20 @@ impl<W: AsyncWrite + Unpin> LinkWriter<W> {
 
     /// As [`LinkStream::send_kind`].
     pub async fn send_kind(&mut self, kind: Kind, msg: &[u8]) -> Result<(), LinkError> {
-        if msg.len() > MAX_MESSAGE {
+        if msg.len() > super::MAX_MESSAGE {
             return Err(LinkError::MessageTooLarge);
         }
-        if self.closed {
-            return Err(LinkError::Closed);
+        match &mut self.inner {
+            Some(w) => w.send(u16::from(kind.nibble()), msg).await,
+            None => Err(LinkError::Closed),
         }
-        let r = write_message(&mut self.io, &self.transport, &mut self.nonce, kind, msg).await;
-        if r.is_err() {
-            self.closed = true;
-            let _ = self.io.shutdown().await;
-        }
-        r
     }
 
     /// Shuts the stream down; the peer then reads end of stream.
     pub async fn shutdown(&mut self) -> Result<(), LinkError> {
-        self.closed = true;
-        self.io.shutdown().await?;
-        Ok(())
-    }
-}
-
-async fn write_message<W: AsyncWrite + Unpin>(
-    io: &mut W,
-    transport: &StatelessTransportState,
-    nonce: &mut u64,
-    kind: Kind,
-    msg: &[u8],
-) -> Result<(), LinkError> {
-    let kind = kind.nibble() << 4;
-    let mut plain = Vec::with_capacity(1 + MAX_CHUNK.min(msg.len()));
-    let mut frame = vec![0u8; 2 + MAX_FRAME];
-    let mut rest = msg;
-    loop {
-        let (chunk, tail) = rest.split_at(rest.len().min(MAX_CHUNK));
-        rest = tail;
-        plain.clear();
-        plain.push(if rest.is_empty() {
-            kind
-        } else {
-            kind | FLAG_MORE
-        });
-        plain.extend_from_slice(chunk);
-        let n = transport.write_message(*nonce, &plain, &mut frame[2..])?;
-        *nonce += 1;
-        frame[..2].copy_from_slice(&(n as u16).to_be_bytes());
-        io.write_all(&frame[..2 + n]).await?;
-        if rest.is_empty() {
-            break;
-        }
-    }
-    io.flush().await?;
-    Ok(())
-}
-
-/// Reads one message. With `all_kinds` false only kind 0 is read, so any
-/// flag byte but `0x00`/`0x01` is `BadFrame`, exactly as before the kind
-/// nibble (plan 20261027_07, the 14:23 EDT amendment).
-async fn read_message<R: AsyncRead + Unpin>(
-    io: &mut R,
-    transport: &StatelessTransportState,
-    nonce: &mut u64,
-    all_kinds: bool,
-) -> Result<Message, LinkError> {
-    let mut frame = vec![0u8; MAX_FRAME];
-    let mut plain = vec![0u8; MAX_FRAME];
-    let mut out = Vec::new();
-    let mut kind: Option<Kind> = None;
-    loop {
-        let len = usize::from(io.read_u16().await?);
-        io.read_exact(&mut frame[..len]).await?;
-        let n = transport.read_message(*nonce, &frame[..len], &mut plain)?;
-        *nonce += 1;
-        let (&flag, chunk) = plain[..n].split_first().ok_or(LinkError::BadFrame)?;
-        if out.len() + chunk.len() > MAX_MESSAGE {
-            return Err(LinkError::MessageTooLarge);
-        }
-        if flag & FLAG_RESERVED != 0 {
-            return Err(LinkError::BadFrame);
-        }
-        let this = match Kind::from_nibble(flag >> 4) {
-            Some(Kind::Json) => Kind::Json,
-            Some(_) if !all_kinds => return Err(LinkError::BadFrame),
-            Some(k) => k,
-            None => return Err(LinkError::BadFrame),
-        };
-        if *kind.get_or_insert(this) != this {
-            return Err(LinkError::BadFrame);
-        }
-        out.extend_from_slice(chunk);
-        if flag & FLAG_MORE == 0 {
-            return Ok(Message::new(this, out));
+        match &mut self.inner {
+            Some(w) => w.close().await,
+            None => Ok(()),
         }
     }
 }
