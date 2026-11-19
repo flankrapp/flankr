@@ -380,3 +380,108 @@ loop {
    change?
 4. **The merge first.** This plan moves the pasted-link reader, which is
    only on `wt-paste-link`. Step 2 waits for that branch to be merged.
+
+## Amendment — 2026-11-19 15:25 EST: VPN providers move, no default scheme or tunnel prefix, protocol-numbered framing
+
+Agreed with the owner in discussion (Rule 2). The owner, verbatim: "no,
+the VPN provides should move also, to dev.tmzt.hardline.vpn for now.
+private repo for now. do we need to make the binary protocol part of this
+new library allowing json-rpc etc. to be layered over it with protocol
+numbers?"; "the task prefix should also be configurable, as each app will
+have it's own tunnels"; "no default, if a cli app registers it needs to
+set that prefix (the default was for the internal package name
+identifying the plugins)"; "should we drop the hardline:// default, the
+likely usage is for an app to register as a handler for that url with the
+OS and I don't want other apps registering hardline://"; "yes merge
+wt-paste-line first". Where this disagrees with the body, this wins.
+
+### 1. No default URL scheme (replaces decision 3's defaults)
+
+- `Profile` has no `Default` and no default values. `Profile::builder()`
+  requires `url_scheme(...)`; `build()` refuses without one. The other
+  names are derived from the scheme as decision 3 says, unless set
+  explicitly.
+- The scheme `hardline`, and any scheme starting with `hardline`, is
+  refused, so no app built on the library registers `hardline://` with
+  its OS.
+- Tests and examples use the invented scheme `hltest`. The examples take
+  the scheme as an argument. Decision 5's `Profile::default()` and
+  decision 3's "default `hardline://`" go; step 3's test under
+  `Profile::default()` becomes one under `hltest`, and step 6's examples
+  run under `hltest`.
+- flankr's profile is `url_scheme("flankr")`, as before.
+
+### 2. The VPN providers move (replaces "the VPN providers" in "What stays in flankr" and decision 7's `vpn/` line)
+
+- A fifth crate, `libhardline-vpn` 0.1.0, takes `src/server/link/vpn/`
+  (`mod.rs`'s `Vpn` trait and choice, `tailscale.rs`, `bitmot.rs`,
+  `fake.rs`) and the background-job definition Bitmot's relay needs,
+  with features `vpn-tailscale` and `vpn-bitmot` as today. flankr keeps
+  `flankr service`, its registry (`src/service.rs`) and its config keys,
+  and calls into the crate.
+- Each provider's own id is fixed by the library:
+  `dev.tmzt.hardline.vpn.<provider>` (for example
+  `dev.tmzt.hardline.vpn.bitmot`). It is what `Vpn::id()` returns and
+  what logs and the service registry show.
+- A tunnel's job id is `<service prefix>.<provider>`. The prefix has no
+  default: `VpnBuilder::build()`, and `Server::builder()` with a tunnel
+  enabled, refuse without `service_prefix(...)`. A prefix is a
+  reverse-DNS name of 3 to 64 characters of `[a-z0-9.-]` with at least
+  two dots. `Profile` holds no prefix.
+- Also the app's: the edge forward's label (default: the profile's
+  scheme), the state directory for the relay's log and state (no
+  default), and Bitmot's public port (default 443). Setting up a tunnel
+  reads the edge node's forwards and refuses, naming the other label,
+  when another label already holds the public port.
+- flankr sets the prefix `dev.flankr.vpn` and keeps the label `flankr`,
+  so its Bitmot job stays `dev.flankr.vpn.bitmot`: no migration, no
+  change its user sees, no daemon version bump.
+
+### 3. Protocol-numbered framing (adds to decisions 2 and 5)
+
+- libhardline owns the framing: the 2-byte length, Noise, chunking and
+  the flag byte. The flag byte's high nibble, today's message kind,
+  becomes a protocol number. Numbers 0 to 14 keep their one-byte form.
+  15 is defined: an unsigned LEB128 protocol number (15 and up) follows
+  the flag byte in each frame of the message. It is sent only to a peer
+  that has declared it reads that number; a peer that has not still
+  closes on it, as today.
+- The library knows no protocols. `LinkStream` gains
+  `send(protocol: u32, bytes)` and `recv() -> (u32, Vec<u8>)`; today's
+  `Message` enum and `KIND_*` constants stay in flankr, mapped to 0
+  (JSON-RPC), 1 (terminal) and 2 (blob), so flankr's frames are byte for
+  byte as today.
+- An opt-in protocol list: one reserved protocol number carries a
+  message listing the protocol numbers each side reads. flankr does not
+  use it and keeps negotiating through its JSON `hello` (`blob`).
+- A sixth crate, `libhardline-jsonrpc` 0.1.0, optional: the JSON-RPC
+  2.0 types (`Request`, `Notification`, `Incoming`, `Id`,
+  `ErrorObject`) moved from `libflankr_proto`, sent on protocol 0 by
+  default. flankr's own methods and types stay in `libflankr_proto`.
+- The authorized-keys entry's `protocol` (`companion`, `harness`) is
+  called `role` in the library's API and still read and written as the
+  file's `protocol` field.
+
+### 4. Answers to the open questions
+
+1. Remote: `github.com/tmzt/libhardline`, **private** for now. Step 10
+   pushes there.
+2. History: the filtered history is kept (decision 6), as recommended.
+3. flankr-companion's held series: still open; step 9 waits for it.
+4. `wt-paste-link`: merged first. It is merged (`7755c9f`), so step 2
+   may start.
+
+### 5. Added to the steps' Done when
+
+- Step 3: a test sends a message on a protocol number of 15 or more
+  between two peers that both declared it, and a test shows flankr's
+  JSON, terminal and blob frames are unchanged byte for byte; a builder
+  with no scheme, or with `hardline`, is refused.
+- A new step 7a, `libhardline-vpn`: **Done when:** a builder with no
+  service prefix is refused; two apps with different prefixes set up
+  fake tunnels side by side without touching each other; a public port
+  held by another label is refused; and flankr's `flankr service status
+  vpn.bitmot` still reports the existing `dev.flankr.vpn.bitmot` job on
+  the Mac mini.
+- Step 8 also: `libhardline-jsonrpc`'s types replace
+  `libflankr_proto`'s, and `cargo test -p libflankr_proto` passes.
