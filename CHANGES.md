@@ -5317,3 +5317,47 @@ device codes, the remotes list, the daemon's pairing server and the VPN
 providers as nine sans-IO crates behind a facade with opt-in features.
 flankr then moves onto it crate by crate with its wire and tests unchanged
 and at most patch bumps.
+
+## 2026-11-19 18:56 EST — libflankr_proto on libhardline: seven link tests deleted, and behaviour notes
+
+Plan: [Extracting the link, pairing, remotes and VPN code into libhardline as sans-IO crates, with the wire unchanged](docs/design/20261119_02_LIBHARDLINE_EXTRACTION_PLAN.md),
+step 7 (libflankr_proto 0.5.17, pinned to libhardline cf596d5).
+
+**Departure from step 7's "existing tests unchanged".** Seven tests in
+`crates/libflankr_proto/src/link/tests.rs` are deleted, with the
+`expect_bad_frame` helper only they used:
+`one_mib_plus_one_byte_closes_the_connection`,
+`kinds_are_the_high_nibble_and_json_is_unchanged`,
+`reserved_flag_bits_are_bad_frame`,
+`reserved_and_extended_kinds_are_bad_frame`,
+`a_binary_message_round_trips_with_flag_bytes_0x20_and_0x21`,
+`a_kind_changing_to_or_from_binary_mid_message_is_bad_frame` and
+`a_kind_changing_mid_message_is_bad_frame`. Each drove the receiver with
+a sender that skips the size check or writes hand-made flag bytes under
+the open Noise session (the old `LinkStream`'s private test methods).
+libhardline keeps the session keys inside libhardline-core, so flankr
+cannot build such a sender, and libhardline does not add a public API for
+it. The owner approved the deletion: "yes, fuzzing won't use a public API
+as APIs shouldn't be written to accomodate tests". The rules they checked
+are now covered in libhardline: libhardline-core's own tests, which seal
+raw frames inside the crate (reserved flag bits, reserved and extended
+protocol numbers, a protocol changing mid-message, the 1 MiB limit), with
+a receiver fuzz test being added there; and libhardline-proto's recorded
+flag-byte fixtures (`tests/fixtures/flankr.txt`: 0x00/0x01, 0x10/0x11
+and 0x20/0x21). The other 86 link tests pass unchanged.
+
+**Behaviour notes**, none breaking:
+
+- `LinkStream::recv`, `recv_message` and `LinkReader`'s are
+  cancel-safe now: a message is taken only when it is returned.
+- A pairing session (`PairIncoming::respond`'s and
+  `PairResponse::stream`) carries the one result: after
+  `send_pair_result` the daemon's session is closed, and a later
+  `recv_message` on it is `Closed` at once.
+- `into_split` of a pairing session gives closed halves.
+- `recv_message` refuses a message of another kind once it is whole,
+  not at its first frame: the caller sees the same `BadFrame` and a
+  closed link, but such a message over 1 MiB is `MessageTooLarge`.
+- Builds of libflankr_proto without `link` now pull in libhardline-core
+  (with snow) through the facade, since `envelope` re-exports
+  libhardline-jsonrpc's types in every feature combination.
