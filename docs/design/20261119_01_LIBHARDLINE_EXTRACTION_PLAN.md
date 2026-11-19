@@ -510,3 +510,208 @@ step 8's **Breaking** condition.
 - The app and the daemon change nothing a user sees: no app or daemon
   version bump, and no `apps/UPDATES.md` or `UPDATES.md` entry.
 - Step 9 no longer waits on an answer.
+
+## Amendment — 2026-11-19 15:38 EST: sans-IO core, crates and features, published vault traits, the all-ones link protocol and its versioning
+
+Agreed with the owner in discussion (Rule 2). The owner, verbatim: "also,
+the library should be sans-IO with async-friendly enums, not a specific
+async implementation"; "opt in to tokio or async-compat with features,
+separate crates inside the project (and separate per-crate dependency on
+this new library)"; "no morph dependecy, libhardline should publish
+compatble traits instead"; "right, it would be better to move that onto
+protocol 0, binary frames so we don't force jsonrpc on users. this would
+mean a protocol bump for flankr, with a compatible hello message"; "that's
+the other option, use all-ones for the link protocol"; "message_major and
+major/minor/patch with semver rules (one byte per value), offers lowest
+compatible accepts highest compatible, tied to the -proto or -core crate
+version"; "yes". Where this disagrees with the body or the 15:25 EST
+amendment, this wins.
+
+### 1. Crates (replaces decision 2's table and the 15:25 amendment's crate additions)
+
+| Crate | Holds | I/O |
+| --- | --- | --- |
+| `libhardline-proto` | the wire format only: frames, the flag byte, the link protocol's messages, pairing strings and URLs, device codes, pairing request messages, words, fingerprints, `Profile` | none |
+| `libhardline-core` | the state machines: `Connection`, `PairRequest` (client) and `PairSession` (server side of one request), the client (`Client::builder()`), the vault traits (section 3), `NoiseSecret`, `VaultStaticKey`, `RemotesStore`, the pasted-link reader | none |
+| `libhardline-server` | `Server::builder()`, key-file and authorized-keys formats, address choice (`Machine`, `FakeMachine`), pairing offers, `revoke(key)` | none |
+| `libhardline-vpn` | the providers as state machines emitting commands, features `vpn-tailscale`, `vpn-bitmot` | none |
+| `libhardline-jsonrpc` | JSON-RPC 2.0 types (`Request`, `Notification`, `Incoming`, `Id`, `ErrorObject`), on an app-chosen protocol number | none |
+| `libhardline-tokio` | `LinkStream<T: tokio AsyncRead + AsyncWrite>`, connect, pairing request, accept loop over `TcpListener`, VPN commands by `tokio::process`, `ThisMachine` | tokio |
+| `libhardline-async` | the same over `futures-io`'s traits, for smol or async-std, and for tokio code through the `async-compat` crate | the caller's executor |
+| `libhardline-files` | `FileVault`, `FileBlobStore` (today's `FileKeyStore` layout) | `std::fs` |
+| `libhardline` | facade, no default features: the core re-exported; features `server`, `vpn-tailscale`, `vpn-bitmot`, `jsonrpc`, `files`, `tokio`, `async-compat`, each pulling in its crate and re-exporting it as a module (`libhardline::server`, `libhardline::tokio`, …) | per feature |
+
+`libhardline-morph` and the `morph` feature are dropped. All crates start
+at 0.1.0.
+
+### 2. Sans-IO (replaces decision 5's async signatures)
+
+- The core does no I/O and depends on no runtime. Each link is a
+  `Connection` (client or server side), driven by the caller:
+
+  ```rust
+  conn.handle_input(&bytes)?;            // bytes read from the transport
+  conn.send(protocol, &message)?;        // queue an app message
+  conn.handle_timeout(now);              // now: std::time::Instant
+  while let Some(out) = conn.poll_output() {
+      match out {
+          Output::Transmit(bytes) => { /* write to the transport */ }
+          Output::Event(Event::Ready { peer, first, version }) => {}
+          Output::Event(Event::Message { protocol, bytes }) => {}
+          Output::Event(Event::Closed(reason)) => {}
+          Output::Timeout(at) => { /* wake at `at` */ }
+      }
+  }
+  ```
+
+- `PairSession` emits `PairEvent::Request { words, device, key }` and
+  `PairEvent::Ended`, and takes `accept(role)` and `deny()`. The client
+  emits `Output::Dial(address)` and takes `handle_dialed(address,
+  result)`; dialing and racing are the caller's. VPN providers emit
+  `VpnAction::Run(CommandSpec { program, args, env })` and take
+  `handle_output(status, stdout, stderr)`.
+- Builders only configure: `Client::builder()…build()` and
+  `Server::builder()…build()` return state machines; `.listen(addr)` is in
+  the adapters.
+- Synchronous by design, documented as such: the vault's `with_secret`
+  (one call per handshake's Diffie-Hellman) and the OS random source.
+
+### 3. Published vault traits, no libmorph (replaces decision 4's `KeyVault` and `BlobStore`)
+
+```rust
+pub trait NoiseKey {
+    fn public(&self) -> [u8; 32];
+    fn dh(&self, peer: &[u8; 32]) -> Option<[u8; 32]>; // None on all-zero
+}
+pub trait KeyVault: Send + Sync + 'static {
+    fn generate(&self, name: &str) -> Result<[u8; 32], VaultError>;
+    fn public(&self, name: &str) -> Result<[u8; 32], VaultError>;
+    fn with_secret(&self, name: &str, f: &mut dyn FnMut(&dyn NoiseKey)) -> Result<(), VaultError>;
+    fn delete(&self, name: &str) -> Result<bool, VaultError>;
+}
+pub fn with_key<R>(vault: &dyn KeyVault, name: &str, f: impl FnOnce(&dyn NoiseKey) -> R)
+    -> Result<R, VaultError>;
+pub trait BlobStore: Send + Sync + 'static {
+    fn get(&self, name: &str) -> Result<Option<Vec<u8>>, VaultError>;
+    fn put(&self, name: &str, bytes: &[u8]) -> Result<(), VaultError>;
+    fn delete(&self, name: &str) -> Result<bool, VaultError>;
+}
+#[non_exhaustive]
+pub enum VaultError { InvalidName, NotFound, WrongKind(String), Corrupt(String),
+                      DeviceLocked, Locked, UnsupportedFlags(u8), Platform(String) }
+```
+
+- The shape is libmorph's `key_store::{generate, public, with_key,
+  delete}` and `SecureStore`'s; `VaultError`'s variants are
+  `KeyStoreError`'s one for one; names follow its rules (1 to 64 of
+  `[A-Za-z0-9._-]`, not starting with `.`).
+- `NoiseSecret` (zeroized, boxed) implements `NoiseKey` for the file and
+  memory vaults; other vaults lend their own key type.
+- `Profile` loses `key_kind`. The libmorph adapter stays in flankr's
+  `apps/companion/src/keys.rs`: `NoiseStatic` implements libmorph's
+  `SecretKey` as today (kind `flankr.noise.x25519.v1`) and libhardline's
+  `NoiseKey`; `MorphVault` implements `KeyVault` through
+  `key_store::with_key`; `MorphBlobStore` implements `BlobStore` on
+  `SecureStore`.
+
+### 4. Protocol numbers (replaces the 15:25 amendment's section 3, first two bullets and its protocol list)
+
+- The flag byte's high nibble: 0 to 13 are the app's protocols; 14 is
+  extended (an unsigned LEB128 protocol number, 14 and up, follows the
+  flag byte in each frame of the message); 15 (`0b1111`) is libhardline's
+  link protocol. A peer that has not shown it reads 14 or 15 is not sent
+  them; today's peers close on both.
+- flankr keeps 0 (JSON-RPC), 1 (terminal) and 2 (blob), byte for byte.
+  `libhardline-jsonrpc` takes its protocol number from the app; no number
+  is JSON-RPC's by default.
+- Link protocol messages are binary: `type` (1 byte), `message_major`
+  (1 byte), then the body. A receiver closes with
+  `Close { reason: UnknownMessage }` on a `message_major` it does not
+  know. Types: `Hello`, `PairResult`, `Unpair`, `Unpaired`, `Close`.
+- `Unpair` replaces flankr's `link.unpair` between peers that negotiated
+  the link protocol; the server's `revoke(key)` removes the key and closes
+  its connections. Between other peers flankr keeps `link.unpair`.
+- A pairing session is not a general connection. The pairing request's
+  message version goes from 1 to 2: a version 2 request gets its
+  `PairResult` on 15; a version 1 request gets it on 0, as today. A new
+  phone pairing with a daemon that predates this sends version 1 (it
+  learns which from the pairing string's version, bumped from 3 to 4 for
+  daemons that accept version 2).
+
+### 5. Versioning of the link protocol
+
+- `Hello` carries `lowest` and `own`, each three bytes, major, minor and
+  patch, 0 to 255 each. The opener sends `Hello { lowest, own }`; the
+  other side computes `min(own_a, own_b)`, checks it is at or above both
+  `lowest` values and that both `own` versions are compatible, and
+  replies `Hello { accepted }`, or `Close { reason: Incompatible {
+  lowest, own } }` with its own range.
+- Compatible follows cargo's semver: the same major, and while the major
+  is 0, the same minor as well. `lowest` is the first version of the
+  sender's compatible series unless the code deliberately keeps an older
+  series.
+- The protocol version is `libhardline-proto`'s crate version, read from
+  `CARGO_PKG_VERSION_*` at compile time; a build check fails if a part
+  exceeds 255. A wire change peers cannot read is a breaking change under
+  Rule 5.4 and bumps the minor while at 0.x; an added message type is a
+  patch.
+- flankr's JSON `hello` gains `"link": true` in both `HelloParams` and
+  `HelloResult` (neither refuses unknown fields today). When both carry
+  it, the peers exchange the binary `Hello` on 15 and use the link
+  protocol from then on. flankr's own `hello` `version` stays for its
+  JSON-RPC methods. Native apps send the binary `Hello` as the first
+  message.
+
+### 6. flankr's dependencies (adds to the 15:26 amendment)
+
+Each flankr crate depends on the `libhardline` facade itself, at one
+shared pinned rev, with only its features: `libflankr_proto`
+(`jsonrpc`, `tokio`, for its compatibility wrappers); `flankr-companion`
+(`tokio`, `files`); the daemon (`server`, `tokio`, and `vpn-tailscale`,
+`vpn-bitmot` from its own `vpn-*` features); the app (nothing beyond what
+flankr-companion brings, plus its own libmorph adapter). No flankr crate
+reaches libhardline only through `libflankr_proto`.
+
+### 7. Steps (replaces steps 3–7 and the 15:25 amendment's step 7a; steps 1, 2, 8–10 stay, with step 2's path read as `crates/libhardline-proto/src/pairing.rs`)
+
+3. **libhardline-proto.** The wire format under `Profile`, the flag byte
+   with 14 and 15, the link protocol's messages and `Hello` versioning.
+   **Done when:** today's `link/tests.rs` encoding tests pass under the
+   flankr profile; flankr's JSON, terminal and blob frames are byte for
+   byte today's (recorded fixtures); a message on protocol 14 with number
+   20 round-trips; `Hello` negotiation gives 0.1.3 for 0.1.3 and 0.1.7,
+   refuses 0.1.x against 0.2.x with both ranges, refuses a `lowest` above
+   the other side's `own`, and closes on an unknown `message_major`; a
+   test checks the protocol version equals `CARGO_PKG_VERSION`; a builder
+   with no scheme or with `hardline…` is refused.
+4. **libhardline-core.** `Connection`, pairing, client, vault traits,
+   remotes, pasted-link reader. **Done when:** with no features,
+   `cargo tree -p libhardline` shows no tokio, futures-io, smol or
+   async-std; a test pairs and reconnects two cores in memory with no
+   runtime, time driven by hand; a handshake runs through a test vault
+   whose key type is foreign to libhardline; the `keys.rs` tests,
+   including the `server` → `remotes` migration, pass against a memory
+   vault; version 1 and version 2 pairing requests get their result on 0
+   and on 15.
+5. **libhardline-server, libhardline-vpn, libhardline-jsonrpc,
+   libhardline-files.** One crate per commit. **Done when:** the
+   daemon's `pair_mode` tests pass against the server state machine; the
+   VPN providers' tests check emitted commands and recorded output with
+   no process run; a VPN builder with no service prefix is refused; two
+   prefixes set up fake tunnels side by side; a public port held by
+   another label is refused; `FileVault` reads a key directory written by
+   today's `FileKeyStore` (fixture).
+6. **libhardline-tokio and libhardline-async, and the facade.** **Done
+   when:** the same pairing-and-reconnect test passes through each
+   adapter (the async one on a small executor); with `async-compat`,
+   `cargo tree` shows no tokio; every facade feature builds alone; with
+   every feature on, the workspace's `cargo tree` shows no libmorph or
+   libmobile; the examples pair and exchange a message on loopback under
+   `hltest`.
+7. **flankr compatibility checks**, added to step 9's **Done when:** a
+   phone built before this with a daemon built after, and the other way
+   round, use today's frames exactly; two new flankr peers exchange
+   `Hello` on 15 after the JSON hello; flankr's `flankr service status
+   vpn.bitmot` still reports the `dev.flankr.vpn.bitmot` job; the S23's
+   current build reconnects to the new daemon, and a new build
+   reconnects to the current daemon, without pairing again.
