@@ -485,3 +485,28 @@ wt-paste-line first". Where this disagrees with the body, this wins.
   the Mac mini.
 - Step 8 also: `libhardline-jsonrpc`'s types replace
   `libflankr_proto`'s, and `cargo test -p libflankr_proto` passes.
+
+## Amendment — 2026-11-19 15:26 EST: flankr's crates keep their APIs through wrappers, patch bumps only
+
+The owner, verbatim: "with the wrappers it should already be compatible
+and the use of a different library is an internal matter (thie UI
+shouldn't change at all), we also burned a lot of bumps recently". This
+answers open question 3 and replaces decision 7's first two bullets and
+step 8's **Breaking** condition.
+
+- flankr-companion stays in its held 0.8.x series. Its public `keys` and
+  `scan` APIs keep their current signatures as thin wrappers over
+  libhardline with flankr's profile; the move is internal, so it takes at
+  most a patch bump, and none if no public item changes.
+- `libflankr_proto` does the same: it keeps `link`'s public paths,
+  constants (`PAIRING_PREFIX`, `PAIRING_URL_SCHEME`,
+  `DEVICE_CODE_PREFIX`, `PROLOGUE_PREFIX`, `PAIRING_WORDS_CONTEXT`,
+  `KIND_*`), `Message` and function signatures as re-exports and
+  wrappers fixed to `FLANKR_PROFILE`, and its JSON-RPC types as
+  re-exports of `libhardline-jsonrpc`'s. With nothing removed or changed
+  it is a patch, 0.5.16 to 0.5.17, not 0.6.0. Step 8's **Done when:**
+  becomes: `cargo test -p libflankr_proto` passes with its existing
+  tests unchanged, and its `VERSIONS.md` entry names no breaking change.
+- The app and the daemon change nothing a user sees: no app or daemon
+  version bump, and no `apps/UPDATES.md` or `UPDATES.md` entry.
+- Step 9 no longer waits on an answer.
