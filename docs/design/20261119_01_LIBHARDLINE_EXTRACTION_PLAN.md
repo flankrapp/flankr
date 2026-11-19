@@ -1,7 +1,7 @@
 ---
 title: Extracting the link, pairing and remotes code into libhardline, with a key-vault trait boundary and builders for pairing any backend
 date: 2026-11-19
-status: Draft
+status: "Superseded (by [Extracting the link, pairing, remotes and VPN code into libhardline as sans-IO crates, with the wire unchanged](docs/design/20261119_02_LIBHARDLINE_EXTRACTION_PLAN.md))"
 covers:
   - "A new project, ~/src/libhardline, set up under the critical rules
     (~/src/rules): AGENTS.md, CHANGES.md, docs/design/, README with its
@@ -715,3 +715,26 @@ reaches libhardline only through `libflankr_proto`.
    vpn.bitmot` still reports the `dev.flankr.vpn.bitmot` job; the S23's
    current build reconnects to the new daemon, and a new build
    reconnects to the current daemon, without pairing again.
+
+## Amendment — 2026-11-19 16:16 EST: superseded by the extraction plan
+
+This draft is superseded before implementation by [Extracting the link,
+pairing, remotes and VPN code into libhardline as sans-IO crates, with the
+wire unchanged](docs/design/20261119_02_LIBHARDLINE_EXTRACTION_PLAN.md).
+The owner, 2026-11-19, in discussion: "this plan is about the extraction.
+let's review the finalized plan and write a new version focused on that".
+
+What moved where: the extraction content of the body and of the 15:25,
+15:26 and 15:38 EST amendments (the project and its private remote, the
+history import, the nine crates, `Profile` with no default scheme, the
+published vault traits with no libmorph dependency, the sans-IO
+`Connection`, the builders, the VPN providers and their naming, the
+compatibility wrappers and patch-only bumps, and the steps) goes to the
+extraction plan, rewritten with the wire unchanged. The link protocol
+design discussed after the 15:38 EST amendment (protocol numbers 15 and
+up, the all-ones link protocol and its messages, channels, the versioned
+`Hello`, the cut-over, and the 15:25 amendment's protocol-numbered
+framing and the 15:38 amendment's sections 4 and 5) goes to a later plan
+in libhardline's own `docs/design/`, once that repository exists; the
+extraction plan names it only under "Not covered". Nothing in this
+document is implemented.
