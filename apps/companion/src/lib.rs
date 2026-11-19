@@ -2093,14 +2093,12 @@ impl App {
         if std::mem::take(&mut self.pair_clipboard_wanted) && self.field.is_empty() {
             let clipboard = ctx.clipboard_text();
             let bytes = clipboard.as_ref().map_or(0, String::len);
-            let pairing = clipboard
-                .as_deref()
-                .and_then(remotes::clipboard_pairing_link);
-            log::info!(
-                "pairing clipboard: {bytes} bytes, valid pairing URL: {}",
-                pairing.is_some()
+            let pairing = clipboard.as_deref().map_or(
+                remotes::ClipboardLink::None,
+                remotes::clipboard_pairing_link,
             );
-            if let Some(text) = pairing {
+            log::info!("pairing clipboard: {bytes} bytes, pairing URL: {pairing:?}");
+            if let remotes::ClipboardLink::Found(text) = pairing {
                 self.field = text;
                 self.screen.invalidate();
             }
@@ -2108,13 +2106,17 @@ impl App {
         if std::mem::take(&mut self.field_paste_wanted) {
             let clipboard = ctx.clipboard_text();
             let found = remotes::paste_pairing_link(&mut self.field, clipboard.as_deref());
-            log::info!("pairing field paste: valid pairing URL: {found}");
-            self.note = if found {
-                None
-            } else {
-                let text = settings::copy::PAIRING_CLIPBOARD_NO_LINK.text.trim();
-                Some((text.to_string(), Role::Warn))
+            log::info!("pairing field paste: pairing URL: {found:?}");
+            let note = match found {
+                remotes::ClipboardLink::Found(_) => None,
+                remotes::ClipboardLink::Damaged => {
+                    Some(settings::copy::PAIRING_CLIPBOARD_DAMAGED_LINK.text)
+                }
+                remotes::ClipboardLink::None => {
+                    Some(settings::copy::PAIRING_CLIPBOARD_NO_LINK.text)
+                }
             };
+            self.note = note.map(|text| (text.trim().to_string(), Role::Warn));
             self.screen.invalidate();
         }
         if let Some(kind) = self.attach_wanted.take() {

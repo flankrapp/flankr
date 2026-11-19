@@ -241,6 +241,15 @@ button finds no pairing link in the clipboard; the field is left as it is.
 
 - text: The clipboard has no flankr pairing link.
 
+`pairing_clipboard_damaged_link` takes its place when the clipboard holds
+a `flankr://…/pair#…` link that is not valid even after rejoining the
+lines it wrapped over: it was cut short or changed on the way. The field
+is left as it is.
+
+# [Copy] pairing_clipboard_damaged_link
+
+- text: The copied pairing link is damaged. Copy it again, or scan its QR code.
+
 `pairing_local_only` and `pairing_unreachable` take the place of
 `pairing_retry` when a link cannot be paired at all from this phone, with
 no device code offered (plan 20261028_01, the 2026-11-03 00:07 EST
