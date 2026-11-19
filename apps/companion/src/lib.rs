@@ -352,6 +352,10 @@ pub struct App {
     /// The paste-link mode was just opened: read the text clipboard once and
     /// prefill only with a valid `flankr://` pairing URL.
     pair_clipboard_wanted: bool,
+    /// The field's paste button was tapped: read the text clipboard on
+    /// that tap and fill the field with the pairing URL in it, or say
+    /// there is none.
+    field_paste_wanted: bool,
     /// `hello` was answered on the current connection.
     online: bool,
     /// The agents, as last listed, and the panes waiting for an approval.
@@ -2086,13 +2090,33 @@ impl App {
     /// What waited for the clipboard: the + menu opened, Paste text
     /// enabled while it holds text; and a Paste text done.
     fn serve_clipboard(&mut self, ctx: &MorphContext) {
-        if std::mem::take(&mut self.pair_clipboard_wanted)
-            && self.field.is_empty()
-            && let Some(text) = ctx
-                .clipboard_text()
-                .and_then(|text| remotes::clipboard_pairing_link(&text))
-        {
-            self.field = text;
+        if std::mem::take(&mut self.pair_clipboard_wanted) && self.field.is_empty() {
+            let clipboard = ctx.clipboard_text();
+            let bytes = clipboard.as_ref().map_or(0, String::len);
+            let pairing = clipboard.as_deref().map_or(
+                remotes::ClipboardLink::None,
+                remotes::clipboard_pairing_link,
+            );
+            log::info!("pairing clipboard: {bytes} bytes, pairing URL: {pairing:?}");
+            if let remotes::ClipboardLink::Found(text) = pairing {
+                self.field = text;
+                self.screen.invalidate();
+            }
+        }
+        if std::mem::take(&mut self.field_paste_wanted) {
+            let clipboard = ctx.clipboard_text();
+            let found = remotes::paste_pairing_link(&mut self.field, clipboard.as_deref());
+            log::info!("pairing field paste: pairing URL: {found:?}");
+            let note = match found {
+                remotes::ClipboardLink::Found(_) => None,
+                remotes::ClipboardLink::Damaged => {
+                    Some(settings::copy::PAIRING_CLIPBOARD_DAMAGED_LINK.text)
+                }
+                remotes::ClipboardLink::None => {
+                    Some(settings::copy::PAIRING_CLIPBOARD_NO_LINK.text)
+                }
+            };
+            self.note = note.map(|text| (text.trim().to_string(), Role::Warn));
             self.screen.invalidate();
         }
         if let Some(kind) = self.attach_wanted.take() {
@@ -4553,6 +4577,12 @@ impl App {
     fn pairing_tap(&mut self, x: f32, y: f32) {
         match self.screen.hit(x, y) {
             Some(Hit::Field) => self.field_focused = true,
+            // The field's paste button: the clipboard is read on this tap
+            // (`serve_clipboard`); pairing stays Pair's.
+            Some(Hit::PasteField) => {
+                log::info!("pairing: the field's paste tapped");
+                self.field_paste_wanted = true;
+            }
             Some(Hit::Pair) => self.pair(),
             // The pairing has completed and its row has not come: nothing
             // to cancel, so the window ends as Close would (plan
@@ -4577,6 +4607,7 @@ impl App {
                 self.call_camera(start);
             }
             Some(Hit::PasteLink) => {
+                log::info!("pairing: Paste a link tapped");
                 let stop = self.scanner.paste_link();
                 self.call_camera(stop);
                 self.pair_clipboard_wanted = true;
@@ -4741,6 +4772,8 @@ impl App {
             Key::Character(c) if !c.is_control() => {
                 if self.field.len() < FIELD_MAX {
                     self.field.push(c);
+                    // A pairing URL among other text: just the URL.
+                    remotes::reduce_to_pairing_link(&mut self.field);
                 }
             }
             Key::Escape | Key::Back => {
@@ -5359,6 +5392,7 @@ impl MorphApp for App {
             field: String::new(),
             field_focused: false,
             pair_clipboard_wanted: false,
+            field_paste_wanted: false,
             online: false,
             agents: Vec::new(),
             pending: Vec::new(),

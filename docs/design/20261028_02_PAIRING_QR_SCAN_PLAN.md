@@ -867,3 +867,128 @@ waiting modal's Fingerprint row) and item 3 stand.
    press does.
 5. **The app's version** is 0.7.6, a patch, on the owner's instruction to
    keep the same version series.
+
+## Amendment — 2026-11-18 11:42 EST: pasting a link into the field, and the paste button inside it
+
+The owner, verbatim: "review current work including imp for link pasting
+support, finish implementing. should detect flankr:// url in add remote
+paste link screen as well as add paste glyph as right side button in paste
+a link input".
+
+This adds to decision 14 (the paste fallback), whose field and **Pair**
+otherwise stand, and replaces the glyph the app's 0.8.0 put in the **Paste
+a link** button's label. The plan's status stays `In implementation`. The
+CHANGES.md addendum of 2026-11-18 10:36 EST, which recorded item 1 as a
+departure, is covered by this amendment from here on.
+
+1. **Prefill on opening.** When **Paste a link** opens the field and the
+   field is empty, the text clipboard is read once, and the field is filled
+   only when the clipboard holds a valid `flankr://` pairing URL
+   (`remotes::clipboard_pairing_link`: the first whitespace-separated part
+   containing `flankr://`, from there, with trailing `. , ; : ! ? ) ] }`
+   dropped, that `LinkRead::of` accepts). Only that URL goes in the field,
+   never the text around it.
+2. **The paste button inside the field.** At the field's right end,
+   inside it: a square button the field's height (48 pt), its own control
+   (`Hit::PasteField`, found before `Hit::Field`), with a 1 pt divider in
+   the band colour at its left (10 pt in from the top and bottom) and a
+   clipboard drawn as strokes in the muted colour (a board 14 × 18 pt, its
+   clip a filled bar 8 × 4 pt across the top edge, two lines of text,
+   stroke 1.8 pt; `square_button::clipboard_glyph`), as the keyboard,
+   terminal and + are drawn, since the faces have no clipboard character.
+   The field's text is fitted to the field's width less the button's, so
+   it never runs under it. The button shows wherever the field does (the
+   camera window after **Paste a link**, and the paste screen without a
+   camera) and not while a pairing waits.
+3. **Its tap** reads the text clipboard on that tap (libmorph
+   `clipboard_text`, served in `serve_clipboard` with the other clipboard
+   reads) and fills the field with the pairing URL found in it as in
+   item 1, replacing what the field held, and clears the screen's note. With
+   no pairing URL in it, the field is left as it is and the screen's note
+   (`App::note`, as "pairing…" is shown) reads `pairing_clipboard_no_link`:
+   "The clipboard has no flankr pairing link." in the warning colour.
+   Pairing stays an explicit tap on **Pair**.
+4. **Detection in the field.** When a character typed into the field (or
+   pasted through the keyboard) leaves its text holding a valid pairing URL
+   among other text, the field is reduced to just that URL
+   (`remotes::reduce_to_pairing_link`, by the same test as item 1). A field
+   holding only the URL, or no complete one, is left as typed.
+5. **The Paste a link label.** U+2398 (⎘), which 0.8.0 put before "Paste
+   a link", is not on the context's face (Roboto, ASCII subset: the
+   `TextShaper::covers` test says so) and drew the missing-glyph box. The
+   label is "Paste a link" alone; the clipboard glyph is the field's
+   button's (item 2).
+6. **The app's version** is 0.8.1, a patch.
+
+**Done when:** the field shows the stroke-drawn paste button at its right
+end and its text stops short of it; a tap on it with a clipboard holding a
+pairing URL among other text fills the field with just the URL, and with
+none leaves the field and shows "The clipboard has no flankr pairing link.";
+typed text holding a pairing URL among other text becomes just the URL;
+**Paste a link** still prefills from the clipboard on opening; the **Paste
+a link** label has only characters its face has; and the companion's
+tests for each pass.
+
+## Amendment — 2026-11-19 14:41 EST: rejoining a link that wrapped over lines, and reporting a damaged one
+
+The owner, verbatim: "detect corrupted link like this", of a pairing link
+copied from a terminal pane where it had wrapped over four lines, each of
+the first three ending with the pane's border `▕` (U+2595) and a line
+break. Item 1's test read only the first line, and the paste button said
+"The clipboard has no flankr pairing link." Refined by the owner,
+verbatim: "for a link starting with flankr detect valid ascii hostname
+then base58, ignore whitesoace newline and unexpected characters".
+
+This adds to the 2026-11-18 11:42 EST amendment and replaces its item 1's
+test (the first whitespace-separated part, with trailing punctuation
+dropped); its items 2 to 5 otherwise stand. The plan's status stays
+`In implementation`.
+
+1. **The rule.** From each `flankr://` in the text, in turn (the first
+   16; characters other than ASCII letters, digits, `:` and `/` between
+   its own are allowed, as where a link wrapped after its first few),
+   `remotes::clipboard_pairing_link` reads a valid ASCII host (letters,
+   digits, `-` and `.`, or a bracketed IPv6 address of hex digits and
+   `:`), then `:`, the port's digits, and `/pair#`, then `flankr1` and
+   only base58 characters (the Bitcoin alphabet). Whitespace, line breaks,
+   border characters and any other character that does not belong where it
+   is read are skipped, in every part. At most 300 characters are kept
+   before `/pair#` and 400 base58 characters after `flankr1`; skipped
+   characters are not counted. A letter or digit that breaks `/pair#`
+   means that `flankr://` is not read as a pairing link; one that breaks
+   `flankr1` (a `flankrkey1` device code, say) leaves no base58 to try.
+   `FLANKR://` in capitals is not a pairing link.
+2. **Where the link ends.** Text after the link may be base58 too ("…
+   Paste it in the app"), so the end is found by the checksum the pairing
+   string carries: of `flankr://<host>:<port>/pair#flankr1` with each
+   length of the base58 read, longest first, the first that `LinkRead::of`
+   accepts is the link. The URL rebuilt that way, with nothing skipped, is
+   what fills the field.
+3. **What it returns.** `remotes::ClipboardLink`: `Found(url)`;
+   `Damaged`, when a `flankr://…/pair#` was read but no length is
+   accepted (cut short, a line lost, or a character changed on the way);
+   or `None`, with no such link in the text.
+4. **The paste button** (item 3 of the 11:42 amendment) fills the field
+   only on `Found`. On `Damaged` it leaves the field as it is and the
+   screen's note reads `pairing_clipboard_damaged_link`: "The copied
+   pairing link is damaged. Copy it again, or scan its QR code." in the
+   warning colour. On `None` it reads `pairing_clipboard_no_link` as
+   before.
+5. **The prefill on opening** (item 1 of the 11:42 amendment) and the
+   **detection in the field** (its item 4) act only on `Found`, silently.
+6. **The app's version** is 0.8.2, a patch (the 0.8.x series is held).
+
+**Done when:** a pairing URL wrapped into lines of 50 characters and
+joined by `▕` and a line break, by `│` and a line break, by spaces around
+a line break, or by CRLF, or with `|`, `¦`, a no-break space or a tab
+inside it, gives `Found` with the URL, as does one followed by a sentence;
+the same URL with one base58 character changed or a line lost gives
+`Damaged`, and the paste button then leaves the field and shows the
+damaged-link note; plain text gives `None`; a seeded fuzz test of random
+payloads wrapped at random widths with random separators and prose around
+them always gives `Found` with the URL, with one base58 character changed
+never gives that URL, and random text never panics; degenerate texts
+(empty, `flankr://` alone, no port, an empty or separator-only fragment,
+a bad host or port, a device code, a doubled link, two links, 10 000
+characters of junk or separators) give the expected result quickly; and
+the companion's tests for each pass.

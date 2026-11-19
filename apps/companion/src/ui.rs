@@ -32,8 +32,6 @@ use crate::theme::{theme, with_alpha};
 /// The add mode's back glyph: ASCII, as the pairing screen's face has no
 /// "‹".
 const BACK_GLYPH: &str = "<";
-/// The paste-link action's clipboard glyph.
-const PASTE_GLYPH: &str = "\u{2398}";
 /// The check glyph's disc, in points.
 const CHECK_PT: f32 = 44.0;
 /// The reticle (plan 20261028_02, decision 2): corner marks of this
@@ -432,6 +430,9 @@ pub struct CameraView {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Hit {
     Field,
+    /// The paste button at the field's right end, inside it: fills the
+    /// field with the pairing link in the clipboard.
+    PasteField,
     Pair,
     /// Cancel: in the pairing modal, while a scanned code is paired, or in
     /// the add mode's camera row.
@@ -551,6 +552,8 @@ pub struct Screen {
     modal_draw: Option<ModalDraw>,
     /// The camera's area and what is drawn in it, as last laid out.
     camera: Option<CameraDraw>,
+    /// The field's paste button and the scale, while the field shows.
+    paste_field: Option<(Rect, f32)>,
     /// The faces the Markdown is drawn in (`None` in unit tests: the
     /// context's font).
     faces: Option<Arc<Faces>>,
@@ -596,13 +599,7 @@ impl Screen {
         let done = router.add(None, button(copy::PAIRING_DONE.text, theme().message));
         let prompt = router.add(None, label("", 20.0, theme().text, TextAlign::Center));
         let zoom = router.add(None, label("", 18.0, theme().text, TextAlign::Right));
-        let paste_link = router.add(
-            None,
-            button(
-                &format!("{PASTE_GLYPH} {}", copy::PAIRING_PASTE_LINK.text),
-                theme().back,
-            ),
-        );
+        let paste_link = router.add(None, button(copy::PAIRING_PASTE_LINK.text, theme().back));
         let open_settings = router.add(
             None,
             button(copy::PAIRING_OPEN_SETTINGS.text, theme().message),
@@ -645,6 +642,7 @@ impl Screen {
             modal_cancel,
             modal_draw: None,
             camera: None,
+            paste_field: None,
             faces: None,
             hits: Vec::new(),
             shown: None,
@@ -770,6 +768,9 @@ impl Screen {
         let pair_w = Layout::PAIR_W * s;
         let field_w = layout.w - 2.0 * pad - pair_w - 12.0 * s;
         let field_rect = Rect::new(pad, row_y, field_w, row_h);
+        // The paste button: square, the field's height, at its right end
+        // inside it; the text stops short of it.
+        let paste_rect = Rect::new(pad + field_w - row_h, row_y, row_h, row_h);
         let pair_rect = Rect::new(pad + field_w + 12.0 * s, row_y, pair_w, row_h);
         {
             let edit = self.router.get_mut::<Edit>(self.field).expect("the field");
@@ -778,7 +779,7 @@ impl Screen {
             } else {
                 // The tail of the entered text.
                 let room = layout
-                    .columns_in(field_w - 8.0 * s, Layout::FIELD_SIZE * 1.3)
+                    .columns_in(field_w - row_h - 8.0 * s, Layout::FIELD_SIZE * 1.3)
                     .saturating_sub(1);
                 let chars: Vec<char> = view.field.chars().collect();
                 let tail: String = chars[chars.len().saturating_sub(room)..].iter().collect();
@@ -801,7 +802,10 @@ impl Screen {
         self.router
             .set_flags(self.field, NodeFlags::HIDDEN, !field_shown);
         self.place_button(self.pair, pair_rect, s, field_shown);
+        self.paste_field = field_shown.then_some((paste_rect, s));
         if field_shown {
+            // Before the field, which it lies inside.
+            self.hits.push((Hit::PasteField, paste_rect));
             self.hits.push((Hit::Field, field_rect));
             self.hits.push((Hit::Pair, pair_rect));
         }
@@ -1167,6 +1171,9 @@ impl Screen {
             draw_camera(list, &c);
         }
         self.router.render(list, ctx);
+        if let Some((rect, s)) = self.paste_field {
+            draw_paste_button(list, rect, s);
+        }
         if let Some(m) = self.modal_draw {
             fill(list, m.screen, MODAL_DIM, 0.0);
             fill(list, m.card, theme().card, m.radius);
@@ -1175,6 +1182,19 @@ impl Screen {
         self.dirty = false;
         true
     }
+}
+
+/// The field's paste button over the field's right end: a divider at its
+/// left and the clipboard drawn as strokes, in the muted colour.
+fn draw_paste_button(list: &mut DrawList, rect: Rect, s: f32) {
+    let inset = 10.0 * s;
+    list.push_line(
+        [rect.x, rect.y + inset],
+        [rect.x, rect.y + rect.h - inset],
+        1.0 * s,
+        theme().band,
+    );
+    crate::controls::square_button::clipboard_glyph(list, rect, s, theme().muted);
 }
 
 /// The Details button's label: "Hide details" while they are open.
@@ -1499,16 +1519,81 @@ mod tests {
     }
 
     #[test]
-    fn the_paste_link_button_has_a_clipboard_glyph() {
+    fn the_paste_link_label_has_only_glyphs_its_face_has() {
+        use libmsdf::font::{ROBOTO_REGULAR_ASCII, TextShaper};
         let screen = Screen::new();
         let button = screen
             .router
             .get::<Button>(screen.paste_link)
             .expect("the Paste a link button");
-        assert_eq!(
-            button.text,
-            format!("{PASTE_GLYPH} {}", copy::PAIRING_PASTE_LINK.text)
+        assert_eq!(button.text, copy::PAIRING_PASTE_LINK.text);
+        // The context's face, the one the label is drawn in.
+        let face = TextShaper::new(ROBOTO_REGULAR_ASCII.to_vec()).unwrap();
+        for ch in button.text.chars() {
+            assert!(face.covers(ch), "{ch:?} is not on the face");
+        }
+        // The glyph it had: not on the face, the reason it went.
+        assert!(!face.covers('\u{2398}'));
+    }
+
+    #[test]
+    fn the_field_has_a_paste_button_inside_its_right_end() {
+        let mut screen = Screen::new();
+        screen.set(PHONE, View::default());
+        let rect = |h: Hit| screen.hits.iter().find(|(x, _)| *x == h).unwrap().1;
+        let (field, paste) = (rect(Hit::Field), rect(Hit::PasteField));
+        // Square, the field's height, flush with its right end, inside it.
+        assert_eq!(paste.h, field.h);
+        assert_eq!(paste.w, paste.h);
+        assert_eq!(paste.y, field.y);
+        assert_eq!(paste.x + paste.w, field.x + field.w);
+        assert!(paste.x > field.x);
+        let [cx, cy] = paste.center();
+        assert_eq!(screen.hit(cx, cy), Some(Hit::PasteField));
+        assert_eq!(screen.hit(field.x + 4.0, cy), Some(Hit::Field));
+        assert_eq!(screen.hit(paste.x - 2.0, cy), Some(Hit::Field));
+        // Its clipboard is drawn as strokes, over the field.
+        let mut list = DrawList::new();
+        screen.draw(&mut list, &DrawContext::default());
+        let inside = list
+            .instances
+            .iter()
+            .filter(|i| matches!(i.kind, libmsdf::drawlist::SdfKind::Line { .. }))
+            .filter(|i| {
+                let [x, y] = i.position;
+                x >= paste.x && x <= paste.x + paste.w && y >= paste.y && y <= paste.y + paste.h
+            })
+            .count();
+        assert!(inside >= 6, "board, lines and divider: {inside}");
+        // The field's text stops short of it: a long link shows its tail
+        // in fewer columns than the whole field would hold.
+        let long = "x".repeat(400);
+        screen.set(
+            PHONE,
+            View {
+                field: long,
+                ..View::default()
+            },
         );
+        let shown = screen
+            .router
+            .get::<Edit>(screen.field)
+            .unwrap()
+            .text()
+            .len();
+        let s = PHONE.scale;
+        let room = PHONE.columns_in(field.w - paste.w - 8.0 * s, Layout::FIELD_SIZE * 1.3) - 1;
+        assert_eq!(shown, room);
+        // While a pairing waits, no paste button.
+        screen.set(
+            PHONE,
+            View {
+                waiting: true,
+                ..View::default()
+            },
+        );
+        assert!(!screen.hits.iter().any(|(h, _)| *h == Hit::PasteField));
+        assert!(screen.paste_field.is_none());
     }
 
     #[test]

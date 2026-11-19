@@ -502,3 +502,31 @@ These changes came before the app had version numbers.
 - The pairing screen's **Paste a link** action shows a clipboard glyph and
   recognizes a valid `flankr://` pairing URL already in the text clipboard,
   filling the field while leaving **Pair** as an explicit tap.
+
+## 0.8.1 — 2026-11-18
+
+**Added**
+- The pairing link field has a paste button at its right end: a tap fills
+  the field with the `flankr://` pairing link from the clipboard, or says
+  the clipboard has none.
+- Typing or pasting text into the pairing link field that contains a
+  `flankr://` pairing link keeps just the link.
+
+**Fixed**
+- **Paste a link** no longer shows a box in front of its name; 0.8.0's
+  clipboard glyph there was missing from the font, and the clipboard is now
+  the field's paste button.
+
+## 0.8.2 — 2026-11-19
+
+**Added**
+- When a copied pairing link is damaged, the pairing field's paste button
+  now says so and suggests copying it again or scanning its QR code,
+  instead of saying the clipboard has no pairing link.
+
+**Fixed**
+- A pairing link copied from a terminal where it wrapped over several
+  lines, with the pane's border characters, spaces or other stray
+  characters copied in, now pastes into the pairing field as one link.
+- A pairing link followed by more text on the same line now pastes
+  without that text.

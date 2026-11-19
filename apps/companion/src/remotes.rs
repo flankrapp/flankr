@@ -37,6 +37,7 @@
 use std::time::{Duration, Instant};
 
 use flankr_companion::{DeviceCodeFallback, Input, RemoteId, RemoteInfo};
+use libflankr_proto::link::PAIRING_PREFIX;
 
 use crate::settings::copy;
 use crate::theme::{Role, theme};
@@ -533,17 +534,207 @@ pub fn delete_all(remotes: &[RemoteInfo]) -> Vec<Input> {
         .collect()
 }
 
-/// Whether `text` contains a valid `flankr://` pairing URL. Clipboard text
-/// may include a label or sentence around the URL; only a complete pairing
-/// URL accepted by [`LinkRead::of`] is returned.
-pub fn clipboard_pairing_link(text: &str) -> Option<String> {
-    text.split_whitespace().find_map(|part| {
-        let start = part.find("flankr://")?;
-        let candidate = part[start..].trim_end_matches(|c: char| {
-            matches!(c, '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}')
+/// What [`clipboard_pairing_link`] finds in a text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ClipboardLink {
+    /// A complete pairing URL accepted by [`LinkRead::of`], rejoined when
+    /// it had wrapped over lines.
+    Found(String),
+    /// The text holds `flankr://…/pair#…`, but no reading of it is a valid
+    /// pairing URL: it was cut short or altered on the way.
+    Damaged,
+    /// The text holds no pairing link.
+    None,
+}
+
+/// The most characters kept between `flankr://` and `/pair#` (a host of
+/// up to 255, a port and the path); skipped characters are not counted.
+const LINK_HEAD_MAX: usize = 300;
+/// The most `flankr://` starts tried in one text.
+const LINK_STARTS_MAX: usize = 16;
+/// The most base58 characters read after `flankr1`.
+const LINK_BASE58_MAX: usize = 400;
+
+/// The Bitcoin base58 alphabet the pairing string is written in.
+fn is_base58(c: char) -> bool {
+    c.is_ascii_alphanumeric() && !matches!(c, '0' | 'O' | 'I' | 'l')
+}
+
+/// The text after `flankr://` when `text` starts with it, allowing other
+/// characters than ASCII letters, digits, `:` and `/` between its
+/// characters, as where a link wrapped right after its first few.
+fn after_scheme(text: &str) -> Option<&str> {
+    let mut want = "flankr://".chars().peekable();
+    for (at, c) in text.char_indices() {
+        let Some(&next) = want.peek() else {
+            return Some(&text[at..]);
+        };
+        if c == next {
+            want.next();
+        } else if c.is_ascii_alphanumeric() || matches!(c, ':' | '/') {
+            return None;
+        }
+    }
+    want.peek().is_none().then_some("")
+}
+
+/// What [`read_link_at`] read from a `flankr://` in a text.
+enum LinkParts {
+    /// No `/pair#` followed the host and port: not a pairing link.
+    NotALink,
+    /// `flankr://<host>:<port>/pair#` and the base58 characters after
+    /// `flankr1` (empty when that prefix was not there).
+    Read { head: String, base58: String },
+}
+
+/// Reads the pairing link at the start of `text` (just past its
+/// `flankr://`, as [`after_scheme`] gives it): an ASCII host (letters, digits, `-` and `.`, or a
+/// bracketed IPv6 address), `:`, the port's digits, `/pair#`, then
+/// `flankr1` and base58. Whitespace, line breaks and any other character
+/// that does not belong where it is found are skipped, as a link wrapped
+/// over lines in a terminal pane carries them; where the link ends is
+/// left to its checksum.
+fn read_link_at(text: &str) -> LinkParts {
+    #[derive(PartialEq)]
+    enum Part {
+        Host,
+        Port,
+        Path(usize),
+    }
+    let mut head = String::from("flankr://");
+    let mut part = Part::Host;
+    let mut in_brackets = false;
+    let mut chars = text.chars();
+    loop {
+        let Some(c) = chars.next() else {
+            return LinkParts::NotALink;
+        };
+        if head.len() > LINK_HEAD_MAX {
+            return LinkParts::NotALink;
+        }
+        match part {
+            Part::Host => match c {
+                '[' if head.len() == "flankr://".len() => {
+                    in_brackets = true;
+                    head.push(c);
+                }
+                ']' if in_brackets => {
+                    in_brackets = false;
+                    head.push(c);
+                }
+                ':' if in_brackets => head.push(c),
+                ':' => {
+                    head.push(c);
+                    part = Part::Port;
+                }
+                c if in_brackets && c.is_ascii_hexdigit() => head.push(c),
+                c if !in_brackets && (c.is_ascii_alphanumeric() || matches!(c, '-' | '.')) => {
+                    head.push(c)
+                }
+                _ => {}
+            },
+            Part::Port => match c {
+                c if c.is_ascii_digit() => head.push(c),
+                '/' => {
+                    head.push(c);
+                    part = Part::Path(0);
+                }
+                _ => {}
+            },
+            Part::Path(at) => {
+                let want = "pair#".as_bytes()[at] as char;
+                if c == want {
+                    head.push(c);
+                    if at == 4 {
+                        break;
+                    }
+                    part = Part::Path(at + 1);
+                } else if c.is_ascii_alphanumeric() || matches!(c, '#' | '/') {
+                    return LinkParts::NotALink;
+                }
+            }
+        }
+    }
+    // `flankr1`, then base58.
+    let mut prefix = PAIRING_PREFIX.chars().peekable();
+    let mut base58 = String::new();
+    for c in chars {
+        if let Some(&want) = prefix.peek() {
+            if c == want {
+                prefix.next();
+            } else if c.is_ascii_alphanumeric() {
+                break;
+            }
+        } else if is_base58(c) {
+            base58.push(c);
+            if base58.len() == LINK_BASE58_MAX {
+                break;
+            }
+        }
+    }
+    if prefix.peek().is_some() {
+        base58.clear();
+    }
+    LinkParts::Read { head, base58 }
+}
+
+/// The pairing URL in `text`. The text may include a label or sentence
+/// around the link, or have it wrapped over lines in a terminal pane with
+/// the pane's border characters copied in (the 2026-11-19 amendment to
+/// plan 20261028_02): from a `flankr://`, a valid ASCII host and port and
+/// `/pair#` are read, then only base58, skipping anything else. As text
+/// after the link may be base58 too, the link's end is where its checksum
+/// holds: the longest reading [`LinkRead::of`] accepts is
+/// [`ClipboardLink::Found`]. A link with `/pair#` and no reading that
+/// holds is [`ClipboardLink::Damaged`].
+pub fn clipboard_pairing_link(text: &str) -> ClipboardLink {
+    let mut damaged = false;
+    let starts = text
+        .match_indices('f')
+        .filter_map(|(at, _)| after_scheme(&text[at..]))
+        .take(LINK_STARTS_MAX);
+    for rest in starts {
+        let LinkParts::Read { head, base58 } = read_link_at(rest) else {
+            continue;
+        };
+        damaged = true;
+        let found = (1..=base58.len()).rev().find_map(|end| {
+            let url = format!("{head}{PAIRING_PREFIX}{}", &base58[..end]);
+            LinkRead::of(&url).map(|_| url)
         });
-        LinkRead::of(candidate).map(|_| candidate.to_string())
-    })
+        if let Some(url) = found {
+            return ClipboardLink::Found(url);
+        }
+    }
+    if damaged {
+        ClipboardLink::Damaged
+    } else {
+        ClipboardLink::None
+    }
+}
+
+/// The paste button in the pairing field: `field` becomes the pairing URL
+/// found in `clipboard` (read on the tap). With none found or a damaged
+/// one, `field` is left as it is. Returns what was found.
+pub fn paste_pairing_link(field: &mut String, clipboard: Option<&str>) -> ClipboardLink {
+    let found = clipboard.map_or(ClipboardLink::None, clipboard_pairing_link);
+    if let ClipboardLink::Found(link) = &found {
+        *field = link.clone();
+    }
+    found
+}
+
+/// The pairing field's text, typed or pasted through the keyboard: when
+/// it holds a valid pairing URL among other text, it is reduced to just
+/// that URL. Returns whether it changed.
+pub fn reduce_to_pairing_link(field: &mut String) -> bool {
+    match clipboard_pairing_link(field) {
+        ClipboardLink::Found(link) if link != *field => {
+            *field = link;
+            true
+        }
+        _ => false,
+    }
 }
 
 /// Whether `text` is a pairing link, `flankr://<host>:<port>/pair#…`:
@@ -585,13 +776,184 @@ mod tests {
         .unwrap();
         assert_eq!(
             clipboard_pairing_link(&format!("Copy this: {url}.")),
-            Some(url.clone())
+            ClipboardLink::Found(url.clone())
         );
-        assert_eq!(clipboard_pairing_link("https://example.com"), None);
+        assert_eq!(
+            clipboard_pairing_link("https://example.com"),
+            ClipboardLink::None
+        );
         assert_eq!(
             clipboard_pairing_link("flankr://m4.ts.net:7347/pair#flankr1abc"),
-            None
+            ClipboardLink::Damaged
         );
+    }
+
+    /// `url` cut into lines of 50 characters joined by `join`.
+    fn wrapped(url: &str, join: &str) -> String {
+        let chars: Vec<char> = url.chars().collect();
+        chars
+            .chunks(50)
+            .map(|line| line.iter().collect::<String>())
+            .collect::<Vec<_>>()
+            .join(join)
+    }
+
+    #[test]
+    fn a_link_wrapped_over_lines_is_rejoined() {
+        let url = a_pairing_url();
+        assert!(url.len() > 100, "the URL wraps over three lines or more");
+        for join in [
+            "\u{2595}\n",
+            "\u{2502}\n",
+            "  \n  ",
+            "\r\n",
+            "\u{2595}\r\n\u{258f} ",
+        ] {
+            let text = wrapped(&url, join);
+            assert_eq!(
+                clipboard_pairing_link(&text),
+                ClipboardLink::Found(url.clone()),
+                "joined by {join:?}"
+            );
+            let text = format!("Pair with this:\n{text}\u{2595}\n\nthanks.");
+            assert_eq!(
+                clipboard_pairing_link(&text),
+                ClipboardLink::Found(url.clone()),
+                "in a message, joined by {join:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_wrapped_link_with_a_changed_character_is_damaged() {
+        let url = a_pairing_url();
+        let at = url.len() - 10;
+        let swap = if &url[at..at + 1] == "2" { "3" } else { "2" };
+        let bad = format!("{}{swap}{}", &url[..at], &url[at + 1..]);
+        assert_eq!(clipboard_pairing_link(&bad), ClipboardLink::Damaged);
+        assert_eq!(
+            clipboard_pairing_link(&wrapped(&bad, "\u{2595}\n")),
+            ClipboardLink::Damaged
+        );
+        // A line lost from the middle.
+        let lines: Vec<String> = wrapped(&url, "\n").lines().map(String::from).collect();
+        let mut short = lines.clone();
+        short.remove(1);
+        assert_eq!(
+            clipboard_pairing_link(&short.join("\u{2595}\n")),
+            ClipboardLink::Damaged
+        );
+        assert_eq!(
+            clipboard_pairing_link("Plain text,\nno link here."),
+            ClipboardLink::None
+        );
+        assert_eq!(clipboard_pairing_link(""), ClipboardLink::None);
+    }
+
+    #[test]
+    fn stray_characters_inside_a_link_are_skipped() {
+        let url = a_pairing_url();
+        for stray in ["|", "\u{a6}", "\u{a0}", "\t", " \u{2502} "] {
+            let text = wrapped(&url, stray);
+            assert_eq!(
+                clipboard_pairing_link(&text),
+                ClipboardLink::Found(url.clone()),
+                "with {stray:?} inside"
+            );
+        }
+    }
+
+    #[test]
+    fn text_after_a_link_is_not_read_into_it() {
+        let url = a_pairing_url();
+        for text in [
+            format!("{url}. Paste it in the app"),
+            format!(
+                "{}\u{2595}\nPaste it in the app",
+                wrapped(&url, "\u{2595}\n")
+            ),
+            format!("{url}Paste"),
+        ] {
+            assert_eq!(
+                clipboard_pairing_link(&text),
+                ClipboardLink::Found(url.clone()),
+                "{text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_bracketed_ipv6_host_is_read() {
+        let url = libflankr_proto::link::PairingPayload {
+            server_key: [9; 32],
+            addresses: vec!["[fd7a:115c::1]:7347".into()],
+            offer: Some([2; libflankr_proto::link::OFFER_LEN]),
+        }
+        .url()
+        .unwrap();
+        assert_eq!(
+            clipboard_pairing_link(&wrapped(&url, "\u{2595}\n")),
+            ClipboardLink::Found(url)
+        );
+    }
+
+    #[test]
+    fn the_paste_button_with_a_damaged_link_leaves_the_field() {
+        let url = a_pairing_url();
+        let mut field = "typed".to_string();
+        let cut = &url[..url.len() - 3];
+        assert_eq!(
+            paste_pairing_link(&mut field, Some(cut)),
+            ClipboardLink::Damaged
+        );
+        assert_eq!(field, "typed");
+    }
+
+    fn a_pairing_url() -> String {
+        libflankr_proto::link::PairingPayload {
+            server_key: [7; 32],
+            addresses: vec!["m4.ts.net:7347".into()],
+            offer: Some([1; libflankr_proto::link::OFFER_LEN]),
+        }
+        .url()
+        .unwrap()
+    }
+
+    #[test]
+    fn the_paste_button_fills_the_field_with_just_the_link() {
+        let url = a_pairing_url();
+        let mut field = "typed".to_string();
+        let clipboard = format!("Run this on your phone:\n{url}\nthanks");
+        assert_eq!(
+            paste_pairing_link(&mut field, Some(&clipboard)),
+            ClipboardLink::Found(url.clone())
+        );
+        assert_eq!(field, url);
+    }
+
+    #[test]
+    fn the_paste_button_without_a_link_leaves_the_field() {
+        let mut field = "typed".to_string();
+        assert_eq!(
+            paste_pairing_link(&mut field, Some("https://example.com")),
+            ClipboardLink::None
+        );
+        assert_eq!(paste_pairing_link(&mut field, None), ClipboardLink::None);
+        assert_eq!(field, "typed");
+    }
+
+    #[test]
+    fn typed_text_holding_a_link_is_reduced_to_the_link() {
+        let url = a_pairing_url();
+        let mut field = format!("pair with {url} please");
+        assert!(reduce_to_pairing_link(&mut field));
+        assert_eq!(field, url);
+        // Just the link, or no complete link yet: left as typed.
+        assert!(!reduce_to_pairing_link(&mut field));
+        let mut partial = format!("x {}", &url[..url.len() - 3]);
+        let before = partial.clone();
+        assert!(!reduce_to_pairing_link(&mut partial));
+        assert_eq!(partial, before);
     }
 
     const PHONE: Layout = Layout {
@@ -974,5 +1336,367 @@ mod tests {
         );
         // None paired: Unpair, which answers Unpaired at once.
         assert_eq!(delete_all(&[]), [Input::Unpair]);
+    }
+
+    /// Property-style and degenerate tests of [`clipboard_pairing_link`]:
+    /// seeded, so a failure repeats; `FLANKR_LINK_FUZZ_CASES` raises the
+    /// number of cases from 300.
+    mod link_fuzz {
+        use super::super::*;
+        use libflankr_proto::link::{OFFER_LEN, PairingPayload};
+        use std::time::{Duration, Instant};
+
+        /// xorshift64*: enough for picking cases, with no dependency.
+        struct Rng(u64);
+
+        impl Rng {
+            fn next(&mut self) -> u64 {
+                self.0 ^= self.0 >> 12;
+                self.0 ^= self.0 << 25;
+                self.0 ^= self.0 >> 27;
+                self.0.wrapping_mul(0x2545_f491_4f6c_dd1d)
+            }
+            fn below(&mut self, n: usize) -> usize {
+                (self.next() % n as u64) as usize
+            }
+            fn pick<'a, T>(&mut self, items: &'a [T]) -> &'a T {
+                &items[self.below(items.len())]
+            }
+            fn bytes<const N: usize>(&mut self) -> [u8; N] {
+                std::array::from_fn(|_| self.next() as u8)
+            }
+        }
+
+        fn cases() -> usize {
+            std::env::var("FLANKR_LINK_FUZZ_CASES")
+                .ok()
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(300)
+        }
+
+        const BASE58: &[u8] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+        /// Characters that are not ASCII and not base58: what a copy may
+        /// bring in besides the listed separators.
+        const STRAY: &[char] = &[
+            '\u{2595}',
+            '\u{258f}',
+            '\u{2502}',
+            '\u{2500}',
+            '\u{a6}',
+            '\u{a0}',
+            '\u{2026}',
+            '\u{e9}',
+            '\u{3000}',
+            '\u{200b}',
+            '\u{1f600}',
+        ];
+
+        fn separator(rng: &mut Rng) -> String {
+            const FIXED: &[&str] = &[
+                "\n",
+                "\r\n",
+                "\u{2595}\n",
+                "\u{2502}\n",
+                " \n  ",
+                "\t",
+                "|",
+                "\u{a0}",
+            ];
+            if rng.below(4) == 0 {
+                (0..1 + rng.below(3)).map(|_| *rng.pick(STRAY)).collect()
+            } else {
+                rng.pick(FIXED).to_string()
+            }
+        }
+
+        fn hostname(rng: &mut Rng) -> String {
+            let label = |rng: &mut Rng| -> String {
+                (0..1 + rng.below(10))
+                    .map(|_| (b'a' + rng.below(26) as u8) as char)
+                    .collect()
+            };
+            match rng.below(4) {
+                0 => format!(
+                    "10.{}.{}.{}",
+                    rng.below(256),
+                    rng.below(256),
+                    rng.below(256)
+                ),
+                1 => label(rng),
+                _ => format!("{}.{}.example", label(rng), label(rng)),
+            }
+        }
+
+        fn random_url(rng: &mut Rng) -> String {
+            let addresses = (0..1 + rng.below(3))
+                .map(|_| format!("{}:{}", hostname(rng), 1 + rng.below(65535)))
+                .collect();
+            PairingPayload {
+                server_key: rng.bytes::<32>(),
+                addresses,
+                offer: (rng.below(2) == 0).then(|| rng.bytes::<OFFER_LEN>()),
+            }
+            .url()
+            .unwrap()
+        }
+
+        fn prose(rng: &mut Rng) -> String {
+            const WORDS: &[&str] = &[
+                "Pair", "with", "this", "link", "please", "Paste", "it", "in", "the", "app.",
+                "thanks!", "(copied)", "\u{2014}", "ok:", "\n", "  ",
+            ];
+            (0..rng.below(6))
+                .map(|_| *rng.pick(WORDS))
+                .collect::<Vec<_>>()
+                .join(" ")
+        }
+
+        /// `url` cut at a random width, 1 to 80, joined by random separators.
+        fn wrap_randomly(rng: &mut Rng, url: &str) -> String {
+            let width = 1 + rng.below(80);
+            let chars: Vec<char> = url.chars().collect();
+            let mut out = String::new();
+            for (n, line) in chars.chunks(width).enumerate() {
+                if n > 0 {
+                    out += &separator(rng);
+                }
+                out.extend(line);
+            }
+            out
+        }
+
+        /// The URL with one base58 character of its fragment changed to
+        /// another.
+        fn mutate(rng: &mut Rng, url: &str) -> String {
+            let fragment = url.find("#flankr1").unwrap() + "#flankr1".len();
+            let at = fragment + rng.below(url.len() - fragment);
+            let old = url.as_bytes()[at];
+            let new = loop {
+                let c = *rng.pick(BASE58);
+                if c != old {
+                    break c;
+                }
+            };
+            let mut bytes = url.as_bytes().to_vec();
+            bytes[at] = new;
+            String::from_utf8(bytes).unwrap()
+        }
+
+        /// Whatever `text` gives, a `Found` is a link `LinkRead::of` takes.
+        fn checked(text: &str) -> ClipboardLink {
+            let got = clipboard_pairing_link(text);
+            if let ClipboardLink::Found(url) = &got {
+                assert!(LinkRead::of(url).is_some(), "{text:?} gave {url:?}");
+            }
+            got
+        }
+
+        #[test]
+        fn wrapped_links_with_prose_around_them_are_found() {
+            let mut rng = Rng(0x5eed_0001);
+            for case in 0..cases() {
+                let url = random_url(&mut rng);
+                let text = format!(
+                    "{}{}{}{}{}",
+                    prose(&mut rng),
+                    if rng.below(2) == 0 { " " } else { "\n" },
+                    wrap_randomly(&mut rng, &url),
+                    if rng.below(2) == 0 {
+                        ". "
+                    } else {
+                        "\u{2595}\n"
+                    },
+                    prose(&mut rng),
+                );
+                assert_eq!(
+                    checked(&text),
+                    ClipboardLink::Found(url.clone()),
+                    "case {case}: {text:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn a_changed_character_is_never_the_original_link() {
+            let mut rng = Rng(0x5eed_0002);
+            let mut damaged = 0;
+            let n = cases();
+            for case in 0..n {
+                let url = random_url(&mut rng);
+                let bad = mutate(&mut rng, &url);
+                let text = wrap_randomly(&mut rng, &bad);
+                let got = checked(&text);
+                assert_ne!(got, ClipboardLink::Found(url), "case {case}: {text:?}");
+                damaged += usize::from(got == ClipboardLink::Damaged);
+            }
+            // Another link validating by chance: 1 in 2^32 a reading.
+            assert_eq!(damaged, n);
+        }
+
+        #[test]
+        fn random_text_never_panics() {
+            let mut rng = Rng(0x5eed_0003);
+            const PIECES: &[&str] = &[
+                "flankr://",
+                "flankr",
+                "://",
+                ":",
+                "/",
+                "/pair#",
+                "pair",
+                "#",
+                "flankr1",
+                "flankrkey1",
+                "[",
+                "]",
+                "fd7a::1",
+                ".",
+                "-",
+                "7347",
+                " ",
+                "\n",
+                "\r",
+            ];
+            for _ in 0..cases() * 3 {
+                let text: String = (0..rng.below(60))
+                    .map(|_| match rng.below(4) {
+                        0 => rng.pick(PIECES).to_string(),
+                        1 => (*rng.pick(BASE58) as char).to_string(),
+                        2 => rng.pick(STRAY).to_string(),
+                        _ => char::from_u32(rng.below(0x11_0000) as u32)
+                            .map(String::from)
+                            .unwrap_or_default(),
+                    })
+                    .collect();
+                checked(&text);
+            }
+            // Some real links among random text.
+            for _ in 0..cases() / 10 {
+                let url = random_url(&mut rng);
+                let text = format!("{}{url}{}", prose(&mut rng), prose(&mut rng));
+                assert_eq!(checked(&text), ClipboardLink::Found(url));
+            }
+        }
+
+        fn a_url() -> String {
+            PairingPayload {
+                server_key: [7; 32],
+                addresses: vec!["host.example:443".into()],
+                offer: Some([1; OFFER_LEN]),
+            }
+            .url()
+            .unwrap()
+        }
+
+        #[test]
+        fn degenerate_texts_are_none() {
+            for text in [
+                "",
+                "flankr://",
+                "flankr://host",
+                "flankr://host.example:443",
+                "flankr://host.example:443/other#flankr1abc",
+                "FLANKR://host.example:443/pair#flankr1abc",
+                "flankr1",
+                "flankrkey1abcdef",
+                "/pair#flankr1abc",
+                "flankr:/host.example:443/pair#flankr1abc",
+            ] {
+                assert_eq!(checked(text), ClipboardLink::None, "{text:?}");
+            }
+        }
+
+        #[test]
+        fn degenerate_links_are_damaged() {
+            let url = a_url();
+            let long_host = "a".repeat(256);
+            let device_code = format!(
+                "flankr://host.example:443/pair#flankrkey1{}",
+                "2".repeat(40)
+            );
+            let separators_only = "flankr://host.example:443/pair#\u{2595}\n\t | \u{a0}";
+            for text in [
+                "flankr://:443/pair#".to_string(),
+                "flankr://host.example:443/pair#".to_string(),
+                "flankr://host.example:443/pair#flankr1".to_string(),
+                separators_only.to_string(),
+                url[..url.len() - 1].to_string(),
+                "flankr://ho st:443/pair#flankr1abc".to_string(),
+                "flankr://host_:443/pair#flankr1abc".to_string(),
+                "flankr://b\u{fc}cher.example:443/pair#flankr1abc".to_string(),
+                "flankr://host:0/pair#flankr1abc".to_string(),
+                "flankr://host:99999/pair#flankr1abc".to_string(),
+                "flankr://host:44x3/pair#flankr1abc".to_string(),
+                format!("flankr://{long_host}:443/pair#flankr1abc"),
+                device_code,
+                url.replace("host.example", "other.example"),
+            ] {
+                assert_eq!(checked(&text), ClipboardLink::Damaged, "{text:?}");
+            }
+            // A host past the head's cap is not read as a link at all.
+            let longer = format!("flankr://{}:443/pair#flankr1abc", "a".repeat(400));
+            assert_eq!(checked(&longer), ClipboardLink::None);
+        }
+
+        #[test]
+        fn doubled_and_two_links_give_the_first() {
+            let url = a_url();
+            assert_eq!(
+                checked(&format!("{url}{url}")),
+                ClipboardLink::Found(url.clone())
+            );
+            let mut rng = Rng(0x5eed_0004);
+            let other = random_url(&mut rng);
+            assert_eq!(
+                checked(&format!("{url} or {other}")),
+                ClipboardLink::Found(url.clone())
+            );
+            assert_eq!(
+                checked(&format!("{other}\n{url}")),
+                ClipboardLink::Found(other)
+            );
+            // A damaged one before a good one: the good one.
+            let cut = &url[..url.len() - 5];
+            assert_eq!(
+                checked(&format!("{cut}\n\nAgain: {url}")),
+                ClipboardLink::Found(url)
+            );
+        }
+
+        #[test]
+        fn long_junk_stays_fast() {
+            let url = a_url();
+            let junk: String = "Paste it\u{2595}\n".repeat(1000);
+            let separators: String = " \u{2595}\n".repeat(3400);
+            let started = Instant::now();
+            assert_eq!(
+                checked(&format!("{url}{junk}")),
+                ClipboardLink::Found(url.clone())
+            );
+            let (a, b) = url.split_at(url.len() / 2);
+            assert_eq!(
+                checked(&format!("{a}{separators}{b}")),
+                ClipboardLink::Found(url.clone())
+            );
+            let (a, b) = url.split_at(12);
+            assert_eq!(
+                checked(&format!("{a}{separators}{b}{junk}")),
+                ClipboardLink::Found(url.clone())
+            );
+            // Many starts, each damaged.
+            let many = "flankr://h:1/pair#flankr1abc ".repeat(500);
+            assert_eq!(checked(&many), ClipboardLink::Damaged);
+            let base58_junk: String = "Z".repeat(10_000);
+            assert_eq!(
+                checked(&format!("{url}{base58_junk}")),
+                ClipboardLink::Found(url.clone())
+            );
+            assert!(
+                started.elapsed() < Duration::from_secs(20),
+                "took {:?}",
+                started.elapsed()
+            );
+        }
     }
 }
