@@ -928,3 +928,67 @@ typed text holding a pairing URL among other text becomes just the URL;
 **Paste a link** still prefills from the clipboard on opening; the **Paste
 a link** label has only characters its face has; and the companion's
 tests for each pass.
+
+## Amendment — 2026-11-19 14:41 EST: rejoining a link that wrapped over lines, and reporting a damaged one
+
+The owner, verbatim: "detect corrupted link like this", of a pairing link
+copied from a terminal pane where it had wrapped over four lines, each of
+the first three ending with the pane's border `▕` (U+2595) and a line
+break. Item 1's test read only the first line, and the paste button said
+"The clipboard has no flankr pairing link." Refined by the owner,
+verbatim: "for a link starting with flankr detect valid ascii hostname
+then base58, ignore whitesoace newline and unexpected characters".
+
+This adds to the 2026-11-18 11:42 EST amendment and replaces its item 1's
+test (the first whitespace-separated part, with trailing punctuation
+dropped); its items 2 to 5 otherwise stand. The plan's status stays
+`In implementation`.
+
+1. **The rule.** From each `flankr://` in the text, in turn (the first
+   16; characters other than ASCII letters, digits, `:` and `/` between
+   its own are allowed, as where a link wrapped after its first few),
+   `remotes::clipboard_pairing_link` reads a valid ASCII host (letters,
+   digits, `-` and `.`, or a bracketed IPv6 address of hex digits and
+   `:`), then `:`, the port's digits, and `/pair#`, then `flankr1` and
+   only base58 characters (the Bitcoin alphabet). Whitespace, line breaks,
+   border characters and any other character that does not belong where it
+   is read are skipped, in every part. At most 300 characters are kept
+   before `/pair#` and 400 base58 characters after `flankr1`; skipped
+   characters are not counted. A letter or digit that breaks `/pair#`
+   means that `flankr://` is not read as a pairing link; one that breaks
+   `flankr1` (a `flankrkey1` device code, say) leaves no base58 to try.
+   `FLANKR://` in capitals is not a pairing link.
+2. **Where the link ends.** Text after the link may be base58 too ("…
+   Paste it in the app"), so the end is found by the checksum the pairing
+   string carries: of `flankr://<host>:<port>/pair#flankr1` with each
+   length of the base58 read, longest first, the first that `LinkRead::of`
+   accepts is the link. The URL rebuilt that way, with nothing skipped, is
+   what fills the field.
+3. **What it returns.** `remotes::ClipboardLink`: `Found(url)`;
+   `Damaged`, when a `flankr://…/pair#` was read but no length is
+   accepted (cut short, a line lost, or a character changed on the way);
+   or `None`, with no such link in the text.
+4. **The paste button** (item 3 of the 11:42 amendment) fills the field
+   only on `Found`. On `Damaged` it leaves the field as it is and the
+   screen's note reads `pairing_clipboard_damaged_link`: "The copied
+   pairing link is damaged. Copy it again, or scan its QR code." in the
+   warning colour. On `None` it reads `pairing_clipboard_no_link` as
+   before.
+5. **The prefill on opening** (item 1 of the 11:42 amendment) and the
+   **detection in the field** (its item 4) act only on `Found`, silently.
+6. **The app's version** is 0.8.2, a patch (the 0.8.x series is held).
+
+**Done when:** a pairing URL wrapped into lines of 50 characters and
+joined by `▕` and a line break, by `│` and a line break, by spaces around
+a line break, or by CRLF, or with `|`, `¦`, a no-break space or a tab
+inside it, gives `Found` with the URL, as does one followed by a sentence;
+the same URL with one base58 character changed or a line lost gives
+`Damaged`, and the paste button then leaves the field and shows the
+damaged-link note; plain text gives `None`; a seeded fuzz test of random
+payloads wrapped at random widths with random separators and prose around
+them always gives `Found` with the URL, with one base58 character changed
+never gives that URL, and random text never panics; degenerate texts
+(empty, `flankr://` alone, no port, an empty or separator-only fragment,
+a bad host or port, a device code, a doubled link, two links, 10 000
+characters of junk or separators) give the expected result quickly; and
+the companion's tests for each pass.
