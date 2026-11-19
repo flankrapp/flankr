@@ -918,3 +918,21 @@ forward exists, not only start `bitmot io1 relay`.
 **Done.** `tcp/443` is declared for `tmzt-flankr`; the final pairing URL
 reached the phone, and the companion logged `addresses updated` for
 `d1jc9964.e.io1.io`.
+
+## 2026-11-19 14:36 EST — Owner: a pairing link copied with a pane border
+
+**Report.** The owner pasted a pairing link copied from a terminal pane in
+which the link had wrapped over four lines. Each of the first three lines
+ends in the pane's right border, `▕` (U+2595, right one-eighth block), and
+a line break, so the fragment's base58 is cut by `▕` and newlines. Verbatim:
+"detect corrupted link like this".
+
+**Finding.** `clipboard_pairing_link` splits on whitespace, so it only sees
+`flankr://…#flankr1…▕`, whose base58 fails to decode; the paste button
+then says the clipboard has no pairing link, which is misleading.
+
+**Decision.** Handled as an amendment to the pairing QR scan plan, on
+`wt-paste-link`: rejoin a wrapped link by dropping box-drawing and block
+characters and line breaks inside it, accept the result only when it
+decodes and its checksum matches, and otherwise say the link is damaged
+rather than missing.
