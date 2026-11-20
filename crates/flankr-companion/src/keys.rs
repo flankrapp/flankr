@@ -7,26 +7,33 @@
 //! written whole, and a separate Noise static key per remote, named by the
 //! record's `key_name`: [`LEGACY_KEY_NAME`] for the pairing made before the
 //! list, [`RemoteId::key_name`] (`noise.static.<id>`) for every other.
+//!
+//! These are wrappers over libhardline (plan 20261119_02, step 8): [`RemoteId`], [`ServerRecord`], the
+//! encodings and the name helpers are libhardline's, and [`FileKeyStore`]
+//! writes through libhardline's `FileVault` and `FileBlobStore`, in the
+//! same files. [`Remotes`] and [`RemoteInfo`] stay this crate's, since a
+//! row carries what the remote's `state.redb` adds.
 
-use std::fmt;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 use std::sync::Arc;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use libflankr_proto::link::{self, REMOTE_ID_LEN, StaticKey, StaticKeypair};
-use serde::{Deserialize, Serialize};
+#[cfg(test)]
+use libflankr_proto::link;
+use libflankr_proto::link::{StaticKey, StaticKeypair};
+use libhardline::files::{FileBlobStore, FileVault};
+use libhardline::remotes::{REMOTES_BLOB, SERVER_BLOB};
+use libhardline::{BlobStore, KeyVault, VaultError};
 
-/// The key name of the one static key the phone had before the list: the
-/// pairing migrated from the `server` record keeps it (decision 5).
-pub const LEGACY_KEY_NAME: &str = "noise.static";
+pub use libhardline::remotes::{
+    LEGACY_KEY_NAME, MAX_REMOTES, NICKNAME_MAX, RemoteId, ServerRecord, base_hostname,
+    decode_legacy_server, fingerprint_hex, nickname,
+};
 
-/// The most remotes the phone keeps (decision 12).
-pub const MAX_REMOTES: usize = 8;
+use libhardline::remotes as hl;
 
 /// Where a client keeps its static keys and the remotes it is paired with
 /// (plan 20261028_01, decision 6).
@@ -51,178 +58,30 @@ pub trait KeyStore: Send {
     fn delete_static_key(&mut self, key_name: &str) -> Result<(), String>;
 }
 
-/// A remote's id: the first 8 bytes of BLAKE2s-256 over its link static
-/// public key ([`libflankr_proto::link::fingerprint`]). Displayed as 16
-/// lower-case hex digits; it names the remote's state directory and its
-/// key-store entry, and is never shown whole.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct RemoteId(pub [u8; REMOTE_ID_LEN]);
-
-impl RemoteId {
-    /// The id of the remote whose static public key is `public_key`.
-    pub fn of(public_key: &[u8; 32]) -> Self {
-        let digest = link::fingerprint(public_key);
-        let mut id = [0u8; REMOTE_ID_LEN];
-        id.copy_from_slice(&digest[..REMOTE_ID_LEN]);
-        RemoteId(id)
-    }
-
-    /// The fingerprint shown in the Remotes row: the first 8 hex digits in
-    /// two groups, `3f9a 12c4` (as
-    /// [`libflankr_proto::link::fingerprint_text`]).
-    pub fn fingerprint(&self) -> String {
-        let digits = self.to_string();
-        format!("{} {}", &digits[..4], &digits[4..8])
-    }
-
-    /// The key-store name of a new remote's phone key, `noise.static.<id>`
-    /// (decision 5).
-    pub fn key_name(&self) -> String {
-        format!("{LEGACY_KEY_NAME}.{self}")
-    }
-}
-
-impl fmt::Display for RemoteId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for b in self.0 {
-            write!(f, "{b:02x}")?;
-        }
-        Ok(())
-    }
-}
-
-impl FromStr for RemoteId {
-    type Err = String;
-
-    /// 16 lower-case hex digits.
-    fn from_str(text: &str) -> Result<Self, String> {
-        let bad = || format!("'{text}' is not a remote id (16 lower-case hex digits)");
-        if text.len() != REMOTE_ID_LEN * 2
-            || !text.bytes().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'))
-        {
-            return Err(bad());
-        }
-        let mut id = [0u8; REMOTE_ID_LEN];
-        for (i, b) in id.iter_mut().enumerate() {
-            *b = u8::from_str_radix(&text[i * 2..i * 2 + 2], 16).map_err(|_| bad())?;
-        }
-        Ok(RemoteId(id))
-    }
-}
-
-/// A paired remote (decision 6).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ServerRecord {
-    /// Its name: the host's first DNS label, not unique.
-    pub name: String,
-    pub public_key: [u8; 32],
-    pub addresses: Vec<String>,
-    pub session_id: Option<String>,
-    /// [`RemoteId::of`] its `public_key`.
-    pub id: RemoteId,
-    /// When it was paired, Unix seconds; `None` for the pairing migrated
-    /// from before the list.
-    pub paired_at: Option<u64>,
-    /// The key-store name of this remote's phone key.
-    pub key_name: String,
-    /// Reserved for plan 20261023_08 (2.5 step 3), base64; this crate never
-    /// sets it, and keeps it as read.
-    pub signing_key: Option<String>,
-    /// The owner's name for it, set in its details (plan 20261024_02, the
-    /// 2026-10-28 17:56 EDT amendment); `None`: the default
-    /// ([`RemoteInfo::display_name`]). Kept as [`nickname`] makes it.
-    pub nickname: Option<String>,
-}
-
-impl ServerRecord {
-    /// A new remote's record: its id from `public_key`, its key named
-    /// [`RemoteId::key_name`], no session and no pairing time.
-    pub fn new(name: impl Into<String>, public_key: [u8; 32], addresses: Vec<String>) -> Self {
-        let id = RemoteId::of(&public_key);
-        ServerRecord {
-            name: name.into(),
-            public_key,
-            addresses,
-            session_id: None,
-            id,
-            paired_at: None,
-            key_name: id.key_name(),
-            signing_key: None,
-            nickname: None,
-        }
-    }
-
-    /// Its first address, `host:port`, or "" with none.
-    pub fn host(&self) -> &str {
-        self.addresses.first().map_or("", String::as_str)
-    }
-
-    /// The name shown when it has no nickname and no other listed remote
-    /// shows the same: [`base_hostname`] of its first address, or its
-    /// `name` with no address.
-    fn default_name(&self) -> String {
-        match self.addresses.first() {
-            Some(address) => base_hostname(address),
-            None => self.name.clone(),
-        }
-    }
-}
-
-/// The longest nickname kept, in characters.
-pub const NICKNAME_MAX: usize = 40;
-
-/// A nickname as it is kept: control characters dropped, trimmed, and cut
-/// to [`NICKNAME_MAX`] characters; empty is `None` (the default).
-pub fn nickname(text: Option<&str>) -> Option<String> {
-    let cleaned: String = text?.chars().filter(|c| !c.is_control()).collect();
-    let cut: String = cleaned.trim().chars().take(NICKNAME_MAX).collect();
-    let cut = cut.trim_end();
-    (!cut.is_empty()).then(|| cut.to_string())
-}
-
-/// `host:port` split at the port: the host (an IPv6 address keeps its
-/// brackets) and the port, if there is one.
-fn split_port(address: &str) -> (&str, Option<&str>) {
-    match address.rsplit_once(':') {
-        Some((host, port))
-            if !port.is_empty()
-                && port.bytes().all(|b| b.is_ascii_digit())
-                && (!host.contains(':') || host.ends_with(']')) =>
-        {
-            (host, Some(port))
-        }
-        _ => (address, None),
-    }
-}
-
-/// The base hostname of `host:port` (plan 20261024_02, the 2026-10-28
-/// 17:56 EDT amendment): the host's first DNS label, `m4` for
-/// `m4.tail1a2b3c.ts.net:7347`; an IP address whole, `127.0.0.1`.
-pub fn base_hostname(address: &str) -> String {
-    let (host, _) = split_port(address.trim());
-    let bare = host.trim_start_matches('[').trim_end_matches(']');
-    if bare.parse::<std::net::IpAddr>().is_ok() {
-        return host.to_string();
-    }
-    host.split('.').next().unwrap_or(host).to_string()
-}
-
-/// BLAKE2s-256 of `public_key`, the whole fingerprint, as 64 lower-case
-/// hex digits.
-pub fn fingerprint_hex(public_key: &[u8; 32]) -> String {
-    link::fingerprint(public_key)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
-}
-
 /// The paired remotes, in pairing order (oldest first), and the one
-/// connected to (decision 6).
+/// connected to (decision 6). libhardline's `Remotes`, kept here so that
+/// [`info`](Remotes::info) gives this crate's [`RemoteInfo`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Remotes {
     /// The remote connected to; `None`: none (the local socket).
     pub active: Option<RemoteId>,
     pub list: Vec<ServerRecord>,
+}
+
+/// The list as libhardline's.
+fn to_hl(remotes: &Remotes) -> hl::Remotes {
+    hl::Remotes {
+        active: remotes.active,
+        list: remotes.list.clone(),
+    }
+}
+
+/// libhardline's list as this crate's.
+fn from_hl(remotes: hl::Remotes) -> Remotes {
+    Remotes {
+        active: remotes.active,
+        list: remotes.list,
+    }
 }
 
 impl Remotes {
@@ -239,18 +98,15 @@ impl Remotes {
         self.active.and_then(|id| self.get(id))
     }
 
-    /// The most recently paired remote, by `paired_at` and then list
-    /// order, leaving out `except` (decision 8: the next active remote).
     /// Sets `id`'s nickname, as [`nickname`] keeps it. Whether it changed.
     pub fn set_nickname(&mut self, id: RemoteId, text: Option<&str>) -> bool {
-        let kept = nickname(text);
-        match self.get_mut(id) {
-            Some(r) if r.nickname != kept => {
-                r.nickname = kept;
-                true
-            }
-            _ => false,
-        }
+        let mut list = hl::Remotes {
+            active: self.active,
+            list: std::mem::take(&mut self.list),
+        };
+        let changed = list.set_nickname(id, text);
+        self.list = list.list;
+        changed
     }
 
     /// The name each listed remote shows, in list order (plan 20261024_02,
@@ -262,56 +118,19 @@ impl Remotes {
     /// the first group of its fingerprint, `m4:7347 3f9a` (plan 20261028_03,
     /// the 18:48 EDT amendment, item 5).
     pub fn display_names(&self) -> Vec<String> {
-        let plain: Vec<String> = self
-            .list
-            .iter()
-            .map(|r| r.nickname.clone().unwrap_or_else(|| r.default_name()))
-            .collect();
-        let ported: Vec<String> = self
-            .list
-            .iter()
-            .zip(&plain)
-            .map(|(r, name)| {
-                let clash = plain.iter().filter(|n| *n == name).count() > 1;
-                match (&r.nickname, clash, split_port(r.host()).1) {
-                    (None, true, Some(port)) => format!("{name}:{port}"),
-                    _ => name.clone(),
-                }
-            })
-            .collect();
-        self.list
-            .iter()
-            .zip(&ported)
-            .map(|(r, name)| {
-                let same = self
-                    .list
-                    .iter()
-                    .zip(&ported)
-                    .filter(|(o, n)| o.nickname.is_none() && *n == name)
-                    .count();
-                if r.nickname.is_none() && same > 1 {
-                    let print = r.id.fingerprint();
-                    let group = print.split(' ').next().unwrap_or_default();
-                    format!("{name} {group}")
-                } else {
-                    name.clone()
-                }
-            })
-            .collect()
+        to_hl(self).display_names()
     }
 
+    /// The most recently paired remote, by `paired_at` and then list
+    /// order, leaving out `except` (decision 8: the next active remote).
     pub fn most_recent(&self, except: &[RemoteId]) -> Option<RemoteId> {
-        self.list
-            .iter()
-            .enumerate()
-            .filter(|(_, r)| !except.contains(&r.id))
-            .max_by_key(|(i, r)| (r.paired_at.unwrap_or(0), *i))
-            .map(|(_, r)| r.id)
+        to_hl(self).most_recent(except)
     }
 }
 
 /// One row of the Remotes section ([`Event::Remotes`](crate::Event::Remotes);
-/// plan 20261028_01, decision 26).
+/// plan 20261028_01, decision 26): libhardline's `RemoteInfo` and what the
+/// remote's `state.redb` adds.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RemoteInfo {
     pub id: RemoteId,
@@ -365,146 +184,37 @@ impl Remotes {
     /// link's `hello` is answered (plan 20261028_03, the 18:51 EDT
     /// amendment: every listed remote keeps a link).
     pub fn info_with(&self, online: impl Fn(RemoteId) -> bool) -> Vec<RemoteInfo> {
-        self.list
-            .iter()
-            .zip(self.display_names())
-            .map(|(r, display_name)| {
-                let active = self.active == Some(r.id);
-                RemoteInfo {
-                    id: r.id,
-                    name: r.name.clone(),
-                    host: r.host().to_string(),
-                    fingerprint: r.id.fingerprint(),
-                    paired_at: r.paired_at,
-                    active,
-                    online: online(r.id),
-                    fingerprint_hex: fingerprint_hex(&r.public_key),
-                    fingerprint_words: link::fingerprint_words_text(&r.public_key),
-                    nickname: r.nickname.clone(),
-                    display_name,
-                    last_session: None,
-                    collapsed_workspaces: Vec::new(),
-                }
+        to_hl(self)
+            .info_with(online)
+            .into_iter()
+            .map(|r| RemoteInfo {
+                id: r.id,
+                name: r.name,
+                host: r.host,
+                fingerprint: r.fingerprint,
+                paired_at: r.paired_at,
+                active: r.active,
+                online: r.online,
+                fingerprint_hex: r.fingerprint_hex,
+                fingerprint_words: r.fingerprint_words,
+                nickname: r.nickname,
+                display_name: r.display_name,
+                last_session: None,
+                collapsed_workspaces: Vec::new(),
             })
             .collect()
     }
 }
 
-/// The `remotes` blob's layout (`remotes.toml`).
-#[derive(Serialize, Deserialize)]
-struct RemotesFile {
-    version: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    active: Option<String>,
-    #[serde(default, rename = "remote")]
-    remotes: Vec<RemoteFile>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct RemoteFile {
-    id: String,
-    name: String,
-    public_key: String,
-    #[serde(default)]
-    addresses: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    session_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    paired_at: Option<u64>,
-    key_name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    signing_key: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    nickname: Option<String>,
-}
-
-/// The layout version of the `remotes` blob.
-const REMOTES_VERSION: u32 = 1;
-
 /// The `remotes` blob, as TOML (decision 6).
 pub fn encode_remotes(remotes: &Remotes) -> Result<String, String> {
-    let file = RemotesFile {
-        version: REMOTES_VERSION,
-        active: remotes.active.map(|id| id.to_string()),
-        remotes: remotes
-            .list
-            .iter()
-            .map(|r| RemoteFile {
-                id: r.id.to_string(),
-                name: r.name.clone(),
-                public_key: STANDARD.encode(r.public_key),
-                addresses: r.addresses.clone(),
-                session_id: r.session_id.clone(),
-                paired_at: r.paired_at,
-                key_name: r.key_name.clone(),
-                signing_key: r.signing_key.clone(),
-                nickname: r.nickname.clone(),
-            })
-            .collect(),
-    };
-    toml::to_string(&file).map_err(|e| format!("the remotes list: {e}"))
+    hl::encode_remotes(&to_hl(remotes))
 }
 
 /// Reads the `remotes` blob. A record whose `id` is not its key's is
 /// refused, as is an `active` naming no record.
 pub fn decode_remotes(text: &str) -> Result<Remotes, String> {
-    let file: RemotesFile = toml::from_str(text).map_err(|e| format!("the remotes list: {e}"))?;
-    if file.version != REMOTES_VERSION {
-        return Err(format!(
-            "the remotes list is version {}, not {REMOTES_VERSION}",
-            file.version
-        ));
-    }
-    let mut list = Vec::with_capacity(file.remotes.len());
-    for r in file.remotes {
-        let public_key = decode_key(&r.public_key, "a remote's public key")?;
-        let id: RemoteId = r.id.parse()?;
-        if id != RemoteId::of(&public_key) {
-            return Err(format!("the remote {id}'s id is not its key's"));
-        }
-        list.push(ServerRecord {
-            name: r.name,
-            public_key,
-            addresses: r.addresses,
-            session_id: r.session_id,
-            id,
-            paired_at: r.paired_at,
-            key_name: r.key_name,
-            signing_key: r.signing_key,
-            nickname: nickname(r.nickname.as_deref()),
-        });
-    }
-    let active = file.active.map(|a| a.parse::<RemoteId>()).transpose()?;
-    if let Some(id) = active
-        && !list.iter().any(|r| r.id == id)
-    {
-        return Err(format!("the active remote {id} is not in the list"));
-    }
-    Ok(Remotes { active, list })
-}
-
-/// The single server record of before the list (`server.toml`, the
-/// `server` blob): the public key in base64.
-#[derive(Serialize, Deserialize)]
-struct ServerFile {
-    name: String,
-    public_key: String,
-    #[serde(default)]
-    addresses: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    session_id: Option<String>,
-}
-
-/// Reads the single server record of before the list (`server.toml`'s
-/// layout, which the phone's `server` blob shares) as the remote it
-/// migrates to: its key [`LEGACY_KEY_NAME`], no pairing time (decision 13).
-pub fn decode_legacy_server(text: &str) -> Result<ServerRecord, String> {
-    let file: ServerFile = toml::from_str(text).map_err(|e| format!("the server record: {e}"))?;
-    let public_key = decode_key(&file.public_key, "the server's public key")?;
-    let mut record = ServerRecord::new(file.name, public_key, file.addresses);
-    record.session_id = file.session_id;
-    record.key_name = LEGACY_KEY_NAME.to_string();
-    Ok(record)
+    hl::decode_remotes(text).map(from_hl)
 }
 
 /// The list a store migrates to when it has no `remotes` blob yet: the
@@ -512,20 +222,7 @@ pub fn decode_legacy_server(text: &str) -> Result<ServerRecord, String> {
 /// otherwise empty (decision 13). The caller writes it, then deletes the
 /// old record; with none, it deletes the [`LEGACY_KEY_NAME`] key.
 pub fn migrated(server: Option<ServerRecord>) -> Remotes {
-    match server {
-        Some(record) => {
-            log::info!(
-                "keys: moved the paired server {} ({}) into the remotes list",
-                record.name,
-                record.id.fingerprint()
-            );
-            Remotes {
-                active: Some(record.id),
-                list: vec![record],
-            }
-        }
-        None => Remotes::default(),
-    }
+    from_hl(hl::migrated(server))
 }
 
 /// Keys in files: each static key, base64, in `<dir>/key` (the key named
@@ -534,6 +231,11 @@ pub fn migrated(server: Option<ServerRecord>) -> Remotes {
 /// `<dir>/remotes.toml`. A key file that anyone but its owner has any
 /// permission on is refused. `<dir>/server.toml`, the single record of
 /// before, is migrated on the first [`remotes`](KeyStore::remotes).
+///
+/// Files are written and deleted through libhardline's `FileVault` and
+/// `FileBlobStore`, whose layout this is. Errors keep this store's texts,
+/// each naming its file: a key is read here, so that one of the wrong
+/// length still says how long it is.
 #[derive(Debug, Clone)]
 pub struct FileKeyStore {
     dir: PathBuf,
@@ -556,23 +258,17 @@ impl FileKeyStore {
 
     /// The file of the key named `key_name`.
     pub fn key_path(&self, key_name: &str) -> Result<PathBuf, String> {
-        if key_name == LEGACY_KEY_NAME {
-            return Ok(self.dir.join("key"));
-        }
-        match key_name
-            .strip_prefix(LEGACY_KEY_NAME)
-            .and_then(|s| s.strip_prefix('.'))
-        {
-            Some(rest)
-                if !rest.is_empty()
-                    && rest
-                        .bytes()
-                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_')) =>
-            {
-                Ok(self.dir.join(format!("key.{rest}")))
-            }
-            _ => Err(format!("'{key_name}' is not a key name this store keeps")),
-        }
+        self.vault()
+            .key_path(key_name)
+            .map_err(|e| key_error(key_name, e))
+    }
+
+    fn vault(&self) -> FileVault {
+        FileVault::new(&self.dir)
+    }
+
+    fn blobs(&self) -> FileBlobStore {
+        FileBlobStore::new(&self.dir)
     }
 
     fn server_path(&self) -> PathBuf {
@@ -583,9 +279,25 @@ impl FileKeyStore {
         self.dir.join("remotes.toml")
     }
 
+    /// The blob `name` (in `path`) as text, or `None` when there is none.
+    fn read_blob(&self, name: &str, path: &Path) -> Result<Option<String>, String> {
+        match self.blobs().get(name).map_err(store_error)? {
+            Some(bytes) => String::from_utf8(bytes)
+                .map(Some)
+                .map_err(|_| format!("{}: stream did not contain valid UTF-8", path.display())),
+            None => Ok(None),
+        }
+    }
+
     /// Writes `contents` to `path` with mode 0600, through a temporary file
-    /// renamed into place, creating the directory with mode 0700.
+    /// renamed into place, creating the directory with mode 0700: the
+    /// tests' way to lay out the files of before.
+    #[cfg(test)]
     fn write_private(&self, path: &Path, contents: &[u8]) -> Result<(), String> {
+        use std::fs::OpenOptions;
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+
         fs::create_dir_all(&self.dir).map_err(|e| format!("{}: {e}", self.dir.display()))?;
         let _ = fs::set_permissions(&self.dir, fs::Permissions::from_mode(0o700));
         let mut tmp = path.as_os_str().to_owned();
@@ -607,21 +319,21 @@ impl FileKeyStore {
     }
 }
 
-/// Reads a file, or `None` when it does not exist.
-fn read_optional(path: &Path) -> Result<Option<String>, String> {
-    match fs::read_to_string(path) {
-        Ok(text) => Ok(Some(text)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(format!("{}: {e}", path.display())),
+/// A file store's error in this store's words: the file system's
+/// (`<path>: …`) and a corrupt file's as they are, others as the vault
+/// says them.
+fn store_error(e: VaultError) -> String {
+    match e {
+        VaultError::Platform(detail) | VaultError::Corrupt(detail) => detail,
+        other => other.to_string(),
     }
 }
 
-/// Deletes a file; one that does not exist is not an error.
-fn remove_optional(path: &Path) -> Result<(), String> {
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(format!("{}: {e}", path.display())),
+/// [`store_error`], for the key named `key_name`.
+fn key_error(key_name: &str, e: VaultError) -> String {
+    match e {
+        VaultError::InvalidName => format!("'{key_name}' is not a key name this store keeps"),
+        other => store_error(other),
     }
 }
 
@@ -649,9 +361,10 @@ impl FileKeyStore {
                 path.display()
             ));
         }
-        match read_optional(path)? {
-            Some(text) => decode_key(&text, &path.display().to_string()).map(Some),
-            None => Ok(None),
+        match fs::read_to_string(path) {
+            Ok(text) => decode_key(&text, &path.display().to_string()).map(Some),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(format!("{}: {e}", path.display())),
         }
     }
 }
@@ -659,16 +372,18 @@ impl FileKeyStore {
 impl KeyStore for FileKeyStore {
     fn remotes(&mut self) -> Result<Remotes, String> {
         let path = self.remotes_path();
-        if let Some(text) = read_optional(&path)? {
+        let server_path = self.server_path();
+        let blobs = self.blobs();
+        if let Some(text) = self.read_blob(REMOTES_BLOB, &path)? {
             let remotes = decode_remotes(&text).map_err(|e| format!("{}: {e}", path.display()))?;
             // A migration that stopped between its two writes.
-            remove_optional(&self.server_path())?;
+            blobs.delete(SERVER_BLOB).map_err(store_error)?;
             return Ok(remotes);
         }
-        let server = match read_optional(&self.server_path())? {
+        let server = match self.read_blob(SERVER_BLOB, &server_path)? {
             Some(text) => Some(
                 decode_legacy_server(&text)
-                    .map_err(|e| format!("{}: {e}", self.server_path().display()))?,
+                    .map_err(|e| format!("{}: {e}", server_path.display()))?,
             ),
             None => None,
         };
@@ -677,7 +392,7 @@ impl KeyStore for FileKeyStore {
         // The new list first; the old record only once it is written.
         self.set_remotes(&remotes)?;
         if had_server {
-            remove_optional(&self.server_path())?;
+            blobs.delete(SERVER_BLOB).map_err(store_error)?;
         } else {
             // A key with no server: a pairing never stored.
             self.delete_static_key(LEGACY_KEY_NAME)?;
@@ -687,7 +402,9 @@ impl KeyStore for FileKeyStore {
 
     fn set_remotes(&mut self, remotes: &Remotes) -> Result<(), String> {
         let text = encode_remotes(remotes)?;
-        self.write_private(&self.remotes_path(), text.as_bytes())
+        self.blobs()
+            .put(REMOTES_BLOB, text.as_bytes())
+            .map_err(store_error)
     }
 
     fn static_key(&mut self, key_name: &str) -> Result<Option<Arc<dyn StaticKey>>, String> {
@@ -699,15 +416,18 @@ impl KeyStore for FileKeyStore {
     }
 
     fn generate_static_key(&mut self, key_name: &str) -> Result<Arc<dyn StaticKey>, String> {
-        let path = self.key_path(key_name)?;
-        let keypair = link::generate_keypair().map_err(|e| e.to_string())?;
-        let text = format!("{}\n", STANDARD.encode(keypair.private));
-        self.write_private(&path, text.as_bytes())?;
-        Ok(Arc::new(keypair))
+        self.vault()
+            .generate(key_name)
+            .map_err(|e| key_error(key_name, e))?;
+        self.static_key(key_name)?
+            .ok_or_else(|| format!("the key {key_name} was not kept"))
     }
 
     fn delete_static_key(&mut self, key_name: &str) -> Result<(), String> {
-        remove_optional(&self.key_path(key_name)?)
+        self.vault()
+            .delete(key_name)
+            .map(|_| ())
+            .map_err(|e| key_error(key_name, e))
     }
 }
 

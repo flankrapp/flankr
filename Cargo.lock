@@ -1431,6 +1431,7 @@ dependencies = [
  "libflankr_blob",
  "libflankr_proto",
  "libflankr_term",
+ "libhardline",
  "log",
  "png",
  "qrcodeurl",
@@ -1440,7 +1441,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
- "toml 0.8.23",
 ]
 
 [[package]]
@@ -2376,6 +2376,7 @@ version = "0.1.0"
 source = "git+https://github.com/tmzt/libhardline?rev=cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f#cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f"
 dependencies = [
  "libhardline-core",
+ "libhardline-files",
  "libhardline-jsonrpc",
  "libhardline-tokio",
 ]
@@ -2393,6 +2394,16 @@ dependencies = [
  "serde",
  "snow",
  "toml 0.8.23",
+ "zeroize",
+]
+
+[[package]]
+name = "libhardline-files"
+version = "0.1.0"
+source = "git+https://github.com/tmzt/libhardline?rev=cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f#cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f"
+dependencies = [
+ "base64 0.22.1",
+ "libhardline-core",
  "zeroize",
 ]
 

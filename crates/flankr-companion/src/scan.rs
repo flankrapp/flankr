@@ -9,7 +9,9 @@
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use libflankr_proto::link::PairingPayload;
+use libflankr_proto::link::{FLANKR_PROFILE, PairingPayload};
+
+pub use libhardline::scan::is_loopback;
 
 /// The only data URL accepted.
 pub const DATA_URL_PREFIX: &str = "data:image/png;base64,";
@@ -17,7 +19,8 @@ pub const DATA_URL_PREFIX: &str = "data:image/png;base64,";
 /// The longest data URL read: far more than a pairing QR code needs.
 const MAX_DATA_URL: usize = 4 << 20;
 
-/// The server a pairing input names, and what to call it.
+/// The server a pairing input names, and what to call it: libhardline's
+/// `Pairing`, with flankr's [`PairingPayload`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pairing {
     pub payload: PairingPayload,
@@ -27,7 +30,19 @@ pub struct Pairing {
     pub server: String,
 }
 
-/// Reads a pairing input in any of its three forms.
+/// libhardline's `Pairing` as this crate's.
+fn from_hl(p: libhardline::scan::Pairing) -> Pairing {
+    Pairing {
+        payload: p.payload.into(),
+        server: p.server,
+    }
+}
+
+/// Reads a pairing input in any of its three forms: a data URL's QR code
+/// here, the URL and the bare string with libhardline's reader under
+/// [`FLANKR_PROFILE`]. A string that does not decode is refused in
+/// [`PairingPayload::decode`]'s words, which name flankr's prefix and
+/// scheme.
 pub fn read(input: &str) -> Result<Pairing, String> {
     let input = input.trim();
     let text = if input.starts_with("data:") {
@@ -39,20 +54,12 @@ pub fn read(input: &str) -> Result<Pairing, String> {
     } else {
         input.to_string()
     };
-    let text = text.trim();
-    let payload = PairingPayload::decode(text).map_err(|e| e.to_string())?;
-    if payload.addresses.is_empty() {
-        return Err("the pairing string has no addresses".to_string());
-    }
-    // `decode` has checked that a URL's host is one of the addresses.
-    let address = text
-        .strip_prefix("flankr://")
-        .and_then(|rest| rest.split('/').next())
-        .unwrap_or(&payload.addresses[0]);
-    Ok(Pairing {
-        server: server_name(address),
-        payload,
-    })
+    libhardline::scan::read(&FLANKR_PROFILE, &text)
+        .map(from_hl)
+        .map_err(|e| match PairingPayload::decode(text.trim()) {
+            Err(flankr) => flankr.to_string(),
+            Ok(_) => e,
+        })
 }
 
 impl Pairing {
@@ -61,40 +68,18 @@ impl Pairing {
     /// 2026-11-03 00:07 EST amendment, item 1): the others in their order,
     /// with the name from the first of them when it came from a loopback
     /// one. `None` when every address is a loopback one. Added in 0.8.1.
-    pub fn without_loopback(mut self) -> Option<Pairing> {
-        let before = self.payload.addresses.len();
-        self.payload.addresses.retain(|a| !is_loopback(a));
-        let first = self.payload.addresses.first()?;
-        if self.payload.addresses.len() != before && is_loopback(&self.server) {
-            self.server = server_name(first);
+    pub fn without_loopback(self) -> Option<Pairing> {
+        libhardline::scan::Pairing {
+            payload: self.payload.into(),
+            server: self.server,
         }
-        Some(self)
-    }
-}
-
-/// Whether `address` (`host:port`, or a bare host) names this device
-/// itself: a host in 127.0.0.0/8, `::1` (bracketed or not), or
-/// `localhost` in any case, with or without a trailing dot. Added in
-/// 0.8.1.
-pub fn is_loopback(address: &str) -> bool {
-    let address = address.trim();
-    let host = if let Some(rest) = address.strip_prefix('[') {
-        rest.split(']').next().unwrap_or(rest)
-    } else {
-        match address.rsplit_once(':') {
-            // A bare IPv6 address has more than one colon.
-            Some((host, port)) if !host.contains(':') && port.parse::<u16>().is_ok() => host,
-            _ => address,
-        }
-    };
-    let host = host.strip_suffix('.').unwrap_or(host);
-    match host.parse::<std::net::IpAddr>() {
-        Ok(ip) => ip.is_loopback(),
-        Err(_) => host.eq_ignore_ascii_case("localhost"),
+        .without_loopback()
+        .map(from_hl)
     }
 }
 
 /// `m4` for `m4.tail1a2b3c.ts.net:7347`; `127.0.0.1` for `127.0.0.1:7347`.
+#[cfg(test)]
 fn server_name(address: &str) -> String {
     let host = match address.rsplit_once(':') {
         Some((host, port)) if port.parse::<u16>().is_ok() => host,

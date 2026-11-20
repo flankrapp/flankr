@@ -109,7 +109,7 @@ use libflankr_proto::link::{
 use libflankr_proto::{Id, Incoming, Request, common, common::methods};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, WriteHalf};
 use tokio::net::unix::OwnedWriteHalf;
-use tokio::net::{TcpSocket, TcpStream, UnixStream};
+use tokio::net::{TcpStream, UnixStream};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
@@ -148,33 +148,9 @@ pub const RESULT_GRACE: Duration = Duration::from_secs(10);
 
 /// Delays between reconnects: `initial`, doubling up to `max` (1, 2, 4 …
 /// 30 s by default), back to `initial` once a connection says hello.
-#[derive(Debug, Clone)]
-pub struct Backoff {
-    initial: Duration,
-    max: Duration,
-    next: Duration,
-}
+/// libhardline's (plan 20261119_02, step 8).
+pub use libhardline::Backoff;
 
-impl Backoff {
-    pub fn new(initial: Duration, max: Duration) -> Self {
-        Backoff {
-            initial,
-            max,
-            next: initial,
-        }
-    }
-
-    /// The delay before the next attempt.
-    pub fn next_delay(&mut self) -> Duration {
-        let delay = self.next;
-        self.next = (self.next * 2).min(self.max);
-        delay
-    }
-
-    pub fn reset(&mut self) {
-        self.next = self.initial;
-    }
-}
 /// Runs the thread until the app drops its [`Companion`](crate::Companion).
 pub(crate) fn run(
     config: CompanionConfig,
@@ -2476,34 +2452,10 @@ fn read_lines(
 }
 
 /// Connects to `host:port`, trying each address it resolves to, with
-/// `SO_KEEPALIVE` set (plan 20261022_02, liveness).
+/// `SO_KEEPALIVE` set (plan 20261022_02, liveness), each within
+/// [`CONNECT_TIMEOUT`]: libhardline's tokio adapter's.
 async fn tcp_connect(addr: &str) -> std::io::Result<TcpStream> {
-    let mut last = std::io::Error::new(
-        std::io::ErrorKind::NotFound,
-        format!("{addr} resolves to no address"),
-    );
-    for target in tokio::net::lookup_host(addr).await? {
-        let socket = if target.is_ipv4() {
-            TcpSocket::new_v4()?
-        } else {
-            TcpSocket::new_v6()?
-        };
-        socket.set_keepalive(true)?;
-        match timeout(CONNECT_TIMEOUT, socket.connect(target)).await {
-            Ok(Ok(stream)) => {
-                let _ = stream.set_nodelay(true);
-                return Ok(stream);
-            }
-            Ok(Err(e)) => last = e,
-            Err(_) => {
-                last = std::io::Error::new(
-                    std::io::ErrorKind::TimedOut,
-                    format!("connecting to {target} timed out"),
-                )
-            }
-        }
-    }
-    Err(last)
+    libhardline::tokio::tcp_connect(addr, CONNECT_TIMEOUT).await
 }
 
 /// The phone's local time of day, as `flankr_speech` reads it.

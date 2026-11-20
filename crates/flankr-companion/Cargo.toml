@@ -7,6 +7,10 @@ license = "Apache-2.0"
 
 [dependencies]
 libflankr_proto = { path = "../libflankr_proto", features = ["link"] }
+# The remotes list, the file vault and blob store, the pairing input
+# reader, Backoff and TCP dialing (plan 20261119_02, step 8): the same
+# rev as every flankr crate.
+libhardline = { git = "https://github.com/tmzt/libhardline", rev = "cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f", default-features = false, features = ["tokio", "files"] }
 # The terminal mode's frames and Screen (plan 20261027_07, step 4).
 libflankr_term = { path = "../libflankr_term" }
 # Binary transfers over the link's kind 2: the encoding, the transfer
@@ -18,9 +22,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "net", "time", "sync", "io-util", "macros"] }
 log = "0.4"
-# FileKeyStore: the key file is base64, the server record is TOML.
+# FileKeyStore's key files and the QR code's data URL are base64.
 base64 = "0.22"
-toml = "0.8"
 # Input::Pair reads a data:image/png;base64, URL's QR code (plan
 # 20261022_06, step 5).
 png = "0.18"
