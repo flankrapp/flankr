@@ -5361,3 +5361,56 @@ and 0x20/0x21). The other 86 link tests pass unchanged.
 - Builds of libflankr_proto without `link` now pull in libhardline-core
   (with snow) through the facade, since `envelope` re-exports
   libhardline-jsonrpc's types in every feature combination.
+
+## 2026-11-19 19:35 EST — flankr-companion on libhardline: what stays flankr's
+
+Plan: `docs/design/20261119_02_LIBHARDLINE_EXTRACTION_PLAN.md`, step 8
+(decision 10). Small departures needed to keep flankr-companion's public
+items, behaviour and existing tests unchanged:
+
+1. **`Remotes` stays this crate's struct**, with the same fields, and
+   delegates `set_nickname`, `display_names`, `most_recent` and
+   `info_with` to libhardline's `Remotes`. Its `info` and `info_with`
+   must give flankr's `RemoteInfo` (with `last_session` and
+   `collapsed_workspaces`), and a re-exported foreign type cannot have
+   those methods. `encode_remotes`, `decode_remotes` and `migrated`
+   convert. `RemoteId`, `ServerRecord`, `nickname`, `base_hostname`,
+   `fingerprint_hex`, `decode_legacy_server`, `LEGACY_KEY_NAME`,
+   `MAX_REMOTES` and `NICKNAME_MAX` are re-exports; their rustdoc
+   signatures, fields and impls match the old ones exactly.
+2. **`KeyStore` keeps its methods and is not built over `RemotesStore`.**
+   The app's `VaultKeyStore` implements it; the app's rule that `Corrupt`
+   and `WrongKind` mean "no key, pair again" stays in that
+   implementation (step 10). `FileKeyStore` reports them as errors, as
+   before, which its tests check.
+3. **`FileKeyStore` writes and deletes through `FileVault` and
+   `FileBlobStore`** (the same files, modes and format), and takes
+   `key_path` from `FileVault`. It keeps its own key reader and its
+   path-prefixed list errors, because `FileVault`'s texts differ (a
+   `vault: ` prefix; "a Noise key is 32 bytes, not 16" where the test
+   checks "16 bytes"), and the desktop app shows them. A static key
+   is still held in memory (`StaticKeypair`), not read per handshake.
+   Two effects too small to matter: a key name longer than 64
+   characters is now refused (flankr makes only `noise.static.<16 hex>`),
+   and the migration's log line comes from `libhardline_core::remotes`.
+4. **`scan::read` keeps flankr's error words.** libhardline's reader
+   gives the profile-neutral texts ("the pairing prefix", "a
+   `<scheme>://` URL"), so on failure the text is decoded again with
+   `PairingPayload::decode` for its flankr wording. `Pairing` stays this
+   crate's (its payload is flankr's `PairingPayload`) and delegates
+   `without_loopback`; `is_loopback` is a re-export; `server_name` stays
+   only for the tests that call it.
+5. **In `net.rs`, only `tcp_connect` (the same code, with
+   `CONNECT_TIMEOUT`) and `Backoff` (a re-export) move.**
+   `link_connect`, `probe_connect`, `pair_request`, `check` and `revoke`
+   keep their code: libhardline-tokio's `connect`, `request_pairing`,
+   `check` and `revoke` need a `Client` with a key vault, while
+   `KeyStore` lends an `Arc<dyn StaticKey>`; and they bound an address's
+   TCP connect and handshake together within one time, where
+   `link_connect` gives each resolved IP 10 s and then the handshake
+   10 s, so a dual-stack name whose first family does not answer would
+   get less time. These functions already reach libhardline through
+   libflankr_proto's `link` wrappers, so the wire is libhardline's.
+
+No public item changed, so the version stays 0.8.16 with no
+`VERSIONS.md` entry.
