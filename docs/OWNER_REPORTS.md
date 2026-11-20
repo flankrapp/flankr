@@ -936,3 +936,16 @@ then says the clipboard has no pairing link, which is misleading.
 characters and line breaks inside it, accept the result only when it
 decodes and its checksum matches, and otherwise say the link is damaged
 rather than missing.
+
+## 2026-11-19 21:25 EST — Owner: the terminal QR from `flankr pair` did not scan
+
+**Report.** While re-pairing the S23 with the Mac mini during the
+libhardline extraction's step 10 checks, the owner, verbatim: "I paired it
+myself, the terminal qr didn't work so I used the data uri". The phone's
+camera did not read the half-height QR that `flankr pair` prints in the
+terminal; pasting the printed `data:image/png;base64,` URL paired at
+21:05:29.
+
+**Status.** Not investigated yet. The terminal QR printing is flankr's own
+code (the half-height QR and camera normalization plan), unchanged by the
+extraction.
