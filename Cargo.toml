@@ -1,13 +1,13 @@
 [package]
 name = "flankr"
-version = "0.12.1"
+version = "0.12.2"
 edition = "2024"
 license = "Apache-2.0"
 
 [features]
 default = ["vpn-tailscale"]
-vpn-tailscale = []
-vpn-bitmot = []
+vpn-tailscale = ["libhardline/vpn-tailscale"]
+vpn-bitmot = ["libhardline/vpn-bitmot"]
 
 [dependencies]
 libherdr = { path = "crates/libherdr" }
@@ -67,6 +67,11 @@ toml_edit = "0.22"
 # (openat with O_NOFOLLOW, mkdirat, fstat, linkat), already in Cargo.lock.
 libflankr_blob = { path = "crates/libflankr_blob" }
 rustix = { version = "1", features = ["fs"] }
+# The link's server side (src/server/link/): key file, authorized keys,
+# address choice, this machine, and the VPN providers with their tokio
+# driver (docs/design/20261119_02_LIBHARDLINE_EXTRACTION_PLAN.md, step 9).
+# The same rev as libflankr_proto's.
+libhardline = { git = "https://github.com/tmzt/libhardline", rev = "cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f", default-features = false, features = ["server", "tokio"] }
 # `flankr serve` starts `flankr server` detached (plan 20261102_01).
 flankr-daemon = { path = "crates/flankr-daemon" }
 

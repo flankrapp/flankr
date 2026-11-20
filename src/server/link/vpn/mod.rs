@@ -3,6 +3,11 @@
 //!
 //! The link takes a `dyn Vpn`: [`tailscale::Tailscale`] in the daemon,
 //! [`fake::FakeVpn`] in tests, which never run a real VPN.
+//!
+//! With a provider built, the providers, the address, the error and the
+//! fake are `libhardline::vpn`'s, their tasks driven by
+//! `libhardline::tokio::vpn::drive`; the choice's names are flankr's
+//! (docs/design/20261119_02_LIBHARDLINE_EXTRACTION_PLAN.md, step 9).
 
 #[cfg(feature = "vpn-bitmot")]
 pub mod bitmot;
@@ -10,19 +15,26 @@ pub mod fake;
 #[cfg(feature = "vpn-tailscale")]
 pub mod tailscale;
 
-use std::fmt;
-
 use async_trait::async_trait;
 
+#[cfg(any(feature = "vpn-tailscale", feature = "vpn-bitmot"))]
+pub use libhardline::vpn::{VpnAddress, VpnError};
+
+/// The service prefix of flankr's VPN jobs: `dev.flankr.vpn.<provider>`.
+#[cfg(any(feature = "vpn-tailscale", feature = "vpn-bitmot"))]
+pub const SERVICE_PREFIX: &str = "dev.flankr.vpn";
+
 /// This machine's address on a VPN: a name or an IP, and a port.
+#[cfg(not(any(feature = "vpn-tailscale", feature = "vpn-bitmot")))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VpnAddress {
     pub host: String,
     pub port: u16,
 }
 
-impl fmt::Display for VpnAddress {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+#[cfg(not(any(feature = "vpn-tailscale", feature = "vpn-bitmot")))]
+impl std::fmt::Display for VpnAddress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.host.contains(':') {
             write!(f, "[{}]:{}", self.host, self.port)
         } else {
@@ -33,18 +45,21 @@ impl fmt::Display for VpnAddress {
 
 /// A VPN command that failed: the command and what it said on stderr
 /// (or why it did not finish), never secrets.
+#[cfg(not(any(feature = "vpn-tailscale", feature = "vpn-bitmot")))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VpnError {
     pub command: String,
     pub message: String,
 }
 
-impl fmt::Display for VpnError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+#[cfg(not(any(feature = "vpn-tailscale", feature = "vpn-bitmot")))]
+impl std::fmt::Display for VpnError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "`{}`: {}", self.command, self.message)
     }
 }
 
+#[cfg(not(any(feature = "vpn-tailscale", feature = "vpn-bitmot")))]
 impl std::error::Error for VpnError {}
 
 /// A VPN that can forward a port on this machine's VPN address to
@@ -95,18 +110,35 @@ impl Default for VpnChoice {
     }
 }
 
+#[cfg(any(feature = "vpn-tailscale", feature = "vpn-bitmot"))]
+impl From<libhardline::vpn::VpnChoice> for VpnChoice {
+    fn from(choice: libhardline::vpn::VpnChoice) -> Self {
+        match choice {
+            #[cfg(feature = "vpn-tailscale")]
+            libhardline::vpn::VpnChoice::Tailscale => VpnChoice::Tailscale,
+            #[cfg(feature = "vpn-bitmot")]
+            libhardline::vpn::VpnChoice::Bitmot => VpnChoice::Bitmot,
+            libhardline::vpn::VpnChoice::None => VpnChoice::None,
+        }
+    }
+}
+
 impl VpnChoice {
+    /// `tailscale`, `bitmot` or `none`, any case; `what` names where it
+    /// came from in errors.
+    #[cfg(any(feature = "vpn-tailscale", feature = "vpn-bitmot"))]
+    pub fn parse(name: &str, what: &str) -> Result<VpnChoice, String> {
+        libhardline::vpn::VpnChoice::parse(name, what).map(VpnChoice::from)
+    }
+
+    /// `tailscale`, `bitmot` or `none`, any case; `what` names where it
+    /// came from in errors.
+    #[cfg(not(any(feature = "vpn-tailscale", feature = "vpn-bitmot")))]
     pub fn parse(name: &str, what: &str) -> Result<VpnChoice, String> {
         match name.trim().to_ascii_lowercase().as_str() {
-            #[cfg(feature = "vpn-tailscale")]
-            "tailscale" => Ok(VpnChoice::Tailscale),
-            #[cfg(not(feature = "vpn-tailscale"))]
             "tailscale" => Err(format!(
                 "{what} requests tailscale, but it is not built; enable Cargo feature vpn-tailscale"
             )),
-            #[cfg(feature = "vpn-bitmot")]
-            "bitmot" => Ok(VpnChoice::Bitmot),
-            #[cfg(not(feature = "vpn-bitmot"))]
             "bitmot" => Err(format!(
                 "{what} requests bitmot, but it is not built; enable Cargo feature vpn-bitmot"
             )),
@@ -117,6 +149,15 @@ impl VpnChoice {
         }
     }
 
+    /// `--vpn`, else `[link] vpn`, else the default.
+    #[cfg(any(feature = "vpn-tailscale", feature = "vpn-bitmot"))]
+    pub fn choose(flag: Option<&str>, config: Option<&str>) -> Result<VpnChoice, String> {
+        libhardline::vpn::VpnChoice::choose(flag, "--vpn", config, "[link] vpn =")
+            .map(VpnChoice::from)
+    }
+
+    /// `--vpn`, else `[link] vpn`, else the default.
+    #[cfg(not(any(feature = "vpn-tailscale", feature = "vpn-bitmot")))]
     pub fn choose(flag: Option<&str>, config: Option<&str>) -> Result<VpnChoice, String> {
         if let Some(flag) = flag {
             return VpnChoice::parse(flag, "--vpn");

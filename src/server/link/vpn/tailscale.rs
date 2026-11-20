@@ -11,60 +11,28 @@
 //!   port to `127.0.0.1:<port>`.
 //! * `forward`: `tailscale serve --bg --tcp <port> tcp://127.0.0.1:<port>`.
 //! * Each command has [`TIMEOUT`]; not answering in time is an error.
+//!
+//! The provider is `libhardline::vpn::tailscale`'s, its commands run by
+//! `libhardline::tokio::vpn::drive`
+//! (docs/design/20261119_02_LIBHARDLINE_EXTRACTION_PLAN.md, step 9); this
+//! finds the CLI and answers flankr's [`Vpn`].
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use serde_json::Value;
+use libhardline::tokio::vpn::{NoServices, drive};
 
-use super::{Vpn, VpnAddress, VpnError};
+use super::{SERVICE_PREFIX, Vpn, VpnAddress, VpnError};
 
-/// How long each `tailscale` command may take.
-pub const TIMEOUT: Duration = Duration::from_secs(10);
-/// The macOS app's CLI, when `tailscale` is not on `PATH`.
-pub const APP_CLI: &str = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
-/// Where `tailscale` is installed when it is not on `PATH`: Homebrew on
-/// Apple silicon, then on Intel and other installs.
-pub const INSTALLED_CLIS: [&str; 2] = ["/opt/homebrew/bin/tailscale", "/usr/local/bin/tailscale"];
-
-/// Where to look for the CLI, in order: each `PATH` directory, then
-/// [`INSTALLED_CLIS`], then the app's in `/Applications`, then in
-/// `<home>/Applications`.
-pub fn candidates(path: Option<&std::ffi::OsStr>, home: Option<&Path>) -> Vec<PathBuf> {
-    let mut found: Vec<PathBuf> = path
-        .map(|p| {
-            std::env::split_paths(p)
-                .map(|dir| dir.join("tailscale"))
-                .collect()
-        })
-        .unwrap_or_default();
-    found.extend(INSTALLED_CLIS.iter().map(PathBuf::from));
-    found.push(PathBuf::from(APP_CLI));
-    if let Some(home) = home {
-        found.push(home.join("Applications/Tailscale.app/Contents/MacOS/Tailscale"));
-    }
-    found
-}
+pub use libhardline::vpn::tailscale::{
+    APP_CLI, INSTALLED_CLIS, TIMEOUT, candidates, forward_present, is_running, self_dns_name,
+};
 
 /// Tailscale through its CLI.
 #[derive(Debug, Clone)]
 pub struct Tailscale {
-    /// `None`: not installed.
-    program: Option<PathBuf>,
-    timeout: Duration,
-}
-
-/// What a command gave.
-enum Ran {
-    /// The program is not there.
-    Missing,
-    /// It ran to the end.
-    Done {
-        success: bool,
-        stdout: Vec<u8>,
-        stderr: String,
-    },
+    vpn: libhardline::vpn::Vpn,
 }
 
 impl Tailscale {
@@ -74,95 +42,36 @@ impl Tailscale {
         let program = candidates(std::env::var_os("PATH").as_deref(), home.as_deref())
             .into_iter()
             .find(|p| is_executable(p));
-        Tailscale {
-            program,
-            timeout: TIMEOUT,
-        }
+        Tailscale::new(program, TIMEOUT)
     }
 
     /// The CLI at `program`, each command limited to `timeout`.
     pub fn at(program: impl Into<PathBuf>, timeout: Duration) -> Tailscale {
-        Tailscale {
-            program: Some(program.into()),
-            timeout,
-        }
+        Tailscale::new(Some(program.into()), timeout)
+    }
+
+    fn new(program: Option<PathBuf>, timeout: Duration) -> Tailscale {
+        let vpn = libhardline::vpn::Vpn::builder()
+            .service_prefix(SERVICE_PREFIX)
+            .tailscale(program)
+            .timeout(timeout)
+            .build()
+            .expect("flankr's service prefix is valid and Tailscale needs nothing else");
+        Tailscale { vpn }
+    }
+
+    fn cli(&self) -> &libhardline::vpn::tailscale::Tailscale {
+        self.vpn.tailscale().expect("built as Tailscale")
     }
 
     /// The CLI it runs, if it found one.
     pub fn program(&self) -> Option<&Path> {
-        self.program.as_deref()
+        self.cli().program()
     }
 
     /// The arguments of `forward` for `port`.
     pub fn forward_args(port: u16) -> Vec<String> {
-        vec![
-            "serve".to_string(),
-            "--bg".to_string(),
-            "--tcp".to_string(),
-            port.to_string(),
-            format!("tcp://127.0.0.1:{port}"),
-        ]
-    }
-
-    async fn run(&self, args: &[String]) -> Result<Ran, VpnError> {
-        let command_line = format!("tailscale {}", args.join(" "));
-        let Some(program) = &self.program else {
-            return Ok(Ran::Missing);
-        };
-        let mut command = tokio::process::Command::new(program);
-        command
-            .args(args)
-            .stdin(std::process::Stdio::null())
-            .kill_on_drop(true);
-        match tokio::time::timeout(self.timeout, command.output()).await {
-            Ok(Ok(output)) => Ok(Ran::Done {
-                success: output.status.success(),
-                stderr: {
-                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                    if stderr.is_empty() {
-                        // `tailscale serve` says some things on stdout.
-                        String::from_utf8_lossy(&output.stdout).trim().to_string()
-                    } else {
-                        stderr
-                    }
-                },
-                stdout: output.stdout,
-            }),
-            Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => Ok(Ran::Missing),
-            Ok(Err(e)) => Err(VpnError {
-                command: command_line,
-                message: e.to_string(),
-            }),
-            Err(_) => Err(VpnError {
-                command: command_line,
-                message: format!("did not finish within {} s", self.timeout.as_secs_f32()),
-            }),
-        }
-    }
-
-    /// `tailscale status --json`, `None` when not installed or it fails
-    /// (tailscaled not running).
-    async fn status(&self) -> Result<Option<Value>, VpnError> {
-        let args = ["status".to_string(), "--json".to_string()];
-        match self.run(&args).await? {
-            Ran::Missing => Ok(None),
-            Ran::Done {
-                success: false,
-                stderr,
-                ..
-            } => {
-                log::debug!("tailscale status --json: {stderr}");
-                Ok(None)
-            }
-            Ran::Done { stdout, .. } => {
-                serde_json::from_slice(&stdout)
-                    .map(Some)
-                    .map_err(|e| VpnError {
-                        command: "tailscale status --json".to_string(),
-                        message: format!("not JSON: {e}"),
-                    })
-            }
-        }
+        libhardline::vpn::tailscale::Tailscale::forward_args(port)
     }
 }
 
@@ -178,100 +87,25 @@ impl Vpn for Tailscale {
     }
 
     async fn running(&self) -> Result<bool, VpnError> {
-        Ok(self.status().await?.as_ref().is_some_and(is_running))
+        // Tailscale's running does not depend on the port.
+        drive(self.vpn.running(0), &NoServices).await
     }
 
     async fn address(&self, port: u16) -> Result<Option<VpnAddress>, VpnError> {
-        Ok(self
-            .status()
-            .await?
-            .filter(is_running)
-            .and_then(|status| self_dns_name(&status))
-            .map(|host| VpnAddress { host, port }))
+        drive(self.vpn.address(port), &NoServices).await
     }
 
     async fn forwards(&self, port: u16) -> Result<bool, VpnError> {
-        let args = ["serve", "status", "--json"].map(String::from);
-        match self.run(&args).await? {
-            Ran::Missing => Ok(false),
-            Ran::Done {
-                success: false,
-                stderr,
-                ..
-            } => Err(VpnError {
-                command: "tailscale serve status --json".to_string(),
-                message: stderr,
-            }),
-            Ran::Done { stdout, .. } => {
-                // No configuration prints nothing, or `{}`.
-                if stdout.iter().all(u8::is_ascii_whitespace) {
-                    return Ok(false);
-                }
-                let serve: Value = serde_json::from_slice(&stdout).map_err(|e| VpnError {
-                    command: "tailscale serve status --json".to_string(),
-                    message: format!("not JSON: {e}"),
-                })?;
-                Ok(forward_present(&serve, port))
-            }
-        }
+        drive(self.vpn.forwards(port), &NoServices).await
     }
 
     async fn forward(&self, port: u16) -> Result<(), VpnError> {
-        match self.run(&Tailscale::forward_args(port)).await? {
-            Ran::Missing => Err(VpnError {
-                command: self.forward_command(port),
-                message: "tailscale is not installed".to_string(),
-            }),
-            Ran::Done { success: true, .. } => Ok(()),
-            Ran::Done { stderr, .. } => Err(VpnError {
-                command: self.forward_command(port),
-                message: stderr,
-            }),
-        }
+        drive(self.vpn.forward(port), &NoServices).await
     }
 
     fn forward_command(&self, port: u16) -> String {
-        format!("tailscale {}", Tailscale::forward_args(port).join(" "))
+        self.vpn.forward_command(port)
     }
-}
-
-/// `BackendState == "Running"` in `tailscale status --json`.
-pub fn is_running(status: &Value) -> bool {
-    status.get("BackendState").and_then(Value::as_str) == Some("Running")
-}
-
-/// `Self.DNSName` from `tailscale status --json`, without the final dot.
-pub fn self_dns_name(status: &Value) -> Option<String> {
-    let name = status.get("Self")?.get("DNSName")?.as_str()?;
-    let name = name.trim_end_matches('.');
-    (!name.is_empty()).then(|| name.to_string())
-}
-
-/// Whether `tailscale serve status --json` forwards TCP `port` to
-/// `127.0.0.1:<port>`. Looks at every `TCP` map, wherever it is nested
-/// (foreground sessions and services nest their own).
-pub fn forward_present(serve: &Value, port: u16) -> bool {
-    match serve {
-        Value::Object(map) => map.iter().any(|(key, value)| {
-            (key == "TCP" && tcp_map_forwards(value, port)) || forward_present(value, port)
-        }),
-        Value::Array(items) => items.iter().any(|v| forward_present(v, port)),
-        _ => false,
-    }
-}
-
-fn tcp_map_forwards(tcp: &Value, port: u16) -> bool {
-    let Some(handler) = tcp.get(port.to_string()) else {
-        return false;
-    };
-    handler
-        .get("TCPForward")
-        .and_then(Value::as_str)
-        .map(|target| {
-            let target = target.strip_prefix("tcp://").unwrap_or(target);
-            target == format!("127.0.0.1:{port}") || target == format!("localhost:{port}")
-        })
-        .unwrap_or(false)
 }
 
 #[cfg(test)]

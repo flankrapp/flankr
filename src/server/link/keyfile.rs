@@ -4,83 +4,38 @@
 //! The file holds the 32-byte X25519 private key in base64 (standard
 //! alphabet, padded) and a newline. `serve` creates it on first start with
 //! mode 0600, and refuses to start if it is open to anyone but its owner.
+//!
+//! The file is read and written by `libhardline::server::keyfile`
+//! (docs/design/20261119_02_LIBHARDLINE_EXTRACTION_PLAN.md, step 9), with
+//! the same checks and messages; the key is handed on as flankr's
+//! [`StaticKeypair`].
 
-use std::io::Write;
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD;
-use libflankr_proto::link::{KEY_LEN, StaticKeypair, generate_keypair};
+use libflankr_proto::link::StaticKeypair;
+use libhardline::NoiseSecret;
+use libhardline::server::keyfile;
+// What the tests below use through `super::*`.
+#[cfg(test)]
+use std::io::Write;
+#[cfg(test)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
-/// Whether a file mode is 0600 or stricter: no access for group or others.
-pub fn mode_is_private(mode: u32) -> bool {
-    mode & 0o077 == 0
-}
+pub use libhardline::server::keyfile::{decode_key, mode_is_private};
 
 /// Load the key at `path`, creating it if it does not exist.
 pub fn load_or_create(path: &Path) -> Result<StaticKeypair, String> {
-    match std::fs::symlink_metadata(path) {
-        Ok(_) => load(path),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => create(path),
-        Err(e) => Err(format!("link key {}: {e}", path.display())),
-    }
+    keyfile::load_or_create(path).and_then(|key| keypair(path, key))
 }
 
 /// Load an existing key, refusing one that others may read.
 pub fn load(path: &Path) -> Result<StaticKeypair, String> {
-    let meta = std::fs::metadata(path).map_err(|e| format!("link key {}: {e}", path.display()))?;
-    if !meta.is_file() {
-        return Err(format!("link key {} is not a regular file", path.display()));
-    }
-    let mode = meta.permissions().mode() & 0o777;
-    if !mode_is_private(mode) {
-        return Err(format!(
-            "link key {} has mode {mode:04o}; it must be 0600 or stricter (chmod 600 {})",
-            path.display(),
-            path.display()
-        ));
-    }
-    // SAFETY: getuid has no preconditions and cannot fail.
-    let uid = unsafe { libc::getuid() };
-    if meta.uid() != uid {
-        return Err(format!(
-            "link key {} belongs to uid {}, not to this user (uid {uid})",
-            path.display(),
-            meta.uid()
-        ));
-    }
-    let text =
-        std::fs::read_to_string(path).map_err(|e| format!("link key {}: {e}", path.display()))?;
-    let private = decode_key(text.trim())
-        .ok_or_else(|| format!("link key {} is not a base64 32-byte key", path.display()))?;
-    StaticKeypair::from_private(private).map_err(|e| format!("link key {}: {e}", path.display()))
+    keyfile::load(path).and_then(|key| keypair(path, key))
 }
 
-fn create(path: &Path) -> Result<StaticKeypair, String> {
-    if let Some(dir) = path.parent()
-        && !dir.as_os_str().is_empty()
-        && !dir.exists()
-    {
-        std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
-        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
-    }
-    let keypair = generate_keypair().map_err(|e| format!("generate the link key: {e}"))?;
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)
-        .map_err(|e| format!("create link key {}: {e}", path.display()))?;
-    writeln!(file, "{}", STANDARD.encode(keypair.private))
-        .map_err(|e| format!("write link key {}: {e}", path.display()))?;
-    log::info!("Created the link key {}", path.display());
-    Ok(keypair)
-}
-
-/// A base64 32-byte key, or `None`.
-pub fn decode_key(text: &str) -> Option<[u8; KEY_LEN]> {
-    STANDARD.decode(text).ok()?.try_into().ok()
+fn keypair(path: &Path, key: NoiseSecret) -> Result<StaticKeypair, String> {
+    StaticKeypair::from_private(*key.expose_bytes())
+        .map_err(|e| format!("link key {}: {e}", path.display()))
 }
 
 #[cfg(test)]

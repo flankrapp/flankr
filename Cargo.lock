@@ -1364,7 +1364,7 @@ checksum = "d45db016d36b838f563236e9193d0ee6ce38f3f68b6c94e914b4929c96bbb890"
 
 [[package]]
 name = "flankr"
-version = "0.12.1"
+version = "0.12.2"
 dependencies = [
  "async-compat",
  "async-trait",
@@ -1380,6 +1380,7 @@ dependencies = [
  "libflankr_blob",
  "libflankr_proto",
  "libflankr_term",
+ "libhardline",
  "libherdr",
  "libherdr_term",
  "libinfer",
@@ -2378,7 +2379,9 @@ dependencies = [
  "libhardline-core",
  "libhardline-files",
  "libhardline-jsonrpc",
+ "libhardline-server",
  "libhardline-tokio",
+ "libhardline-vpn",
 ]
 
 [[package]]

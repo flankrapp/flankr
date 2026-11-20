@@ -15,21 +15,27 @@
 //! revocation check, so editing it takes effect without a restart. A file
 //! that cannot be read, does not parse, repeats a name or a key, or is
 //! writable by group or others authorizes nobody.
+//!
+//! The file is read and written by `libhardline::server::auth`
+//! (docs/design/20261119_02_LIBHARDLINE_EXTRACTION_PLAN.md, step 9), whose
+//! entries' roles are stored as `protocols`; `agents` and `approve` are
+//! flankr's, kept in its entries' `extra` keys and read here into
+//! [`AuthEntry`]'s fields.
 
-use std::io::Write;
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD;
 use libflankr_proto::common::protocols;
 use libflankr_proto::link::KEY_LEN;
+use libhardline::server::auth as hardline;
 use serde::{Deserialize, Serialize};
 
 use crate::core::principal::Principal;
 
-/// The prefix of a key in `auth.toml`.
-pub const KEY_PREFIX: &str = "x25519:";
+pub use libhardline::server::auth::{KEY_PREFIX, format_key, now_rfc3339};
+
+// What the tests below use through `super::*`.
+#[cfg(test)]
+use std::os::unix::fs::PermissionsExt;
 
 /// Short protocol names, as `protocols` lists them.
 pub const COMPANION: &str = "companion";
@@ -57,17 +63,21 @@ pub struct AuthEntry {
     pub approve: Option<bool>,
 }
 
+/// flankr's own keys of an entry, as libhardline keeps them in `extra`.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct Extra {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    agents: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    approve: Option<bool>,
+}
+
 /// The short name of a `hello` protocol: `flankr.companion` → `companion`.
 pub fn short_protocol(protocol: &str) -> &str {
     protocol
         .strip_prefix("flankr.")
         .or_else(|| protocol.strip_prefix("handlr."))
         .unwrap_or(protocol)
-}
-
-/// A key as `auth.toml` writes it.
-pub fn format_key(key: &[u8; KEY_LEN]) -> String {
-    format!("{KEY_PREFIX}{}", STANDARD.encode(key))
 }
 
 impl AuthEntry {
@@ -85,8 +95,7 @@ impl AuthEntry {
 
     /// The public key, or `None` if the entry's key is malformed.
     pub fn public_key(&self) -> Option<[u8; KEY_LEN]> {
-        let b64 = self.key.trim().strip_prefix(KEY_PREFIX)?;
-        STANDARD.decode(b64).ok()?.try_into().ok()
+        self.to_hardline().public_key()
     }
 
     /// Whether this client may say `hello` with `protocol` (full or short).
@@ -111,6 +120,38 @@ impl AuthEntry {
             can_approve: self.can_approve(protocol),
         }
     }
+
+    /// libhardline's entry: `protocols` as its roles, `agents` and
+    /// `approve` in its `extra` keys.
+    fn to_hardline(&self) -> hardline::AuthEntry {
+        let extra = Extra {
+            agents: self.agents.clone(),
+            approve: self.approve,
+        };
+        hardline::AuthEntry {
+            name: self.name.clone(),
+            key: self.key.clone(),
+            paired: self.paired.clone(),
+            roles: self.protocols.clone(),
+            extra: toml::Table::try_from(extra).unwrap_or_default(),
+        }
+    }
+
+    /// flankr's entry from libhardline's: `agents` and `approve` read from
+    /// its `extra` keys, which must have their types.
+    fn from_hardline(entry: hardline::AuthEntry) -> Result<AuthEntry, String> {
+        let extra: Extra = toml::Value::Table(entry.extra)
+            .try_into()
+            .map_err(|e: toml::de::Error| format!("'{}': {}", entry.name, e.message()))?;
+        Ok(AuthEntry {
+            name: entry.name,
+            key: entry.key,
+            paired: entry.paired,
+            protocols: entry.roles,
+            agents: extra.agents,
+            approve: extra.approve,
+        })
+    }
 }
 
 /// The whole file.
@@ -123,40 +164,23 @@ pub struct AuthFile {
 impl AuthFile {
     /// Read `path`. A missing file is empty.
     pub fn load(path: &Path) -> Result<AuthFile, String> {
-        let meta = match std::fs::metadata(path) {
-            Ok(meta) => meta,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(AuthFile::default()),
-            Err(e) => return Err(format!("{}: {e}", path.display())),
-        };
-        let mode = meta.permissions().mode() & 0o777;
-        if mode & 0o022 != 0 {
-            return Err(format!(
-                "{} has mode {mode:04o}; it must not be writable by group or others (chmod 600 {})",
-                path.display(),
-                path.display()
-            ));
-        }
-        let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        Self::parse(&text).map_err(|e| format!("{}: {e}", path.display()))
+        AuthFile::from_hardline(hardline::AuthFile::load(path)?)
+            .map_err(|e| format!("{}: {e}", path.display()))
     }
 
     /// Parse and check: unique names, unique well-formed keys.
     pub fn parse(text: &str) -> Result<AuthFile, String> {
-        let file: AuthFile = toml::from_str(text).map_err(|e| e.to_string())?;
-        let mut names = std::collections::HashSet::new();
-        let mut keys = std::collections::HashSet::new();
-        for entry in &file.clients {
-            if !names.insert(entry.name.as_str()) {
-                return Err(format!("the name '{}' is used twice", entry.name));
-            }
-            let key = entry
-                .public_key()
-                .ok_or_else(|| format!("'{}' has a malformed key", entry.name))?;
-            if !keys.insert(key) {
-                return Err(format!("the key of '{}' is used twice", entry.name));
-            }
-        }
-        Ok(file)
+        AuthFile::from_hardline(hardline::AuthFile::parse(text)?)
+    }
+
+    fn from_hardline(file: hardline::AuthFile) -> Result<AuthFile, String> {
+        Ok(AuthFile {
+            clients: file
+                .clients
+                .into_iter()
+                .map(AuthEntry::from_hardline)
+                .collect::<Result<_, _>>()?,
+        })
     }
 
     pub fn find_key(&self, key: &[u8; KEY_LEN]) -> Option<&AuthEntry> {
@@ -194,6 +218,16 @@ impl std::fmt::Display for AddError {
     }
 }
 
+impl From<hardline::AddError> for AddError {
+    fn from(e: hardline::AddError) -> Self {
+        match e {
+            hardline::AddError::NameInUse(name) => AddError::NameInUse(name),
+            hardline::AddError::KeyInUse(name) => AddError::KeyInUse(name),
+            hardline::AddError::File(e) => AddError::File(e),
+        }
+    }
+}
+
 /// Add `entry` to the file at `path`.
 ///
 /// A new name is appended, leaving the rest of the file as it is. With
@@ -202,30 +236,13 @@ impl std::fmt::Display for AddError {
 /// kept, so re-pairing never widens what a device may do. The file is then
 /// rewritten (comments are not kept). Returns the entry replaced.
 pub fn add(path: &Path, entry: AuthEntry, replace: bool) -> Result<Option<AuthEntry>, AddError> {
-    let mut file = AuthFile::load(path).map_err(AddError::File)?;
-    let key = entry
-        .public_key()
-        .ok_or_else(|| AddError::File("malformed key".to_string()))?;
-    if let Some(other) = file.find_key(&key)
-        && (other.name != entry.name || !replace)
-    {
-        return Err(AddError::KeyInUse(other.name.clone()));
-    }
-    let Some(index) = file.clients.iter().position(|c| c.name == entry.name) else {
-        append(path, &entry).map_err(AddError::File)?;
-        return Ok(None);
-    };
-    if !replace {
-        return Err(AddError::NameInUse(entry.name));
-    }
-    let old = file.clients[index].clone();
-    file.clients[index] = AuthEntry {
-        agents: old.agents.clone(),
-        approve: old.approve,
-        ..entry
-    };
-    rewrite(path, &file).map_err(AddError::File)?;
-    Ok(Some(old))
+    // flankr's reading first, so a file whose `agents` or `approve` do not
+    // read is refused here as before.
+    AuthFile::load(path).map_err(AddError::File)?;
+    hardline::add(path, HEADER, entry.to_hardline(), replace)?
+        .map(AuthEntry::from_hardline)
+        .transpose()
+        .map_err(AddError::File)
 }
 
 /// Remove the entry whose key is `key` from the file at `path` (plan
@@ -233,112 +250,10 @@ pub fn add(path: &Path, entry: AuthEntry, replace: bool) -> Result<Option<AuthEn
 /// replace. Returns the entry removed, or `None` when no entry has the key
 /// (the file is then left as it is).
 pub fn remove(path: &Path, key: &[u8; KEY_LEN]) -> Result<Option<AuthEntry>, String> {
-    let mut file = AuthFile::load(path)?;
-    let Some(index) = file
-        .clients
-        .iter()
-        .position(|c| c.public_key().as_ref() == Some(key))
-    else {
-        return Ok(None);
-    };
-    let old = file.clients.remove(index);
-    rewrite(path, &file)?;
-    Ok(Some(old))
-}
-
-fn open_private(path: &Path, append: bool) -> std::io::Result<std::fs::File> {
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).mode(0o600);
-    if append {
-        options.append(true);
-    } else {
-        options.truncate(true);
-    }
-    options.open(path)
-}
-
-fn ensure_dir(path: &Path) -> Result<(), String> {
-    if let Some(dir) = path.parent()
-        && !dir.as_os_str().is_empty()
-        && !dir.exists()
-    {
-        std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
-        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
-    }
-    Ok(())
-}
-
-fn entry_toml(entry: &AuthEntry) -> Result<String, String> {
-    toml::to_string(&AuthFile {
-        clients: vec![entry.clone()],
-    })
-    .map_err(|e| e.to_string())
-}
-
-fn append(path: &Path, entry: &AuthEntry) -> Result<(), String> {
-    ensure_dir(path)?;
-    let existing = std::fs::read_to_string(path).unwrap_or_default();
-    let mut text = String::new();
-    if existing.is_empty() {
-        text.push_str(HEADER);
-    }
-    if !existing.is_empty() && !existing.ends_with("\n\n") {
-        text.push_str(if existing.ends_with('\n') {
-            "\n"
-        } else {
-            "\n\n"
-        });
-    } else if existing.is_empty() {
-        text.push('\n');
-    }
-    text.push_str(&entry_toml(entry)?);
-    let mut file = open_private(path, true).map_err(|e| format!("{}: {e}", path.display()))?;
-    file.write_all(text.as_bytes())
-        .map_err(|e| format!("write {}: {e}", path.display()))
-}
-
-fn rewrite(path: &Path, file: &AuthFile) -> Result<(), String> {
-    ensure_dir(path)?;
-    let mut text = String::from(HEADER);
-    for entry in &file.clients {
-        text.push('\n');
-        text.push_str(&entry_toml(entry)?);
-    }
-    let tmp = path.with_extension("toml.tmp");
-    let _ = std::fs::remove_file(&tmp);
-    let mut out = open_private(&tmp, false).map_err(|e| format!("{}: {e}", tmp.display()))?;
-    out.write_all(text.as_bytes())
-        .and_then(|_| out.sync_all())
-        .map_err(|e| format!("write {}: {e}", tmp.display()))?;
-    std::fs::rename(&tmp, path).map_err(|e| format!("rename to {}: {e}", path.display()))
-}
-
-/// Now, as RFC 3339 in local time: `2026-10-22T11:30:00-04:00`.
-pub fn now_rfc3339() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as libc::time_t)
-        .unwrap_or(0);
-    // SAFETY: localtime_r writes only into `tm`, which is a valid, owned
-    // value; `now` is a valid time_t.
-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    if unsafe { libc::localtime_r(&now, &mut tm) }.is_null() {
-        return format!("@{now}");
-    }
-    let offset = tm.tm_gmtoff / 60;
-    let sign = if offset < 0 { '-' } else { '+' };
-    let offset = offset.abs();
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{sign}{:02}:{:02}",
-        tm.tm_year + 1900,
-        tm.tm_mon + 1,
-        tm.tm_mday,
-        tm.tm_hour,
-        tm.tm_min,
-        tm.tm_sec,
-        offset / 60,
-        offset % 60
-    )
+    AuthFile::load(path)?;
+    hardline::remove(path, HEADER, key)?
+        .map(AuthEntry::from_hardline)
+        .transpose()
 }
 
 #[cfg(test)]

@@ -410,3 +410,10 @@ These changes came before the program had version numbers.
 **Fixed**
 - The terminal QR now uses standard dark-on-light contrast so phone cameras
   can detect it from the screen.
+
+## 0.12.2 — 2026-11-19
+
+**Changed**
+- When flankr rewrites `auth.toml` (re-pairing a device with `--replace`, or
+  unpairing one), keys you added to an entry by hand are now kept instead of
+  dropped.

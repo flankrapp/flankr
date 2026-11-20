@@ -48,7 +48,10 @@ pub mod pair_mode;
 pub mod vpn;
 
 use std::collections::HashMap;
-use std::net::{IpAddr, SocketAddr};
+// `IpAddr`: what the tests below use through `super::*`.
+#[cfg(test)]
+use std::net::IpAddr;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -67,11 +70,16 @@ use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
 use self::auth::{AuthEntry, AuthFile};
-use self::machine::{Machine, ThisMachine};
+use self::machine::{FakeMachine, Machine, ThisMachine};
 use self::pair_mode::{PairBeginExtra, PairBeginParams, PairEvent, PairRun};
 use self::vpn::{Vpn, VpnAddress, VpnChoice};
 use super::Daemon;
 use crate::config::LinkConfig;
+use libhardline::server::{AddressPolicy, VpnOffer};
+
+pub use libhardline::server::addresses::{
+    forward_port, is_loopback, is_unspecified, normalize_listen, offer_addresses, valid_name,
+};
 
 /// The link's port, when an address is given without one.
 pub const DEFAULT_PORT: u16 = 7347;
@@ -201,21 +209,6 @@ impl LinkSettings {
     }
 }
 
-/// `<addr>:<port>`, adding port 7347 to a bare address.
-pub fn normalize_listen(addr: &str) -> String {
-    let addr = addr.trim();
-    if addr.parse::<SocketAddr>().is_ok() {
-        return addr.to_string();
-    }
-    if let Ok(ip) = addr.parse::<std::net::IpAddr>() {
-        return SocketAddr::new(ip, DEFAULT_PORT).to_string();
-    }
-    match addr.rsplit_once(':') {
-        Some((_, port)) if port.parse::<u16>().is_ok() => addr.to_string(),
-        _ => format!("{addr}:{DEFAULT_PORT}"),
-    }
-}
-
 /// How a pairing offer only this machine can reach begins.
 pub const ONLY_THIS_MACHINE: &str = "flankr is only reachable from this machine";
 
@@ -243,79 +236,6 @@ fn title(name: &str) -> String {
         "bitmot" => "Bitmot".to_string(),
         other => other.to_string(),
     }
-}
-
-fn host_of(address: &str) -> &str {
-    let host = address.rsplit_once(':').map_or(address, |(host, _)| host);
-    host.trim_start_matches('[').trim_end_matches(']')
-}
-
-/// Whether only this machine can reach `address`: `127.0.0.0/8`, `::1`
-/// or `localhost`.
-pub fn is_loopback(address: &str) -> bool {
-    let host = host_of(address);
-    host.eq_ignore_ascii_case("localhost")
-        || host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
-}
-
-/// Whether `address` is `0.0.0.0` or `::`, every address.
-pub fn is_unspecified(address: &str) -> bool {
-    address
-        .parse::<SocketAddr>()
-        .is_ok_and(|a| a.ip().is_unspecified())
-}
-
-/// The port of the first bound `127.0.0.1` address: the one a VPN's
-/// forward to `127.0.0.1:<port>` reaches.
-pub fn forward_port(bound: &[String]) -> Option<u16> {
-    bound.iter().find_map(|a| {
-        a.parse::<SocketAddr>()
-            .ok()
-            .filter(|a| a.ip() == IpAddr::from([127, 0, 0, 1]))
-            .map(|a| a.port())
-    })
-}
-
-/// A pairing offer's addresses, in the order a phone tries them: the
-/// VPN's, this machine's name (with the first reachable bound port), then
-/// each bound address, `0.0.0.0` and `::` replaced by the interfaces'
-/// addresses (IPv4 for `0.0.0.0`, both for `::`). No address twice.
-pub fn offer_addresses(
-    bound: &[String],
-    vpn: Option<&str>,
-    host_name: Option<&str>,
-    interfaces: &[IpAddr],
-) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    let mut push = |a: String| {
-        if !out.contains(&a) {
-            out.push(a);
-        }
-    };
-    if let Some(vpn) = vpn {
-        push(vpn.to_string());
-    }
-    if let Some(host) = host_name
-        && let Some(port) = bound
-            .iter()
-            .filter(|a| !is_loopback(a))
-            .find_map(|a| a.parse::<SocketAddr>().ok().map(|a| a.port()))
-    {
-        push(format!("{host}:{port}"));
-    }
-    for address in bound {
-        match address.parse::<SocketAddr>() {
-            Ok(a) if a.ip().is_unspecified() => {
-                for ip in interfaces {
-                    if a.is_ipv6() || ip.is_ipv4() {
-                        push(SocketAddr::new(*ip, a.port()).to_string());
-                    }
-                }
-            }
-            _ => push(address.clone()),
-        }
-    }
-    out
 }
 
 /// A device `link.pair_add` added that has not said `hello` yet.
@@ -368,14 +288,6 @@ pub struct Begun {
     pub result: LinkPairBeginResult,
     pub extra: PairBeginExtra,
     pub events: tokio::sync::mpsc::UnboundedReceiver<PairEvent>,
-}
-
-/// A device name: 1 to 64 of ASCII letters, digits, `.`, `_` and `-`.
-pub fn valid_name(name: &str) -> bool {
-    (1..=64).contains(&name.len())
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
 }
 
 impl Link {
@@ -542,31 +454,27 @@ impl Link {
             Reach::Forwarded(address) => Some(address.to_string()),
             _ => None,
         };
-        let reachable = bound.iter().any(|a| !is_loopback(a));
-        let machine = Arc::clone(&self.machine);
-        let wants_name = self.vpn.is_none() && reachable;
-        let wants_interfaces = bound.iter().any(|a| is_unspecified(a));
-        let (host_name, interfaces) = tokio::task::spawn_blocking(move || {
-            (
-                wants_name.then(|| machine.host_name()).flatten(),
-                if wants_interfaces {
-                    machine.interface_addresses()
-                } else {
-                    Vec::new()
-                },
-            )
+        let has_vpn = self.vpn.is_some();
+        let offer = move |bound: &[String], machine: &dyn Machine| {
+            let vpn = match (&vpn_address, has_vpn) {
+                (Some(address), _) => VpnOffer::At(address),
+                (None, true) => VpnOffer::Unreached,
+                (None, false) => VpnOffer::None,
+            };
+            AddressPolicy::Discover.offer(bound, vpn, machine)
+        };
+        // The machine's calls may block: off the event loop. Should that
+        // task fail, the offer is made with no name and no interfaces.
+        let offered = tokio::task::spawn_blocking({
+            let (bound, machine, offer) = (bound.clone(), Arc::clone(&self.machine), offer.clone());
+            move || offer(&bound, &*machine)
         })
         .await
-        .unwrap_or_default();
-        let addresses = offer_addresses(
-            &bound,
-            vpn_address.as_deref(),
-            host_name.as_deref(),
-            &interfaces,
-        );
-        if addresses.iter().any(|a| !is_loopback(a)) {
-            return Ok(addresses);
-        }
+        .unwrap_or_else(|_| offer(&bound, &FakeMachine::default()));
+        let shown = match offered {
+            Ok(addresses) => return Ok(addresses),
+            Err(only_here) => only_here.addresses.join(", "),
+        };
         let port = forward_port(&bound).unwrap_or(DEFAULT_PORT);
         let hint = match (&self.vpn, &reach) {
             (None, _) => format!(
@@ -584,11 +492,6 @@ impl Link {
                 "{} is not running; start it, or run flankr with --vpn none --bind 0.0.0.0:{port} to use this network",
                 title(vpn.name())
             ),
-        };
-        let shown = if addresses.is_empty() {
-            bound.join(", ")
-        } else {
-            addresses.join(", ")
         };
         Err(format!(
             "{ONLY_THIS_MACHINE} ({shown}): a phone can't connect to it.\n{hint}"
