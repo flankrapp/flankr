@@ -1,7 +1,7 @@
 ---
 title: Extracting the link, pairing, remotes and VPN code into libhardline as sans-IO crates, with the wire unchanged
 date: 2026-11-19
-status: In implementation
+status: Implemented
 covers:
   - "A new project, ~/src/libhardline, set up under the critical rules
     (~/src/rules): AGENTS.md, CHANGES.md, docs/design/, README with its
@@ -624,3 +624,48 @@ The owner approved this plan on 2026-11-19 ("approve and complete the
 agents as needed at a time"). Implementation starts with steps 1 and 2 in
 `~/src/libhardline`. From now on this document changes only by
 amendments, on the owner's explicit instruction (Rule 1.5).
+
+## Amendment — 2026-11-19 21:42 EST: implemented
+
+Every step is done and its **Done when:** holds; the status is now
+`Implemented`. Commits in `~/src/libhardline` (`github.com/tmzt/libhardline`,
+private) are marked *hl*, and commits in flankr are unmarked.
+
+1. **Set up the project:** hl 44baa4d, b202bc5, f167cf8, 7100e03, ca90be3,
+   20a5994, 1d9e126, e084ab3, 8bbb2a7, ed3dcf4 to e64050f (the nine crates,
+   empty), 07c2cda, 3eba5a4, 48516f5. `AGENTS.md` starts with the rules
+   byte for byte; repowiki collects the site as `src--libhardline`.
+2. **Import the history:** the 79 filtered commits that end at hl 86c4fb9,
+   under the setup commits; the grep of decision 11.1 found nothing.
+3. **libhardline-proto:** hl 544968f, a253f6c, 46ba516.
+4. **libhardline-core:** hl 3e58a73, 1377417, 68f6776, fc8e8a3, a7f6a26,
+   c668b8e, bd211ec, and 1f9c0b4 (a receiver fuzz test).
+5. **libhardline-server, -vpn, -jsonrpc, -files:** hl c1e70dc, b580857,
+   b4c7a13, a0e599e, ec695af, 4162095; 6b20035; f461d77, 0796094; 822dba7,
+   d1c531c.
+6. **The adapters, the facade and the examples:** hl c352908, 2491b0f,
+   636ab0f, f19097d, 08a1e4c, 409f1e5; be5f3ca, ab78e6a, a8dae74; 9f8539a,
+   bbf09a8; the 0.1.0 entries and tags c2bc87a to 22d3635.
+7. **libflankr_proto 0.5.17:** 62f6edf, 8729b49 (tag
+   `libflankr_proto-v0.5.17`), 08d5240. Seven raw-sender tests were deleted
+   on the owner's instruction (`CHANGES.md`, 18:56 EST); a `testing`
+   feature released as libhardline 0.1.1 for them was withdrawn by the
+   owner's special authorization (libhardline's `CHANGES.md`).
+8. **flankr-companion:** b36ad01, f8c2cb7; no public item changed, so it
+   stays 0.8.16.
+9. **The daemon:** aa02ac6 (0.12.2, tag `v0.12.2`, one `UPDATES.md` line:
+   hand-added keys in `auth.toml` are kept on a rewrite), 52a20f6.
+   `flankr service status vpn.bitmot` still reports
+   `dev.flankr.vpn.bitmot`.
+10. **The app:** 02c759c, e01f21e; the APK stays 0.8.2. On the S23:
+    - the app from before the split reconnected to the new daemon at
+      19:49:47;
+    - the new build reconnected without pairing again, reading the key
+      sealed before the split, at 20:58:52;
+    - it reached the MacBook's 0.7.10 daemon, from before step 9, at
+      21:42, with a terminal open;
+    - fresh pairings worked by the QR code's data URI (21:05:29), by link
+      (21:13:49) and by device code (21:22:38).
+11. **Publish:** libhardline is pushed with its 0.1.0 tags; flankr's
+    `Cargo.lock` and `apps/Cargo.lock` pin hl cf596d5, which is on
+    `github.com/tmzt/libhardline`'s `main`.
