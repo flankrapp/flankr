@@ -37,7 +37,8 @@
 use std::time::{Duration, Instant};
 
 use flankr_companion::{DeviceCodeFallback, Input, RemoteId, RemoteInfo};
-use libflankr_proto::link::PAIRING_PREFIX;
+use libflankr_proto::link::FLANKR_PROFILE;
+use libhardline::PastedLink;
 
 use crate::settings::copy;
 use crate::theme::{Role, theme};
@@ -534,7 +535,8 @@ pub fn delete_all(remotes: &[RemoteInfo]) -> Vec<Input> {
         .collect()
 }
 
-/// What [`clipboard_pairing_link`] finds in a text.
+/// What [`clipboard_pairing_link`] finds in a text: libhardline's
+/// [`PastedLink`], under the app's names.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ClipboardLink {
     /// A complete pairing URL accepted by [`LinkRead::of`], rejoined when
@@ -547,170 +549,28 @@ pub enum ClipboardLink {
     None,
 }
 
-/// The most characters kept between `flankr://` and `/pair#` (a host of
-/// up to 255, a port and the path); skipped characters are not counted.
-const LINK_HEAD_MAX: usize = 300;
-/// The most `flankr://` starts tried in one text.
-const LINK_STARTS_MAX: usize = 16;
-/// The most base58 characters read after `flankr1`.
-const LINK_BASE58_MAX: usize = 400;
-
-/// The Bitcoin base58 alphabet the pairing string is written in.
-fn is_base58(c: char) -> bool {
-    c.is_ascii_alphanumeric() && !matches!(c, '0' | 'O' | 'I' | 'l')
-}
-
-/// The text after `flankr://` when `text` starts with it, allowing other
-/// characters than ASCII letters, digits, `:` and `/` between its
-/// characters, as where a link wrapped right after its first few.
-fn after_scheme(text: &str) -> Option<&str> {
-    let mut want = "flankr://".chars().peekable();
-    for (at, c) in text.char_indices() {
-        let Some(&next) = want.peek() else {
-            return Some(&text[at..]);
-        };
-        if c == next {
-            want.next();
-        } else if c.is_ascii_alphanumeric() || matches!(c, ':' | '/') {
-            return None;
+impl From<PastedLink> for ClipboardLink {
+    fn from(link: PastedLink) -> Self {
+        match link {
+            PastedLink::Found(url) => ClipboardLink::Found(url),
+            PastedLink::Damaged => ClipboardLink::Damaged,
+            PastedLink::None => ClipboardLink::None,
         }
     }
-    want.peek().is_none().then_some("")
 }
 
-/// What [`read_link_at`] read from a `flankr://` in a text.
-enum LinkParts {
-    /// No `/pair#` followed the host and port: not a pairing link.
-    NotALink,
-    /// `flankr://<host>:<port>/pair#` and the base58 characters after
-    /// `flankr1` (empty when that prefix was not there).
-    Read { head: String, base58: String },
-}
-
-/// Reads the pairing link at the start of `text` (just past its
-/// `flankr://`, as [`after_scheme`] gives it): an ASCII host (letters, digits, `-` and `.`, or a
-/// bracketed IPv6 address), `:`, the port's digits, `/pair#`, then
-/// `flankr1` and base58. Whitespace, line breaks and any other character
-/// that does not belong where it is found are skipped, as a link wrapped
-/// over lines in a terminal pane carries them; where the link ends is
-/// left to its checksum.
-fn read_link_at(text: &str) -> LinkParts {
-    #[derive(PartialEq)]
-    enum Part {
-        Host,
-        Port,
-        Path(usize),
-    }
-    let mut head = String::from("flankr://");
-    let mut part = Part::Host;
-    let mut in_brackets = false;
-    let mut chars = text.chars();
-    loop {
-        let Some(c) = chars.next() else {
-            return LinkParts::NotALink;
-        };
-        if head.len() > LINK_HEAD_MAX {
-            return LinkParts::NotALink;
-        }
-        match part {
-            Part::Host => match c {
-                '[' if head.len() == "flankr://".len() => {
-                    in_brackets = true;
-                    head.push(c);
-                }
-                ']' if in_brackets => {
-                    in_brackets = false;
-                    head.push(c);
-                }
-                ':' if in_brackets => head.push(c),
-                ':' => {
-                    head.push(c);
-                    part = Part::Port;
-                }
-                c if in_brackets && c.is_ascii_hexdigit() => head.push(c),
-                c if !in_brackets && (c.is_ascii_alphanumeric() || matches!(c, '-' | '.')) => {
-                    head.push(c)
-                }
-                _ => {}
-            },
-            Part::Port => match c {
-                c if c.is_ascii_digit() => head.push(c),
-                '/' => {
-                    head.push(c);
-                    part = Part::Path(0);
-                }
-                _ => {}
-            },
-            Part::Path(at) => {
-                let want = "pair#".as_bytes()[at] as char;
-                if c == want {
-                    head.push(c);
-                    if at == 4 {
-                        break;
-                    }
-                    part = Part::Path(at + 1);
-                } else if c.is_ascii_alphanumeric() || matches!(c, '#' | '/') {
-                    return LinkParts::NotALink;
-                }
-            }
-        }
-    }
-    // `flankr1`, then base58.
-    let mut prefix = PAIRING_PREFIX.chars().peekable();
-    let mut base58 = String::new();
-    for c in chars {
-        if let Some(&want) = prefix.peek() {
-            if c == want {
-                prefix.next();
-            } else if c.is_ascii_alphanumeric() {
-                break;
-            }
-        } else if is_base58(c) {
-            base58.push(c);
-            if base58.len() == LINK_BASE58_MAX {
-                break;
-            }
-        }
-    }
-    if prefix.peek().is_some() {
-        base58.clear();
-    }
-    LinkParts::Read { head, base58 }
-}
-
-/// The pairing URL in `text`. The text may include a label or sentence
-/// around the link, or have it wrapped over lines in a terminal pane with
-/// the pane's border characters copied in (the 2026-11-19 amendment to
-/// plan 20261028_02): from a `flankr://`, a valid ASCII host and port and
-/// `/pair#` are read, then only base58, skipping anything else. As text
-/// after the link may be base58 too, the link's end is where its checksum
-/// holds: the longest reading [`LinkRead::of`] accepts is
-/// [`ClipboardLink::Found`]. A link with `/pair#` and no reading that
-/// holds is [`ClipboardLink::Damaged`].
+/// The pairing URL in `text`, read by libhardline's pasted-link reader
+/// under flankr's profile (plan 20261119_02, decision 3). The text may
+/// include a label or sentence around the link, or have it wrapped over
+/// lines in a terminal pane with the pane's border characters copied in
+/// (the 2026-11-19 amendment to plan 20261028_02): from a `flankr://`, a
+/// valid ASCII host and port and `/pair#` are read, then only base58,
+/// skipping anything else. As text after the link may be base58 too, the
+/// link's end is where its checksum holds: the longest reading
+/// [`LinkRead::of`] accepts is [`ClipboardLink::Found`]. A link with
+/// `/pair#` and no reading that holds is [`ClipboardLink::Damaged`].
 pub fn clipboard_pairing_link(text: &str) -> ClipboardLink {
-    let mut damaged = false;
-    let starts = text
-        .match_indices('f')
-        .filter_map(|(at, _)| after_scheme(&text[at..]))
-        .take(LINK_STARTS_MAX);
-    for rest in starts {
-        let LinkParts::Read { head, base58 } = read_link_at(rest) else {
-            continue;
-        };
-        damaged = true;
-        let found = (1..=base58.len()).rev().find_map(|end| {
-            let url = format!("{head}{PAIRING_PREFIX}{}", &base58[..end]);
-            LinkRead::of(&url).map(|_| url)
-        });
-        if let Some(url) = found {
-            return ClipboardLink::Found(url);
-        }
-    }
-    if damaged {
-        ClipboardLink::Damaged
-    } else {
-        ClipboardLink::None
-    }
+    libhardline::read_pairing(&FLANKR_PROFILE, text).into()
 }
 
 /// The paste button in the pairing field: `field` becomes the pairing URL

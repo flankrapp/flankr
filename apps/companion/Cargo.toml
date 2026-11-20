@@ -56,6 +56,11 @@ png = "0.18"
 # (plan 20261028_04, 3.4 item 3); the version already in Cargo.lock.
 semver = "1.0.28"
 log = "0.4"
+# libhardline's core (plan 20261119_02, decision 10, step 10): the vault
+# traits the key store adapter implements (src/keys.rs), the remotes list
+# kept on them, and the pasted-link reader (src/remotes.rs). No features:
+# the core only, at the revision the flankr crates pin.
+libhardline = { git = "https://github.com/tmzt/libhardline", rev = "cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f", default-features = false }
 # The key store's Noise key (src/keys.rs): cleared on drop, X25519 with the
 # curve25519-dalek snow already uses, and a random key from the OS.
 zeroize = { version = "1.8", features = ["derive"] }

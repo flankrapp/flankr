@@ -564,6 +564,7 @@ dependencies = [
  "libflankr_blob",
  "libflankr_proto",
  "libflankr_term",
+ "libhardline",
  "libmorph",
  "libmorph-build",
  "libmsdf",
@@ -1141,6 +1142,7 @@ dependencies = [
  "libflankr_blob",
  "libflankr_proto",
  "libflankr_term",
+ "libhardline",
  "log",
  "png",
  "redb",
@@ -1148,7 +1150,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
- "toml 0.8.23",
 ]
 
 [[package]]
@@ -1667,14 +1668,11 @@ dependencies = [
 
 [[package]]
 name = "libflankr_proto"
-version = "0.5.16"
+version = "0.5.17"
 dependencies = [
- "bip39",
- "blake2",
- "bs58",
+ "libhardline",
  "serde",
  "serde_json",
- "snow",
  "tokio",
 ]
 
@@ -1683,6 +1681,100 @@ name = "libflankr_term"
 version = "0.1.2"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "libhardline"
+version = "0.1.0"
+source = "git+https://github.com/tmzt/libhardline?rev=cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f#cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f"
+dependencies = [
+ "libhardline-core",
+ "libhardline-files",
+ "libhardline-jsonrpc",
+ "libhardline-tokio",
+]
+
+[[package]]
+name = "libhardline-core"
+version = "0.1.0"
+source = "git+https://github.com/tmzt/libhardline?rev=cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f#cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f"
+dependencies = [
+ "base64 0.22.1",
+ "curve25519-dalek",
+ "getrandom 0.2.17",
+ "libhardline-proto",
+ "log",
+ "serde",
+ "snow",
+ "toml 0.8.23",
+ "zeroize",
+]
+
+[[package]]
+name = "libhardline-files"
+version = "0.1.0"
+source = "git+https://github.com/tmzt/libhardline?rev=cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f#cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f"
+dependencies = [
+ "base64 0.22.1",
+ "libhardline-core",
+ "zeroize",
+]
+
+[[package]]
+name = "libhardline-jsonrpc"
+version = "0.1.0"
+source = "git+https://github.com/tmzt/libhardline?rev=cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f#cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "libhardline-proto"
+version = "0.1.0"
+source = "git+https://github.com/tmzt/libhardline?rev=cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f#cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f"
+dependencies = [
+ "bip39",
+ "blake2",
+ "bs58",
+]
+
+[[package]]
+name = "libhardline-server"
+version = "0.1.0"
+source = "git+https://github.com/tmzt/libhardline?rev=cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f#cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f"
+dependencies = [
+ "base64 0.22.1",
+ "libc",
+ "libhardline-core",
+ "libhardline-proto",
+ "log",
+ "serde",
+ "toml 0.8.23",
+ "zeroize",
+]
+
+[[package]]
+name = "libhardline-tokio"
+version = "0.1.0"
+source = "git+https://github.com/tmzt/libhardline?rev=cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f#cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f"
+dependencies = [
+ "libc",
+ "libhardline-core",
+ "libhardline-server",
+ "libhardline-vpn",
+ "log",
+ "socket2",
+ "tokio",
+]
+
+[[package]]
+name = "libhardline-vpn"
+version = "0.1.0"
+source = "git+https://github.com/tmzt/libhardline?rev=cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f#cf596d5ff850744c4c630a4d4a0b4e8f840b3b5f"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -3218,6 +3310,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
+name = "signal-hook-registry"
+version = "1.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b"
+dependencies = [
+ "errno",
+ "libc",
+]
+
+[[package]]
 name = "simd-adler32"
 version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3564,6 +3666,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",

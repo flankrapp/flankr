@@ -1,15 +1,19 @@
 //! Key storage in libmorph's key store and secure store, as libmorph's key
 //! store plan (`20261022_06_KEY_STORE_PLAN.md`, section 7) has flankr use
-//! them:
+//! them, through libhardline's vault traits (plan 20261119_02, decision 6):
 //!
 //! - this device's Noise static keys are [`NoiseStatic`]s in the key store,
 //!   one per paired remote: [`KEY_NAME`] for the pairing made before the
 //!   remotes list, `noise.static.<id>` for each later one (plan
 //!   20261028_01, decision 5). Its private half never leaves the store: each
 //!   Diffie-Hellman borrows it for one call through `key_store::with_key`.
+//!   [`MorphVault`] is the key store as a libhardline `KeyVault`.
 //! - the paired remotes are a TOML blob, [`REMOTES_BLOB`], in the secure
 //!   store, in `FileKeyStore`'s `remotes.toml` layout; the single
 //!   [`SERVER_BLOB`] of before is migrated into it on first read.
+//!   [`MorphBlobStore`] is the secure store as a libhardline `BlobStore`.
+//!   [`VaultKeyStore`] keeps the list and keys on the two as libhardline's
+//!   `RemotesStore` does, with libmorph's error texts.
 //!
 //! On Android these are the Keystore-sealed stores of libmobile, and on
 //! macOS the login Keychain. Elsewhere libmorph has neither, and the
@@ -21,8 +25,9 @@ use curve25519_dalek::montgomery::MontgomeryPoint;
 use flankr_companion::keys::{decode_legacy_server, decode_remotes, encode_remotes, migrated};
 use flankr_companion::{KeyStore, Remotes, ServerRecord};
 use libflankr_proto::link::StaticKey;
+use libhardline::VaultError;
 use libmorph::key_store::{self, KeyStoreError, SealToken, SecretKey};
-use libmorph::{SecureStore, Vault};
+use libmorph::{SecureStore, SecureStoreError, Vault};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 /// The key store name of this device's static key.
@@ -77,6 +82,140 @@ impl SecretKey for NoiseStatic {
     }
 }
 
+/// What a libhardline handshake needs from the key, lent for one call.
+impl libhardline::NoiseKey for NoiseStatic {
+    fn public(&self) -> [u8; 32] {
+        SecretKey::public(self)
+    }
+
+    fn dh(&self, peer: &[u8; 32]) -> Option<[u8; 32]> {
+        NoiseStatic::dh(self, peer)
+    }
+}
+
+/// libmorph's key store error as libhardline's, one variant for one.
+fn vault_error(e: KeyStoreError) -> VaultError {
+    match e {
+        KeyStoreError::InvalidName => VaultError::InvalidName,
+        KeyStoreError::NotFound => VaultError::NotFound,
+        KeyStoreError::WrongKind(kind) => VaultError::WrongKind(kind),
+        KeyStoreError::Corrupt(detail) => VaultError::Corrupt(detail),
+        KeyStoreError::DeviceLocked => VaultError::DeviceLocked,
+        KeyStoreError::Locked => VaultError::Locked,
+        KeyStoreError::UnsupportedFlags(flags) => VaultError::UnsupportedFlags(flags),
+        KeyStoreError::Platform(detail) => VaultError::Platform(detail),
+        other => VaultError::Platform(other.to_string()),
+    }
+}
+
+/// libmorph's secure store error as libhardline's: the variants they share
+/// as themselves, the others (too large, Keystore, I/O) as a platform
+/// failure that keeps their text.
+fn blob_error(e: SecureStoreError) -> VaultError {
+    match e {
+        SecureStoreError::InvalidName => VaultError::InvalidName,
+        SecureStoreError::DeviceLocked => VaultError::DeviceLocked,
+        SecureStoreError::Corrupt(detail) => VaultError::Corrupt(detail),
+        other => VaultError::Platform(other.to_string()),
+    }
+}
+
+/// libmorph's key store as a libhardline [`KeyVault`](libhardline::KeyVault):
+/// each key a [`NoiseStatic`], sealed as `flankr.noise.x25519.v1`, so a
+/// key already sealed on a phone is read unchanged. Its own methods give
+/// libmorph's errors, whose texts the app shows; the trait's map them.
+#[derive(Clone)]
+pub struct MorphVault(Vault);
+
+impl MorphVault {
+    pub fn new(vault: Vault) -> Self {
+        Self(vault)
+    }
+
+    /// The key store, to lend a key to a handshake ([`VaultStaticKey`]).
+    pub fn vault(&self) -> &Vault {
+        &self.0
+    }
+
+    /// A new key under `name`, replacing any; its public key.
+    pub fn generate_key(&self, name: &str) -> Result<[u8; 32], KeyStoreError> {
+        // No flags: reconnecting in the background works while the phone is
+        // locked (the key store plan, section 7).
+        key_store::generate::<NoiseStatic>(&self.0, name, 0)
+    }
+
+    /// The public key of the key under `name`.
+    pub fn public_key(&self, name: &str) -> Result<[u8; 32], KeyStoreError> {
+        key_store::public::<NoiseStatic>(&self.0, name)
+    }
+
+    /// Deletes the key under `name`; whether there was one.
+    pub fn delete_key(&self, name: &str) -> Result<bool, KeyStoreError> {
+        key_store::delete(&self.0, name)
+    }
+
+    /// The handshakes' key for `name`, whose public half is `public`.
+    fn static_key(&self, name: &str, public: [u8; 32]) -> Arc<dyn StaticKey> {
+        Arc::new(VaultStaticKey {
+            vault: self.0.clone(),
+            name: name.to_string(),
+            public,
+        })
+    }
+}
+
+impl libhardline::KeyVault for MorphVault {
+    fn generate(&self, name: &str) -> Result<[u8; 32], VaultError> {
+        self.generate_key(name).map_err(vault_error)
+    }
+
+    fn public(&self, name: &str) -> Result<[u8; 32], VaultError> {
+        self.public_key(name).map_err(vault_error)
+    }
+
+    fn with_secret(
+        &self,
+        name: &str,
+        f: &mut dyn FnMut(&dyn libhardline::NoiseKey),
+    ) -> Result<(), VaultError> {
+        key_store::with_key::<NoiseStatic, _>(&self.0, name, |key| f(key)).map_err(vault_error)
+    }
+
+    fn delete(&self, name: &str) -> Result<bool, VaultError> {
+        self.delete_key(name).map_err(vault_error)
+    }
+}
+
+/// libmorph's secure store as a libhardline [`BlobStore`](libhardline::BlobStore).
+/// [`store`](Self::store) gives the secure store itself, whose errors'
+/// texts the app shows.
+#[derive(Clone)]
+pub struct MorphBlobStore(SecureStore);
+
+impl MorphBlobStore {
+    pub fn new(store: SecureStore) -> Self {
+        Self(store)
+    }
+
+    pub fn store(&self) -> &SecureStore {
+        &self.0
+    }
+}
+
+impl libhardline::BlobStore for MorphBlobStore {
+    fn get(&self, name: &str) -> Result<Option<Vec<u8>>, VaultError> {
+        self.0.get(name).map_err(blob_error)
+    }
+
+    fn put(&self, name: &str, bytes: &[u8]) -> Result<(), VaultError> {
+        self.0.put(name, bytes).map_err(blob_error)
+    }
+
+    fn delete(&self, name: &str) -> Result<bool, VaultError> {
+        self.0.delete(name).map_err(blob_error)
+    }
+}
+
 /// The static key the link's handshakes use: the stored public value, and a
 /// Diffie-Hellman that borrows the private key named `name` from the store
 /// for each call.
@@ -102,22 +241,27 @@ impl StaticKey for VaultStaticKey {
     }
 }
 
-/// [`KeyStore`] on libmorph's key store and secure store.
+/// [`KeyStore`] on libmorph's key store and secure store, through
+/// [`MorphVault`] and [`MorphBlobStore`]. It does what libhardline's
+/// `RemotesStore` does, with libmorph's error texts, which the app shows.
 pub struct VaultKeyStore {
-    vault: Vault,
-    store: SecureStore,
+    vault: MorphVault,
+    store: MorphBlobStore,
 }
 
 impl VaultKeyStore {
     pub fn new(vault: Vault, store: SecureStore) -> Self {
-        Self { vault, store }
+        Self {
+            vault: MorphVault::new(vault),
+            store: MorphBlobStore::new(store),
+        }
     }
 
     /// Where the secure store keeps its blobs, for the log.
     pub fn describe(&self) -> String {
-        match self.store.protection() {
-            Ok(protection) => format!("{:?}, {protection:?}", self.vault),
-            Err(e) => format!("{:?}, protection unknown: {e}", self.vault),
+        match self.store.store().protection() {
+            Ok(protection) => format!("{:?}, {protection:?}", self.vault.vault()),
+            Err(e) => format!("{:?}, protection unknown: {e}", self.vault.vault()),
         }
     }
 }
@@ -127,16 +271,17 @@ impl KeyStore for VaultKeyStore {
     /// migrated into it (plan 20261028_01, decision 13): the list is
     /// written first, and the `server` blob deleted only after.
     fn remotes(&mut self) -> Result<Remotes, String> {
-        if let Some(bytes) = self.store.get(REMOTES_BLOB).map_err(|e| e.to_string())? {
+        let store = self.store.store();
+        if let Some(bytes) = store.get(REMOTES_BLOB).map_err(|e| e.to_string())? {
             let text = std::str::from_utf8(&bytes).map_err(|e| format!("the remotes blob: {e}"))?;
             let remotes = decode_remotes(text)?;
             // A migration that stopped between its two writes.
-            self.store
+            store
                 .delete(SERVER_BLOB)
                 .map_err(|e| format!("the server blob: {e}"))?;
             return Ok(remotes);
         }
-        let server = match self.store.get(SERVER_BLOB).map_err(|e| e.to_string())? {
+        let server = match store.get(SERVER_BLOB).map_err(|e| e.to_string())? {
             Some(bytes) => Some(decode_server(&bytes)?),
             None => None,
         };
@@ -145,6 +290,7 @@ impl KeyStore for VaultKeyStore {
         self.set_remotes(&remotes)?;
         if had_server {
             self.store
+                .store()
                 .delete(SERVER_BLOB)
                 .map_err(|e| format!("the server blob: {e}"))?;
         } else {
@@ -157,17 +303,14 @@ impl KeyStore for VaultKeyStore {
     fn set_remotes(&mut self, remotes: &Remotes) -> Result<(), String> {
         let text = encode_remotes(remotes)?;
         self.store
+            .store()
             .put(REMOTES_BLOB, text.as_bytes())
             .map_err(|e| e.to_string())
     }
 
     fn static_key(&mut self, key_name: &str) -> Result<Option<Arc<dyn StaticKey>>, String> {
-        match key_store::public::<NoiseStatic>(&self.vault, key_name) {
-            Ok(public) => Ok(Some(Arc::new(VaultStaticKey {
-                vault: self.vault.clone(),
-                name: key_name.to_string(),
-                public,
-            }))),
+        match self.vault.public_key(key_name) {
+            Ok(public) => Ok(Some(self.vault.static_key(key_name, public))),
             Err(KeyStoreError::NotFound) => Ok(None),
             // A key that cannot be read means pairing again, which makes a
             // new one in its place.
@@ -180,20 +323,17 @@ impl KeyStore for VaultKeyStore {
     }
 
     fn generate_static_key(&mut self, key_name: &str) -> Result<Arc<dyn StaticKey>, String> {
-        // No flags: reconnecting in the background works while the phone is
-        // locked (the key store plan, section 7).
-        let public = key_store::generate::<NoiseStatic>(&self.vault, key_name, 0)
+        let public = self
+            .vault
+            .generate_key(key_name)
             .map_err(|e| e.to_string())?;
         log::info!("keys: made a new static key in the key store");
-        Ok(Arc::new(VaultStaticKey {
-            vault: self.vault.clone(),
-            name: key_name.to_string(),
-            public,
-        }))
+        Ok(self.vault.static_key(key_name, public))
     }
 
     fn delete_static_key(&mut self, key_name: &str) -> Result<(), String> {
-        key_store::delete(&self.vault, key_name)
+        self.vault
+            .delete_key(key_name)
             .map(|_| ())
             .map_err(|e| format!("the static key: {e}"))
     }
@@ -261,5 +401,53 @@ mod tests {
         // Deleting again is not an error.
         assert!(!key_store::delete(&vault, KEY_NAME).unwrap());
         assert!(key_store::public::<NoiseStatic>(&vault, "noise.static.0011223344556677").is_ok());
+    }
+
+    #[test]
+    fn the_names_are_libhardlines() {
+        assert_eq!(KEY_NAME, libhardline::LEGACY_KEY_NAME);
+        assert_eq!(REMOTES_BLOB, libhardline::remotes::REMOTES_BLOB);
+        assert_eq!(SERVER_BLOB, libhardline::remotes::SERVER_BLOB);
+    }
+
+    #[test]
+    fn the_morph_vault_lends_its_key_to_libhardline() {
+        use libhardline::KeyVault as _;
+        let vault = Arc::new(MorphVault::new(Vault::memory()));
+        let public = vault.generate(KEY_NAME).unwrap();
+        // The key is sealed as the app always sealed it.
+        assert_eq!(
+            key_store::public::<NoiseStatic>(vault.vault(), KEY_NAME).unwrap(),
+            public
+        );
+        let theirs = libhardline::VaultStaticKey::new(vault.clone(), KEY_NAME).unwrap();
+        let peer = generate_keypair().unwrap();
+        let shared = StaticKey::dh(&theirs, &peer.public).expect("a shared secret");
+        assert_eq!(Some(shared), StaticKey::dh(&peer, &public));
+        assert_eq!(vault.public("noise.static.none"), Err(VaultError::NotFound));
+        assert_eq!(vault.generate(".hidden"), Err(VaultError::InvalidName));
+        assert!(vault.delete(KEY_NAME).unwrap());
+        assert!(!vault.delete(KEY_NAME).unwrap());
+    }
+
+    #[test]
+    fn key_store_errors_map_one_for_one() {
+        assert_eq!(
+            vault_error(KeyStoreError::Corrupt("x".into())),
+            VaultError::Corrupt("x".into())
+        );
+        assert_eq!(
+            vault_error(KeyStoreError::WrongKind("k".into())),
+            VaultError::WrongKind("k".into())
+        );
+        assert_eq!(
+            vault_error(KeyStoreError::UnsupportedFlags(4)),
+            VaultError::UnsupportedFlags(4)
+        );
+        assert_eq!(vault_error(KeyStoreError::Locked), VaultError::Locked);
+        assert_eq!(
+            blob_error(SecureStoreError::Io("disk".into())),
+            VaultError::Platform("secure store: io: disk".into())
+        );
     }
 }
