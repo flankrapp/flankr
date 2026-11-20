@@ -5465,3 +5465,33 @@ to keep behaviour identical):
   file authorize nobody; the error names the entry rather than the line.
 - A Bitmot endpoint is trimmed of surrounding spaces (libhardline's
   builder), where flankr passed it as written.
+
+## 2026-11-19 19:49 EST — the app on libhardline's core: what stays the app's
+
+Plan: `docs/design/20261119_02_LIBHARDLINE_EXTRACTION_PLAN.md`, step 10
+(decision 6's libmorph adapter, decision 3's `remotes.rs` row). Small
+departures, recorded under Rule 1.7:
+
+1. **`VaultKeyStore` stays, on `MorphVault` and `MorphBlobStore`, and
+   does not go through libhardline's `RemotesStore`.** The app still
+   implements flankr-companion's `KeyStore` (unchanged in step 8), and a
+   key store failure's text is shown in the app's note. Through
+   `RemotesStore` those texts would read "vault: …" instead of libmorph's
+   "key store: …" and "secure store: …". So `MorphVault` and
+   `MorphBlobStore` have methods giving libmorph's errors, which
+   `VaultKeyStore` uses with the same migration, blob names and log
+   lines as before, and their `KeyVault` and `BlobStore` impls map those
+   errors to `VaultError` (`KeyStoreError` one for one; the secure
+   store's `InvalidName`, `DeviceLocked` and `Corrupt` as themselves and
+   its others as `Platform` keeping their text).
+2. **The app's `VaultStaticKey` stays the app's**, holding the libmorph
+   `Vault`, rather than becoming libhardline's `VaultStaticKey` over
+   `MorphVault`: the existing tests build it by its fields, and its
+   Diffie-Hellman logs a key store error, where libhardline's drops it.
+   libhardline's `VaultStaticKey` over `MorphVault` is checked by a new
+   test.
+3. `apps/Cargo.lock`, stale since step 7, is refreshed in the app's
+   commit, as the app workspace's lock.
+
+No app version bump and no `apps/UPDATES.md` entry: the APK still says
+0.8.2.
