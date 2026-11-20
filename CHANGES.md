@@ -2236,7 +2236,6 @@ rebased over the pull-to-refresh change.
     colours, 8 hues each with a light and a dark variant. Each theme tunes its
     own, and band text is black or white by contrast (tested at 3:1 or more).
 
-
 ## 2026-10-25 10:47 EDT — Plan 20261023_06, step 5: tailing and subscriptions for agy sessions
 
 Plan: [Session readers for agy and other agents, behind one agnostic trait](docs/design/20261023_06_SESSION_READERS_PLAN.md)
@@ -2426,18 +2425,6 @@ Plan: [Markdown detection in agent output and automatic switch to rich rendering
 - Following the owner's instruction ("the last summary block should have been rendered in markdown"), assistant reply entries (`SectionKind::Text` / `lay_out_entry`) exceeding the Markdown percentage threshold (default 15%) automatically switch to rich CommonMark layout (`flankr-markdown::lay_out`).
 - Prose renders in proportional typography, list items render with bullets and indentation, diff lines in fenced blocks render syntax-highlighted in green and red, code blocks render with shaded background panels in `theme().input`, and Markdown links are registered into interactive link spans.
 - Assistant replies below the threshold remain in terminal monospace row layout.
-
-
-
-
-
-
-
-
-
-
-
-
 
 ## 2026-10-27 01:27 EDT — plan 20261027_02, steps 1–4: departures
 
@@ -5414,3 +5401,67 @@ items, behaviour and existing tests unchanged:
 
 No public item changed, so the version stays 0.8.16 with no
 `VERSIONS.md` entry.
+
+## 2026-11-19 19:42 EST — The daemon on libhardline: what it uses, what stays flankr's, and behaviour notes
+
+Plan: [Extracting the link, pairing, remotes and VPN code into libhardline as sans-IO crates, with the wire unchanged](docs/design/20261119_02_LIBHARDLINE_EXTRACTION_PLAN.md),
+step 9 (the root `flankr` crate, libhardline cf596d5; no version change).
+
+**From libhardline.** `keyfile` (`libhardline::server::keyfile`, its
+`NoiseSecret` handed on as `StaticKeypair`); `machine` (`Machine`,
+`usable`, `valid_host`, `FakeMachine`, and `ThisMachine` from
+`libhardline::tokio`); the address helpers (`normalize_listen`,
+`is_loopback`, `is_unspecified`, `forward_port`, `offer_addresses`,
+`valid_name`) and the offer's addresses through
+`AddressPolicy::Discover`, the hint naming flankr's flags staying in
+`Link`; the authorized-keys file's reading and writing (`AuthFile::load`,
+`parse`, `add`, `remove`, `format_key`, `now_rfc3339`) under flankr's
+header; `VpnAddress`, `VpnError`, `VpnChoice::parse`/`choose` (with
+`--vpn` and `[link] vpn =`), the Tailscale provider and the fake, driven
+by `libhardline::tokio::vpn::drive`; and Bitmot's relay arguments,
+service specification, command line, log reader and forward-list parser,
+under prefix `dev.flankr.vpn`, label `flankr`, home and
+`~/.local/state/flankr/services` as before, its running check driven
+through a `FlankrServices` `ServiceDriver` over flankr-daemon's backend.
+
+**Kept as flankr's, and why** (small departures from the step's wording,
+to keep behaviour identical):
+
+- **Pair mode** (`pair_mode.rs`'s run, request, words, answer and
+  expiry): `libhardline::server::Offer` logs its own lines, which differ
+  from flankr's ("Holding a pairing request from '<name>'" without the
+  peer address, "The device cancelled…" for "The phone cancelled…",
+  "Added '<name>' (<roles>)" without " to auth.toml"), and would log them
+  beside flankr's; its clock is `std::time::Instant`, where flankr's runs
+  on tokio's.
+- **Bitmot's edge forward** (`forward list`/`forward add`, and the
+  relay's log read): libhardline's refuses a public port held under
+  another label, where flankr accepts any TCP forward covering it; words
+  a missing executable "entity not found" where flankr gives the OS's
+  error; and reads the log lossily. The `forwards` and `forward`
+  service calls also stay on flankr-daemon's backend directly, as before.
+- **The accept loop** (`spawn`, `handle`) is unchanged: it already
+  runs on libhardline's tokio adapter through libflankr_proto's wrappers,
+  and `Listener` would move the keepalive, timeout and refusal log lines.
+- `AuthEntry` stays flankr's typed entry (`protocols`, `agents`,
+  `approve`), converted to libhardline's (`roles`, `extra`), and
+  `AddError` keeps flankr's text ("… (use --replace to re-pair it)").
+- With no VPN feature built, `VpnAddress`, `VpnError`, the fake and
+  `VpnChoice::parse` are flankr's own, as libhardline's VPN module needs
+  a provider feature.
+
+**Behaviour notes**, none visible in normal use:
+
+- Lines libhardline logs (for example "Created the link key …") carry
+  its module as their target, `libhardline_server::keyfile` for
+  `flankr::server::link::keyfile`; the text is the same.
+- `tailscale status --json` failing is no longer logged at debug level
+  with its stderr: libhardline's provider does not pass it on.
+- An authorized-keys entry's keys that neither flankr nor libhardline
+  knows, added by hand, are now kept when the file is rewritten (by a
+  replace or an unpair), where flankr dropped them. Files flankr writes
+  are byte for byte as before (checked against the old format).
+- A hand-edited `agents` or `approve` of the wrong type still makes the
+  file authorize nobody; the error names the entry rather than the line.
+- A Bitmot endpoint is trimmed of surrounding spaces (libhardline's
+  builder), where flankr passed it as written.
